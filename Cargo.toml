@@ -1,0 +1,10 @@
+[package]
+authors = ["ayrapetovai"]
+name = "dfm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.4", features = ["cargo", "derive"] }
+clap_mangen = "0.2.20"
+toml_edit = "0.22.13"
