@@ -44,16 +44,20 @@ struct Args {
 
     //arbitrary_command: String,
 
+    /// Do not perform actions only checks and reports.
     #[arg(long, num_args = 0, default_value_t = false)]
     dry_run: bool,
 
-    #[arg(long, num_args = 1, default_value_t = 1)]
+    /// Report exhaustiveness level: 0, 1, 2.
+    #[arg(long, num_args = 1, default_value_t = 1, value_name = "LEVEL")]
     verbose: u8, // 0 - don't output anything, 1 - print action, 2 - print debug
 
-    #[arg(long, num_args = 1, required = false)]
+    /// Use other config.
+    #[arg(long, num_args = 1, required = false, value_name = "PATH")]
     config: Option<PathBuf>,
 
-    #[arg(long, num_args = 1, required = false)]
+    /// Prefix for dotfiles in source directory.
+    #[arg(long, num_args = 1, required = false, value_name = "PREFIX")]
     dot_prefix: Option<String>,
 }
 
@@ -62,16 +66,25 @@ enum Command {
 
     // ./config/dfm/config.toml must be crated only with `init` no other command cannot do this
     // because otherwise it will create an empty config file with no source dir and no target dir
+    /// Check marker files in source directory.
+    /// Copies the config file from the source directory to the target directory.
+    /// Updates the source directory location variable in config.
     Init {
+        /// Specifies the source directory.
         #[arg(required = true)]
         path: PathBuf,
     },
 
+    /// If no conflict detected copies files from the source directory to the target directory.
+    /// The files considered to be managed after this operation.
     #[command(arg_required_else_help = true)]
     Apply {
         // empty means all, alright?
+        /// Files to be updated from source directory to target.
         paths: Option<Vec<PathBuf>>,
+        /// Invert pattern matching.
         invert_match: bool, // -v
+        /// Run merge tool on conflicts.
         merge: bool,
     },
 
@@ -86,23 +99,27 @@ enum Command {
         difference: bool,
     },
 
+    /// If no conflicts detected copies files from the target directory to the source directory.
+    /// The files considered to be managed after this operation.
     #[command(arg_required_else_help = true)]
     Add {
+        /// Files to be copied to the source directory from target.
         paths: Vec<PathBuf>,
 
+        /// Run merge tool on conflicts.
         #[arg(long, short, num_args = 0, default_value_t = false)]
         merge: bool,
 
-        // used to add files which are not located in $HOME
-        // or have changes in source directory
+        /// Force managing files outside target directory.
         #[arg(long, short, num_args = 0, default_value_t = false)]
-        foreign: bool,
-        
-        // used to discard changes in source dir file,
-        // and replace its content with source dir file
+        allow_foreign: bool,
+
+        /// Overwrite source file on conflict.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
         overwrite: bool,
     },
 
+    // must check conflicts
     Forget {
         path: PathBuf,
     },
@@ -124,7 +141,8 @@ enum Command {
     Get {
         source: PathBuf,
         target: PathBuf,
-    }
+    },
+    PrintDefaultConfig,
 }
 
 #[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
@@ -149,15 +167,15 @@ fn init_command(config: Option<Config>, args: &Args) {
     let Command::Init { path, .. } = &args.command else {
         panic!("Command is not init")
     };
-    
+
     println!("init with path {}", path.to_str().unwrap());
 }
 
 fn add_command(config_opt: Option<Config>, args: &Args) {
-    let Command::Add { paths, merge, foreign, overwrite, .. } = &args.command else {
+    let Command::Add { paths, merge, allow_foreign: foreign, overwrite, .. } = &args.command else {
         panic!("Command is not add")
     };
-    
+
     let Some(config) = config_opt else {
         panic!("Config file absent")
     };
@@ -168,23 +186,23 @@ fn add_command(config_opt: Option<Config>, args: &Args) {
         Ok(p) => fs::canonicalize(p).unwrap(),
         Err(e) => panic!("target directory path is bad {}", e)
     };
-    
+
     let source_dir_abs_path = match PathBuf::from_str(envmnt::expand(config.source_dir.as_str(), None).as_str()) {
         Ok(p) => fs::canonicalize(p).unwrap(),
         Err(e) => panic!("source directory path is bad {}", e)
     };
-    
+
     for target_file_path in paths {
         let Ok(target_file_abs_path) = fs::canonicalize(target_file_path) else {
             eprintln!("skipping path {}", target_file_path.to_str().unwrap()); // TODO dont unwrap
             continue;
         };
-        
+
         if target_file_abs_path.exists() {
             eprintln!("{} does not exist", target_file_path.to_str().unwrap());
             continue;
         }
-        
+
         let real_target_file_abs_path = if target_file_abs_path.is_symlink() {
             let Ok(symlink_info) = target_file_abs_path.symlink_metadata() else {
                 eprintln!("cannot read metadata of the symlink {}", target_file_path.to_str().unwrap());
@@ -203,7 +221,7 @@ fn add_command(config_opt: Option<Config>, args: &Args) {
         } else {
             target_file_abs_path
         };
-        
+
         let mut target_file_rel_to_target_dir_path_opt : Option<PathBuf> = None;
         let mut path_components = Vec::new();
         for target_file_parent in real_target_file_abs_path.ancestors() {
@@ -214,25 +232,25 @@ fn add_command(config_opt: Option<Config>, args: &Args) {
             }
             path_components.insert(0, target_file_parent.file_name().unwrap());
         };
-        
+
         if target_file_rel_to_target_dir_path_opt.is_none() && !foreign {
             eprintln!("file {} does not belong to target directory {}", target_file_path.to_str().unwrap(), target_dir_abs_path.to_str().unwrap());
             eprintln!("use --foreign to add it anyway");
             continue;
         }
-        
+
         let target_file_rel_to_target_dir_path = if target_file_rel_to_target_dir_path_opt.is_none() {
             todo!() // something like "../../../home/user/other/target/dir/file"
         } else {
             target_file_rel_to_target_dir_path_opt.unwrap()
         };
-        
+
         let source_file_abs_path = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), target_file_rel_to_target_dir_path.to_str().unwrap()]);
         // TODO if any symlink to source path?
-        
+
         // TODO read and compare files real_target_file_abs_path and source_file_abs_path
         //  if both have changes and not --overwrite then error
-        
+
         // how to find out if file have changes?
         // compare modification time and content
         // if content differs, and source file was modified after target file -> error
