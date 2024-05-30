@@ -1,3 +1,4 @@
+use std::borrow::ToOwned;
 use std::fs;
 use std::fs::File;
 use std::io::Read;
@@ -18,9 +19,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 // .
 
 static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
-static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "config.toml";
+#[allow(dead_code)]
+static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./config/dfm/config.toml";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Config {
     source_dir: String,
     target_dir: String,
@@ -29,7 +31,7 @@ struct Config {
     hooks: Option<Vec<Hook>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Hook {
     when: String,
     execute: String,
@@ -117,6 +119,10 @@ enum Command {
         /// Overwrite source file on conflict.
         #[arg(long, short, num_args = 0, default_value_t = false)]
         overwrite: bool,
+
+        /// Move target file to the source directory, and create a symlink in the target directory.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        symlink: bool,
     },
 
     // must check conflicts
@@ -151,60 +157,66 @@ enum IgnoreTargetType {
     Pattern,
 }
 
-// init run
-// if config file exists, check that specified source dir exists and contains .dfm-source file,
-// if not create dir and file, print "already initialized"
-// exit
-// take a path, check if it != $HOME look for .fdm-source, if exists read the source dir path from it, if not exists
-// search in the path recursively until find a file .fdm-source, if not found
-// error, print help
-// create ~/.config/dfm/config.toml, if exists
-// do not override values, write source dir path to it, if source path has expanded $HOME prefix
-// write source path with a $HOME prepended and relative path.
-// Write $HOME to target path variable of the config
-// if --config is given then error, print help
-fn init_command(config: Option<Config>, args: &Args) {
+fn init_command(_config: &Config, args: &Args) {
     let Command::Init { path, .. } = &args.command else {
-        panic!("Command is not init")
+        panic!("unreachable code reached: command {:?} is not `init`", args.command)
     };
 
     println!("init with path {}", path.to_str().unwrap());
 }
 
-fn add_command(config_opt: Option<Config>, args: &Args) {
-    let Command::Add { paths, merge, allow_foreign: foreign, overwrite, .. } = &args.command else {
-        panic!("Command is not add")
+fn add_command(config: &Config, args: &Args) {
+    let Command::Add { paths, merge, allow_foreign: foreign, overwrite, symlink, .. } = &args.command else {
+        panic!("unreachable code reached: command {:?} is not `add`", args.command)
     };
 
-    let Some(config) = config_opt else {
-        panic!("Config file absent")
-    };
+    // TODO check if config file present some how, or just check `source_dir` config parameter?
+    // let Some(config) = config_opt else {
+    //     panic!("Config file absent")
+    // };
 
-    println!("add paths {:?}, merge {}, foreign {}, overwrite {}", paths.to_owned(), merge, foreign, overwrite);
+    println!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
 
-    let target_dir_abs_path = match PathBuf::from_str(envmnt::expand(config.target_dir.as_str(), None).as_str()) {
+    let target_dir_abs_path = match PathBuf::from_str(envmnt::expand(&config.target_dir, None).as_str()) {
         Ok(p) => fs::canonicalize(p).unwrap(),
         Err(e) => panic!("target directory path is bad {}", e)
     };
 
-    let source_dir_abs_path = match PathBuf::from_str(envmnt::expand(config.source_dir.as_str(), None).as_str()) {
-        Ok(p) => fs::canonicalize(p).unwrap(),
-        Err(e) => panic!("source directory path is bad {}", e)
+    println!("using source directory from config file (original) {:?}", config.source_dir);
+    
+    let source_dir_path_expanded = envmnt::expand(&config.source_dir, None);
+    println!("using source directory from config file (expanded) {}", source_dir_path_expanded);
+
+    let source_dir_abs_path = match PathBuf::from_str(source_dir_path_expanded.as_str()) {
+        Ok(p) => match fs::canonicalize(p) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("cannot access to source directory path {}: {}", source_dir_path_expanded, e);
+                return // TODO with error
+            }
+        },
+        Err(e) => {
+            println!("source directory path is bad {}", e);
+            return // TODO with error
+        }
     };
 
     for target_file_path in paths {
+        println!("for argument {:?}", target_file_path.to_str());
+
         let Ok(target_file_abs_path) = fs::canonicalize(target_file_path) else {
             eprintln!("skipping path {}", target_file_path.to_str().unwrap()); // TODO dont unwrap
             continue;
         };
 
-        if target_file_abs_path.exists() {
-            eprintln!("{} does not exist", target_file_path.to_str().unwrap());
+        // TODO the exists follows symlinks, refactor
+        if !target_file_abs_path.exists() {
+            eprintln!("{:?} does not exist", target_file_path.to_str());
             continue;
         }
 
         let real_target_file_abs_path = if target_file_abs_path.is_symlink() {
-            let Ok(symlink_info) = target_file_abs_path.symlink_metadata() else {
+            let Ok(_symlink_info) = target_file_abs_path.symlink_metadata() else {
                 eprintln!("cannot read metadata of the symlink {}", target_file_path.to_str().unwrap());
                 continue;
             };
@@ -230,7 +242,9 @@ fn add_command(config_opt: Option<Config>, args: &Args) {
                 target_file_rel_to_target_dir_path_opt = Some(PathBuf::from_iter(path_components));
                 break;
             }
-            path_components.insert(0, target_file_parent.file_name().unwrap());
+            if let Some(filename) = target_file_parent.file_name() {
+                path_components.insert(0, filename);
+            }
         };
 
         if target_file_rel_to_target_dir_path_opt.is_none() && !foreign {
@@ -240,20 +254,36 @@ fn add_command(config_opt: Option<Config>, args: &Args) {
         }
 
         let target_file_rel_to_target_dir_path = if target_file_rel_to_target_dir_path_opt.is_none() {
-            todo!() // something like "../../../home/user/other/target/dir/file"
+            todo!("the adoption of foreign files is not implemented yet");
+            // something like "../../../home/user/other/target/dir/file"
+            // when this relative path will be concatenated with the source directory path we'll get:
+            // /home/user/dotfiles/../../../home/user/other/target/dir/file
+            // which will be resolved to /home/user/other/target/dir/file
         } else {
             target_file_rel_to_target_dir_path_opt.unwrap()
         };
 
-        let source_file_abs_path = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), target_file_rel_to_target_dir_path.to_str().unwrap()]);
+        println!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path.to_str());
+
+        // TODO this converts path '.files/.file' to 'dot_files/.file' - the '.file's dot remains unchanged, is it ok?
+        let source_file_rel_to_source_dir_path = target_file_rel_to_target_dir_path
+            .to_str()
+            .unwrap()
+            .replace(".", config.dot_prefix.clone().unwrap().as_str());
+        println!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
+        let source_file_abs_path = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
         // TODO if any symlink to source path?
 
         // TODO read and compare files real_target_file_abs_path and source_file_abs_path
-        //  if both have changes and not --overwrite then error
+        println!("T: {:?}, S: {:?}", real_target_file_abs_path.to_str(), source_file_abs_path.to_str());
 
-        // how to find out if file have changes?
-        // compare modification time and content
-        // if content differs, and source file was modified after target file -> error
+        // TODO check if one can be moved to the other
+        //  if both are files or both are directories
+        //  if content differs
+        //  if conflict detection algorithm swears
+        
+        // TODO check all files first then `add` all files if no conflicts we found on check
+        //  or check and `add` each file one by one skipping conflicts?
     }
 }
 
@@ -265,11 +295,37 @@ fn read_config() -> Option<Config> {
     let config_file = File::open(path_to_config_file);
     let mut config_file_content = String::new();
     config_file.unwrap().read_to_string(&mut config_file_content).expect("TODO: panic message");
-    let config_opt: Option<Config> = match toml::from_str(config_file_content.as_str()) {
+    let config_opt: Option<Config> = match toml::from_str(&config_file_content) {
         Err(_) => None,
         Ok(c) => Some(c)
     };
     config_opt
+}
+
+fn merge_configs(default: &Config, custom_opt: &Option<Config>) -> Config {
+    match custom_opt {
+        Some(custom) =>
+            Config {
+                source_dir: custom.source_dir.to_owned(),
+                target_dir: if ! custom.target_dir.is_empty() {
+                        custom.target_dir.to_owned()
+                    } else {
+                        default.target_dir.to_owned()
+                    },
+                dot_prefix: if custom.dot_prefix.is_some() {
+                        custom.dot_prefix.to_owned()
+                    } else {
+                        default.dot_prefix.to_owned()
+                    },
+                symlinks: if custom.symlinks.is_some() {
+                        custom.symlinks.to_owned()
+                    } else {
+                        default.symlinks.to_owned()
+                    },
+                hooks: None,
+            },
+        None => default.clone()
+    }
 }
 
 fn main() {
@@ -279,17 +335,23 @@ fn main() {
         eprintln!("Environment variable $HOME is not set")
     }
 
-    // regular run
-    // try to read ~/.config/fdm/config.toml, if not found
-    // try to read ~/.dfm.toml, if not found
-    // error, print help
+    let default_config = Config {
+        source_dir: "".to_owned(),
+        target_dir: "$HOME".to_owned(),
+        dot_prefix: Some("dot_".to_owned()),
+        symlinks: None,
+        hooks: None,
+    };
 
+    let config = read_config();
+    let merged_config =  merge_configs(&default_config, &config);
+ 
     match args.command {
         Command::Init { .. } => {
-            init_command(read_config(), &args)
+            init_command(&merged_config, &args)
         },
         Command::Add { .. } => {
-            add_command(read_config(), &args)
+            add_command(&merged_config, &args)
         }
         _ => {
             println!("is not implemented")
