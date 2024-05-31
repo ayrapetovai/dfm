@@ -2,11 +2,14 @@ use std::borrow::ToOwned;
 use std::fs;
 use std::fs::File;
 use std::io::Read;
-use std::ops::{Add};
+use std::ops::Add;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use clap::{Parser, Subcommand, ValueEnum};
+use filetime_creation::set_file_mtime;
+use filetime_creation::FileTime;
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -183,7 +186,7 @@ fn add_command(config: &Config, args: &Args) {
     };
 
     println!("using source directory from config file (original) {:?}", config.source_dir);
-    
+
     let source_dir_path_expanded = envmnt::expand(&config.source_dir, None);
     println!("using source directory from config file (expanded) {}", source_dir_path_expanded);
 
@@ -201,38 +204,61 @@ fn add_command(config: &Config, args: &Args) {
         }
     };
 
+    let mut target_to_source_list: Vec<(PathBuf, PathBuf)> = Vec::new();
+
     for target_file_path in paths {
-        println!("for argument {:?}", target_file_path.to_str());
+        println!("for argument {:?}", target_file_path);
 
         let Ok(target_file_abs_path) = fs::canonicalize(target_file_path) else {
-            eprintln!("skipping path {}", target_file_path.to_str().unwrap()); // TODO dont unwrap
+            eprintln!("skipping path {:?}", target_file_path); // TODO dont unwrap
             continue;
         };
 
         // TODO the exists follows symlinks, refactor
         if !target_file_abs_path.exists() {
-            eprintln!("{:?} does not exist", target_file_path.to_str());
+            eprintln!("{:?} does not exist", target_file_path);
             continue;
         }
 
         let real_target_file_abs_path = if target_file_abs_path.is_symlink() {
             let Ok(_symlink_info) = target_file_abs_path.symlink_metadata() else {
-                eprintln!("cannot read metadata of the symlink {}", target_file_path.to_str().unwrap());
+                eprintln!("cannot read metadata of the symlink {:?}", target_file_path);
                 continue;
             };
             let Ok(real_path) = fs::read_link(target_file_abs_path) else {
-                eprintln!("cannot follow link {}", target_file_path.to_str().unwrap());
+                eprintln!("cannot follow link {:?}", target_file_path);
                 continue;
             };
             // TODO if target file is a symlink and it points to the source file, then do nothing
             if !real_path.exists() {
-                eprintln!("symlink {} points to nothing", target_file_path.to_str().unwrap());
+                eprintln!("symlink {:?} points to nothing", target_file_path);
                 continue;
             }
             real_path
         } else {
             target_file_abs_path
         };
+
+        // TODO Check if this is respected tby the code
+        // when source dir is: /home/user/cellar/dotfiles
+        // target dir is bad:  /home/user/cellar/dotfiles
+        // target dir is bad:  /home/user/cellar
+        // target dir is bad:  /home/user
+        // target dir is bad:  /home
+        // target dir is bad:  /
+        // target dir is ok:   /home/user/cellar/ansible
+        // target dir is ok:   /home/user/.config
+
+        let Ok(target_file_meta) = real_target_file_abs_path.metadata() else {
+            eprintln!("failed to read target file metadata");
+            continue;
+        };
+
+        if real_target_file_abs_path.is_dir() && source_dir_abs_path.starts_with(real_target_file_abs_path.clone()) {
+            eprintln!("The given target {:?} contains the source directory {:?}",
+                      real_target_file_abs_path, source_dir_abs_path);
+            continue;
+        }
 
         let mut target_file_rel_to_target_dir_path_opt : Option<PathBuf> = None;
         let mut path_components = Vec::new();
@@ -248,7 +274,7 @@ fn add_command(config: &Config, args: &Args) {
         };
 
         if target_file_rel_to_target_dir_path_opt.is_none() && !foreign {
-            eprintln!("file {} does not belong to target directory {}", target_file_path.to_str().unwrap(), target_dir_abs_path.to_str().unwrap());
+            eprintln!("file {:?} does not belong to target directory {:?}", target_file_path, target_dir_abs_path);
             eprintln!("use --foreign to add it anyway");
             continue;
         }
@@ -274,16 +300,135 @@ fn add_command(config: &Config, args: &Args) {
         let source_file_abs_path = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
         // TODO if any symlink to source path?
 
-        // TODO read and compare files real_target_file_abs_path and source_file_abs_path
-        println!("T: {:?}, S: {:?}", real_target_file_abs_path.to_str(), source_file_abs_path.to_str());
+        let source_file_exists = source_file_abs_path.exists();
 
-        // TODO check if one can be moved to the other
-        //  if both are files or both are directories
-        //  if content differs
-        //  if conflict detection algorithm swears
+        // check if a conflict could take a place
+        if source_file_exists {
+            let Ok(source_file_meta) = source_file_abs_path.metadata() else {
+                eprintln!("failed to read source {:?}'s metadata", source_file_abs_path);
+                continue;
+            };
+
+            if target_file_meta.is_dir() && source_file_meta.is_file() {
+                eprintln!("target {:?} is a directory while source {:?} is a file",
+                    source_file_abs_path, real_target_file_abs_path);
+                continue;
+            }
+
+            if target_file_meta.is_file() && source_file_meta.is_dir() {
+                eprintln!("target {:?} is a file while source {:?} is a directory",
+                          source_file_abs_path, real_target_file_abs_path);
+                continue;
+            }
+
+            if target_file_meta.is_dir() && source_file_meta.is_dir() {
+                eprintln!("directory merging is not yet implemented");
+                continue;
+            }
+ 
+            let source_file_created = match source_file_meta.created() { 
+                Ok(t) => t,
+                Err(e) => {
+                    panic!("this filesystem does not support creation tile for files: {}", e);
+                }
+            };
+            let target_file_modified = target_file_meta.modified().unwrap();
+            let source_file_modified = source_file_meta.modified().unwrap();
+
+            // TODO if verbose
+            println!("after adding:\n target: mtime={:?}\n source: ctime={:?},\n         mtime={:?}",
+                     target_file_modified, source_file_created, source_file_modified);
+
+            let both_not_modified = target_file_modified == source_file_created &&
+                source_file_created == source_file_modified;
+            let only_source_modified = target_file_modified == source_file_created &&
+                source_file_created < source_file_modified || target_file_meta.mtime() < source_file_meta.mtime();
+            let only_target_modified = target_file_modified > source_file_created &&
+                source_file_created == source_file_modified || target_file_meta.mtime() > source_file_meta.mtime();
+            let both_modified = target_file_modified > source_file_created &&
+                source_file_created < source_file_modified;
+
+            if both_modified {
+                eprintln!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
+                          real_target_file_abs_path, source_file_abs_path);
+                if !overwrite {
+                    continue;
+                }
+            }
+
+            if only_target_modified { // TODO if verbose
+                eprintln!("only target {:?} was modified, no conflicts", real_target_file_abs_path);
+            }
+
+            if both_not_modified {
+                eprintln!("not target nor source was modified");
+                if !overwrite {
+                    continue;
+                }
+            }
+
+            // conflict cases
+            if only_source_modified {
+                eprintln!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
+                          source_file_abs_path, real_target_file_abs_path);
+                if !overwrite {
+                    continue;
+                }
+            }
+
+            eprintln!("no conflict detected for target {:?}", real_target_file_abs_path);
+        } else if true { // TODO if verbose
+            println!("source file {:?} does not exist", source_file_abs_path)
+        }
+
+        target_to_source_list.push((real_target_file_abs_path, source_file_abs_path));
+    }
+    // TODO check if one can be moved to the other
+    //  if content differs
+    
+    for (target_file, source_file) in target_to_source_list {
+        println!("::copy procedure begins, copying {:?} to {:?}", target_file, source_file);
+        if let Err(e) = fs::remove_file(source_file.clone()) {
+            println!("failed to remove source {:?}: {}", source_file, e);
+        } else {
+            println!("source {:?} removed", source_file);
+        }
+
+        if let Err(e) = fs::copy(target_file.clone(), source_file.clone()) {
+            eprintln!("copy failed: {}", e)
+        } else {
+            eprintln!("target {:?} copied to source {:?}", target_file, source_file)
+        }
         
-        // TODO check all files first then `add` all files if no conflicts we found on check
-        //  or check and `add` each file one by one skipping conflicts?
+        let permisstions = target_file.metadata().unwrap().permissions();
+        println!("copy permissions {:o}", permisstions.mode());
+        if let Err(e) = fs::set_permissions(source_file.clone(), permisstions.clone()) {
+            println!("failed to set permissions {:?} to source {:?}: {}", permisstions.mode(), source_file, e)
+        }
+
+        println!("set metadata to {:?}", source_file);
+        let source_file_meta = source_file.metadata().unwrap();
+        let source_creation_time =  source_file_meta.created().unwrap();
+        let source_creation = FileTime::from_system_time(source_creation_time);
+ 
+        if let Err(e)  = set_file_mtime(target_file.clone(), source_creation) {
+            eprintln!("failed to set mtime for target {:?}: {}", target_file, e);
+        }
+
+        if let Err(e)  = set_file_mtime(source_file.clone(), source_creation) {
+            eprintln!("failed to set mtime for source {:?}: {}", target_file, e);
+        }
+
+        let source_file_meta = source_file.metadata().unwrap();
+        let target_file_meta = target_file.metadata().unwrap();
+
+        let target_file_modified = target_file_meta.modified().unwrap();
+        let source_file_created = source_file_meta.created().unwrap();
+        let source_file_modified = source_file_meta.modified().unwrap();
+        // TODO if verbose
+
+        println!("after adding:\n target: mtime={:?}\n source: ctime={:?},\n         mtime={:?}",
+                 target_file_modified, source_file_created, source_file_modified);
     }
 }
 
@@ -345,7 +490,7 @@ fn main() {
 
     let config = read_config();
     let merged_config =  merge_configs(&default_config, &config);
- 
+
     match args.command {
         Command::Init { .. } => {
             init_command(&merged_config, &args)

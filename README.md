@@ -1,5 +1,8 @@
 # Dotfile Manager
 
+## System Requirements
+Linux kernel starting from 4.11 for the file creation time to be available.
+
 ## How Dotfile Managing is Performed
 
 ### Terminology
@@ -41,10 +44,10 @@ source directory to target directory respectively.
 Before perform any coping the check any modification conflict present.  
 The check algorithm allows to figure out the fact that target file was edited by user or owning program, and the fact
 that target file was edited by user or by `git`.
-1. if !TF.exists then, abort with error.
+1. if !TF.exists && SF.exists then, `add` aborts with error, `apply` copies SF to TF.
 2. if TF.exists && !TF.symlink && !SF.exists then `add` will copy TF to SF, `apply` will fail.
 3. if TF.exists && TF.symlink && !SF.exists then `add` will fail and `apply` will fail.
-4. if !TF.exists && !SF.exists then, `add` will fail, `apply` will copy SF to TF.
+4. if !TF.exists && !SF.exists then, `add` will fail, `apply` will fail.
 5. if TF.exists && TF.symlink && SF.exists then, `add` do nothing and `apply` do nothing.
 6. if TF.exists && !TF.symlink && SF.exists then, checks performed:
     1. if TF.mtime == SF.ctime && SF.ctime == SF.mtime then, no file was modified, `add` and `apply` will do nothing.
