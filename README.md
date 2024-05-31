@@ -2,6 +2,7 @@
 
 ## System Requirements
 Linux kernel starting from 4.11 for the file creation time to be available.
+Filesystem one of: ufs2, zfs, ext4, btrfs, jfs.
 
 ## How Dotfile Managing is Performed
 
