@@ -204,21 +204,23 @@ fn add_command(config: &Config, args: &Args) {
         }
     };
 
+    // TODO fill this list with files if target was a directory
+    //  but not here, after all needed check.
     let mut target_to_source_list: Vec<(PathBuf, PathBuf)> = Vec::new();
 
     for target_file_path in paths {
         println!("for argument {:?}", target_file_path);
 
-        let Ok(target_file_abs_path) = fs::canonicalize(target_file_path) else {
-            eprintln!("skipping path {:?}", target_file_path); // TODO dont unwrap
-            continue;
-        };
-
         // TODO the exists follows symlinks, refactor
-        if !target_file_abs_path.exists() {
+        if !target_file_path.exists() {
             eprintln!("{:?} does not exist", target_file_path);
             continue;
         }
+        
+        let Ok(target_file_abs_path) = fs::canonicalize(target_file_path) else {
+            eprintln!("skipping path {:?}", target_file_path);
+            continue;
+        };
 
         let real_target_file_abs_path = if target_file_abs_path.is_symlink() {
             let Ok(_symlink_info) = target_file_abs_path.symlink_metadata() else {
@@ -293,9 +295,8 @@ fn add_command(config: &Config, args: &Args) {
 
         // TODO this converts path '.files/.file' to 'dot_files/.file' - the '.file's dot remains unchanged, is it ok?
         let source_file_rel_to_source_dir_path = target_file_rel_to_target_dir_path
-            .to_str()
-            .unwrap()
-            .replace(".", config.dot_prefix.clone().unwrap().as_str());
+            .to_str().unwrap().replace(".", config.dot_prefix.clone().unwrap().as_str());
+
         println!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
         let source_file_abs_path = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
         // TODO if any symlink to source path?
@@ -325,29 +326,37 @@ fn add_command(config: &Config, args: &Args) {
                 eprintln!("directory merging is not yet implemented");
                 continue;
             }
- 
-            let source_file_created = match source_file_meta.created() { 
+
+            let source_file_created = match source_file_meta.created() {
                 Ok(t) => t,
                 Err(e) => {
-                    panic!("this filesystem does not support creation tile for files: {}", e);
+                    panic!("this filesystem does not support creation time for files (try to recompile the program): {}", e);
                 }
             };
             let target_file_modified = target_file_meta.modified().unwrap();
             let source_file_modified = source_file_meta.modified().unwrap();
 
             // TODO if verbose
-            println!("after adding:\n target: mtime={:?}\n source: ctime={:?},\n         mtime={:?}",
+            println!("before adding:\n target: mtime={:?}\n source: ctime={:?},\n         mtime={:?}",
                      target_file_modified, source_file_created, source_file_modified);
 
             let both_not_modified = target_file_modified == source_file_created &&
                 source_file_created == source_file_modified;
             let only_source_modified = target_file_modified == source_file_created &&
-                source_file_created < source_file_modified || target_file_meta.mtime() < source_file_meta.mtime();
+                source_file_created < source_file_modified || target_file_modified < source_file_modified;
             let only_target_modified = target_file_modified > source_file_created &&
-                source_file_created == source_file_modified || target_file_meta.mtime() > source_file_meta.mtime();
+                source_file_created == source_file_modified || target_file_modified > source_file_modified;
             let both_modified = target_file_modified > source_file_created &&
                 source_file_created < source_file_modified;
 
+            // TODO if source file does not required to be changed still
+            //  need to check its permissions, and copy them if needed.
+            //  Modifying permission does not make modification date change.
+
+            // TODO if target file was a symlink need to check if this link
+            //  points to the particular source file, and fix it if needed.
+
+            // conflict cases
             if both_modified {
                 eprintln!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
                           real_target_file_abs_path, source_file_abs_path);
@@ -356,8 +365,12 @@ fn add_command(config: &Config, args: &Args) {
                 }
             }
 
-            if only_target_modified { // TODO if verbose
-                eprintln!("only target {:?} was modified, no conflicts", real_target_file_abs_path);
+            if only_source_modified {
+                eprintln!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
+                          source_file_abs_path, real_target_file_abs_path);
+                if !overwrite {
+                    continue;
+                }
             }
 
             if both_not_modified {
@@ -367,13 +380,8 @@ fn add_command(config: &Config, args: &Args) {
                 }
             }
 
-            // conflict cases
-            if only_source_modified {
-                eprintln!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
-                          source_file_abs_path, real_target_file_abs_path);
-                if !overwrite {
-                    continue;
-                }
+            if only_target_modified { // TODO if verbose
+                eprintln!("only target {:?} was modified, no conflicts", real_target_file_abs_path);
             }
 
             eprintln!("no conflict detected for target {:?}", real_target_file_abs_path);
@@ -385,7 +393,7 @@ fn add_command(config: &Config, args: &Args) {
     }
     // TODO check if one can be moved to the other
     //  if content differs
-    
+
     for (target_file, source_file) in target_to_source_list {
         println!("::copy procedure begins, copying {:?} to {:?}", target_file, source_file);
         if let Err(e) = fs::remove_file(source_file.clone()) {
@@ -399,18 +407,19 @@ fn add_command(config: &Config, args: &Args) {
         } else {
             eprintln!("target {:?} copied to source {:?}", target_file, source_file)
         }
-        
-        let permisstions = target_file.metadata().unwrap().permissions();
-        println!("copy permissions {:o}", permisstions.mode());
-        if let Err(e) = fs::set_permissions(source_file.clone(), permisstions.clone()) {
-            println!("failed to set permissions {:?} to source {:?}: {}", permisstions.mode(), source_file, e)
+
+        let permissions = target_file.metadata().unwrap().permissions();
+        println!("copy permissions {:o}", permissions.mode());
+        if let Err(e) = fs::set_permissions(source_file.clone(), permissions.clone()) {
+            println!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), source_file, e)
         }
 
+        // TODO fix: if command line is `dfm add .dir` we fall this far, must stop earlier
         println!("set metadata to {:?}", source_file);
         let source_file_meta = source_file.metadata().unwrap();
         let source_creation_time =  source_file_meta.created().unwrap();
         let source_creation = FileTime::from_system_time(source_creation_time);
- 
+
         if let Err(e)  = set_file_mtime(target_file.clone(), source_creation) {
             eprintln!("failed to set mtime for target {:?}: {}", target_file, e);
         }
@@ -425,8 +434,8 @@ fn add_command(config: &Config, args: &Args) {
         let target_file_modified = target_file_meta.modified().unwrap();
         let source_file_created = source_file_meta.created().unwrap();
         let source_file_modified = source_file_meta.modified().unwrap();
-        // TODO if verbose
 
+        // TODO if verbose
         println!("after adding:\n target: mtime={:?}\n source: ctime={:?},\n         mtime={:?}",
                  target_file_modified, source_file_created, source_file_modified);
     }
