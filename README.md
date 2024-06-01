@@ -1,4 +1,6 @@
 # Dotfile Manager
+This program is designed to maintain copies of configuration files from the home directory
+using a separate directory under a version control system.
 
 ## System Requirements
 Linux kernel starting from 4.11 for the file creation time to be available.
@@ -18,10 +20,10 @@ exists - true/false, if file or directory present in filesystem.
 the modification time of the target file and to each other.
 - Successful `apply` subcommand modifies times the same way as `add` subcommand.
 
-Regular run (non init):
-1. try to read ~/.config/fdm/config.toml,
-2. if not found try to read ~/.dfm.toml,
-3. if not found error, print help.
+Regular run (non init subcommand):
+1. try to read ~/.config/dfm/config.toml,
+2. if not found then try to read ~/.dfm.toml,
+3. if not found then raise an error and print help.
 
 ### Init
 Thi command modifies dotfile manager's config file if it exists.
