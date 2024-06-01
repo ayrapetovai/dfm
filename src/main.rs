@@ -1,5 +1,5 @@
 use std::borrow::ToOwned;
-use std::fs;
+use std::{env, fs};
 use std::fs::File;
 use std::io::Read;
 use std::ops::Add;
@@ -180,22 +180,33 @@ fn add_command(config: &Config, args: &Args) {
         panic!("unreachable code reached: command {:?} is not `add`", args.command)
     };
 
-    if config.source_dir.trim().is_empty() {
-        println!("failed to read source directory path, does config file present on path {}?", "<todo>");
-        return; // TODO with error
-    }
-
     println!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
 
-    let target_dir_abs_path = match PathBuf::from_str(envmnt::expand(&config.target_dir, None).as_str()) {
-        Ok(p) => fs::canonicalize(p).unwrap(),
+    if config.source_dir.trim().is_empty() {
+        println!("failed to read source directory path, does config file present on path {}?", "<todo>");
+        return // TODO with error
+    }
+
+    println!("using target directory from config (original) {:?}", config.target_dir);
+
+    let target_dir_path_expanded = envmnt::expand(&config.target_dir, None);
+    println!("using target directory from config (expanded) {}", target_dir_path_expanded);
+
+    let target_dir_abs_path = match PathBuf::from_str(target_dir_path_expanded.as_str()) {
+        Ok(p) => match fs::canonicalize(p.clone()){
+            Ok(p) => p,
+            Err(e) => {
+                println!("cannot obtain an absolute path to the target directory {:?}: {}", p, e);
+                return // TODO with error
+            }
+        },
         Err(e) => panic!("target directory path is bad {}", e)
     };
 
-    println!("using source directory from config file (original) {:?}", config.source_dir);
+    println!("using source directory from config (original) {:?}", config.source_dir);
 
     let source_dir_path_expanded = envmnt::expand(&config.source_dir, None);
-    println!("using source directory from config file (expanded) {}", source_dir_path_expanded);
+    println!("using source directory from config (expanded) {}", source_dir_path_expanded);
 
     let source_dir_abs_path = match PathBuf::from_str(source_dir_path_expanded.as_str()) {
         Ok(p) => match fs::canonicalize(p) {
@@ -215,37 +226,49 @@ fn add_command(config: &Config, args: &Args) {
     //  but not here, after all needed check.
     let mut target_to_source_list: Vec<(PathBuf, PathBuf)> = Vec::new();
 
-    for target_file_path in paths {
-        println!("for argument {:?}", target_file_path);
+    for target_path in paths {
+        println!("for argument {:?}", target_path);
 
-        // TODO the exists follows symlinks, refactor; use try_exists to check errors
-        if !target_file_path.exists() {
-            eprintln!("{:?} does not exist", target_file_path);
+        if target_path.is_symlink() {
+            eprintln!("target {:?} is a symlink", target_path);
+            let target_symlink_metadata = match target_path.metadata() {
+                Ok(m) => m,
+                Err(e) => {
+                    // the symlink is broken
+                    println!("failed to obtain metadata of the target symlink {:?}: {}", target_path, e);
+                    continue;
+                }
+            };
+
+            let current_dir = match env::current_dir() {
+                Ok(p) => p,
+                Err(e) => {
+                    panic!("cannot obtain current working directory path: {}", e);
+                }
+            };
+
+            let target_symlink_abs_path = PathBuf::from_iter(vec![current_dir, target_path.clone()]);
+            println!("target symlink absolute path {:?}", target_symlink_abs_path);
+
+            // TODO if this symlink does not point to the file from the source directory then
+            //  remember that we have a symlink to this target, create a symlink-stub in
+            //  the source directory. Else ignore the symlink.
+            //  if symlink name was    $TARGET_DIR/.file.txt
+            //  then create            $SOURCE_DIR/dot_file.txt.symlink
+            //  There is a case when the user has a symlink in the target directory but
+            //  they want to add a real file under the management such that
+            //  there would be a real file in the source dir, so they could apply that file
+            //  on the other machines as a regular file.
+            println!("handling symlinks is not implemented yet");
             continue;
         }
-        
-        let Ok(target_file_abs_path) = fs::canonicalize(target_file_path) else {
-            eprintln!("skipping path {:?}", target_file_path);
-            continue;
-        };
 
-        let real_target_file_abs_path = if target_file_abs_path.is_symlink() {
-            let Ok(_symlink_info) = target_file_abs_path.symlink_metadata() else {
-                eprintln!("cannot read metadata of the symlink {:?}", target_file_path);
-                continue;
-            };
-            let Ok(real_path) = fs::read_link(target_file_abs_path) else {
-                eprintln!("cannot follow link {:?}", target_file_path);
-                continue;
-            };
-            // TODO if target file is a symlink and it points to the source file, then do nothing
-            if !real_path.exists() {
-                eprintln!("symlink {:?} points to nothing", target_file_path);
+        let target_abs_path = match fs::canonicalize(target_path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("cannot obtain the absolute path of the argument {:?}: {}, skipping...", target_path, e);
                 continue;
             }
-            real_path
-        } else {
-            target_file_abs_path
         };
 
         // TODO Check if this is respected tby the code
@@ -260,20 +283,26 @@ fn add_command(config: &Config, args: &Args) {
         //     /home/user/cellar/ansible
         //     /home/user/.config
 
-        let Ok(target_file_meta) = real_target_file_abs_path.metadata() else {
+        let Ok(target_file_meta) = target_abs_path.metadata() else {
             eprintln!("failed to read target file metadata");
             continue;
         };
 
-        if real_target_file_abs_path.is_dir() && source_dir_abs_path.starts_with(real_target_file_abs_path.clone()) {
-            eprintln!("The given target {:?} contains the source directory {:?}",
-                      real_target_file_abs_path, source_dir_abs_path);
+        if target_abs_path.is_dir() {
+            if source_dir_abs_path.starts_with(target_abs_path.clone()) {
+                eprintln!("The given target {:?} contains the source directory {:?}",
+                          target_abs_path, source_dir_abs_path);
+                continue;
+            }
+
+            // TODO traverse the target directory, take all paths, and add them to args...
+            println!("target {:?} is a directory, `add` does not support directories yet", target_abs_path);
             continue;
         }
 
         let mut target_file_rel_to_target_dir_path_opt : Option<PathBuf> = None;
         let mut path_components = Vec::new();
-        for target_file_parent in real_target_file_abs_path.ancestors() {
+        for target_file_parent in target_abs_path.ancestors() {
             if target_dir_abs_path.eq(target_file_parent) {
                 target_file_rel_to_target_dir_path_opt = Some(PathBuf::from_iter(path_components));
                 break;
@@ -283,10 +312,12 @@ fn add_command(config: &Config, args: &Args) {
             }
         };
 
-        if target_file_rel_to_target_dir_path_opt.is_none() && !foreign {
-            eprintln!("file {:?} does not belong to target directory {:?}", target_file_path, target_dir_abs_path);
-            eprintln!("use --foreign to add it anyway");
-            continue;
+        if target_file_rel_to_target_dir_path_opt.is_none() {
+            eprintln!("file {:?} does not belong to target directory {:?}", target_path, target_dir_abs_path);
+            if !foreign {
+                eprintln!("use --foreign to add it anyway");
+                continue;
+            }
         }
 
         let target_file_rel_to_target_dir_path = if target_file_rel_to_target_dir_path_opt.is_none() {
@@ -295,6 +326,7 @@ fn add_command(config: &Config, args: &Args) {
             // when this relative path will be concatenated with the source directory path we'll get:
             // /home/user/dotfiles/../../../home/user/other/target/dir/file
             // which will be resolved to /home/user/other/target/dir/file
+            // and added as /home/user/dotfiles/root_home/user/other/target/dir/file
         } else {
             target_file_rel_to_target_dir_path_opt.unwrap()
         };
@@ -320,13 +352,13 @@ fn add_command(config: &Config, args: &Args) {
 
             if target_file_meta.is_dir() && source_file_meta.is_file() {
                 eprintln!("target {:?} is a directory while source {:?} is a file",
-                    source_file_abs_path, real_target_file_abs_path);
+                    source_file_abs_path, target_abs_path);
                 continue;
             }
 
             if target_file_meta.is_file() && source_file_meta.is_dir() {
                 eprintln!("target {:?} is a file while source {:?} is a directory",
-                          source_file_abs_path, real_target_file_abs_path);
+                          source_file_abs_path, target_abs_path);
                 continue;
             }
 
@@ -345,7 +377,7 @@ fn add_command(config: &Config, args: &Args) {
             let source_file_modified = source_file_meta.modified().unwrap();
 
             // TODO if verbose
-            println!("before adding:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+            println!("current state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
                      target_file_modified, source_file_created, source_file_modified);
 
             let both_not_modified = target_file_modified == source_file_created &&
@@ -367,7 +399,7 @@ fn add_command(config: &Config, args: &Args) {
             // conflict cases
             if both_modified {
                 eprintln!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
-                          real_target_file_abs_path, source_file_abs_path);
+                          target_abs_path, source_file_abs_path);
                 if !overwrite {
                     continue;
                 }
@@ -375,7 +407,7 @@ fn add_command(config: &Config, args: &Args) {
 
             if only_source_modified {
                 eprintln!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
-                          source_file_abs_path, real_target_file_abs_path);
+                          source_file_abs_path, target_abs_path);
                 if !overwrite {
                     continue;
                 }
@@ -389,18 +421,21 @@ fn add_command(config: &Config, args: &Args) {
             }
 
             if only_target_modified { // TODO if verbose
-                eprintln!("only target {:?} was modified, no conflicts", real_target_file_abs_path);
+                eprintln!("only target {:?} was modified, no conflicts", target_abs_path);
             }
 
-            eprintln!("no conflict detected for target {:?}", real_target_file_abs_path);
+            eprintln!("no conflict detected for target {:?}", target_abs_path);
         } else if true { // TODO if verbose
             println!("source file {:?} does not exist", source_file_abs_path)
         }
 
-        target_to_source_list.push((real_target_file_abs_path, source_file_abs_path));
+        target_to_source_list.push((target_abs_path, source_file_abs_path));
     }
     // TODO check if one can be moved to the other
     //  if content differs
+
+    // TODO filter target duplicates
+    // TODO file conflicts like: (tgt1 -> src1) and (tgt2 -> src1) and (tgt1 != tgt2)
 
     for (target_file, source_file) in target_to_source_list {
         println!("::copy procedure begins, copying {:?} to {:?}", target_file, source_file);
@@ -444,7 +479,7 @@ fn add_command(config: &Config, args: &Args) {
         let source_file_modified = source_file_meta.modified().unwrap();
 
         // TODO if verbose
-        println!("after adding:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+        println!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
                  target_file_modified, source_file_created, source_file_modified);
     }
 }
