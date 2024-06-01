@@ -3,15 +3,20 @@ This program is designed to maintain copies of configuration files from the home
 using a separate directory under a version control system.
 
 ## System Requirements
-Linux kernel starting from 4.11 for the file creation time to be available.
+Linux kernel starting from 4.11 for the file creation time to be available.  
 Filesystem one of: ufs2, zfs, ext4, btrfs, jfs.
 
 ## How Dotfile Managing is Performed
 
 ### Terminology
-config file - the file in filesystem that contains parameters for a program.  
+config file - the file in filesystem that contains parameters for the program.  
+target directory - is set to be root for all files/directories to managed by dfm. There
+can be only target directory for the whole filesystem.
+source directory - used to store the information and copies of the managed objects.  
 target file (TF) - a managed file in the target directory.  
 source file (SF) - the backing up file in source directory.  
+managed file/directory/symlink - the filesystem object for which will be created a corresponding object
+in the source directory.
 ctime - time when file was created. Set only when creation performed.
 mtime - time when the last modification of a file was performed.  
 atime - time then file was read the last time, is not used in the dotfile manager.  
@@ -24,6 +29,10 @@ Regular run (non init subcommand):
 1. try to read ~/.config/dfm/config.toml,
 2. if not found then try to read ~/.dfm.toml,
 3. if not found then raise an error and print help.
+
+## Ignored Files
+The source directory is ignored by default, yet the directory that contains it is not ignored.
+All files and subdirectories of the containing source directory can be added under the management.
 
 ### Init
 Thi command modifies dotfile manager's config file if it exists.
