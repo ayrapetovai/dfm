@@ -3,7 +3,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::ops::Add;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -41,7 +41,7 @@ struct Hook {
 }
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version, about = "Dotfile Manager", long_about = None)]
 struct Args {
 
     #[command(subcommand)]
@@ -134,8 +134,8 @@ enum Command {
     },
 
     // TODO add to .config/dfm/config.toml?
-    // .dfm-ignored-paths
-    // .dfm-ignored-patterns
+    // .dfm_ignored_paths
+    // .dfm_ignored_patterns
     Ignore {
         paths: Option<Vec<PathBuf>>,
         pattern: String,
@@ -169,14 +169,21 @@ fn init_command(_config: &Config, args: &Args) {
 }
 
 fn add_command(config: &Config, args: &Args) {
-    let Command::Add { paths, merge, allow_foreign: foreign, overwrite, symlink, .. } = &args.command else {
+    let Command::Add {
+        paths,
+        merge,
+        allow_foreign: foreign,
+        overwrite,
+        symlink,
+        ..
+    } = &args.command else {
         panic!("unreachable code reached: command {:?} is not `add`", args.command)
     };
 
-    // TODO check if config file present some how, or just check `source_dir` config parameter?
-    // let Some(config) = config_opt else {
-    //     panic!("Config file absent")
-    // };
+    if config.source_dir.trim().is_empty() {
+        println!("failed to read source directory path, does config file present on path {}?", "<todo>");
+        return; // TODO with error
+    }
 
     println!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
 
@@ -211,7 +218,7 @@ fn add_command(config: &Config, args: &Args) {
     for target_file_path in paths {
         println!("for argument {:?}", target_file_path);
 
-        // TODO the exists follows symlinks, refactor
+        // TODO the exists follows symlinks, refactor; use try_exists to check errors
         if !target_file_path.exists() {
             eprintln!("{:?} does not exist", target_file_path);
             continue;
@@ -242,14 +249,16 @@ fn add_command(config: &Config, args: &Args) {
         };
 
         // TODO Check if this is respected tby the code
-        // when source dir is: /home/user/cellar/dotfiles
-        // target dir is bad:  /home/user/cellar/dotfiles
-        // target dir is bad:  /home/user/cellar
-        // target dir is bad:  /home/user
-        // target dir is bad:  /home
-        // target dir is bad:  /
-        // target dir is ok:   /home/user/cellar/ansible
-        // target dir is ok:   /home/user/.config
+        // when source dir is:
+        //     /home/user/cellar/dotfiles
+        // target dir is bad: 
+        //     /home/user/cellar/dotfiles
+        //     /home/user/cellar
+        //     /home/user
+        //     /home
+        //     /
+        //     /home/user/cellar/ansible
+        //     /home/user/.config
 
         let Ok(target_file_meta) = real_target_file_abs_path.metadata() else {
             eprintln!("failed to read target file metadata");
@@ -266,7 +275,6 @@ fn add_command(config: &Config, args: &Args) {
         let mut path_components = Vec::new();
         for target_file_parent in real_target_file_abs_path.ancestors() {
             if target_dir_abs_path.eq(target_file_parent) {
-                // TODO test this algorithm, it seems to be broken
                 target_file_rel_to_target_dir_path_opt = Some(PathBuf::from_iter(path_components));
                 break;
             }
@@ -337,7 +345,7 @@ fn add_command(config: &Config, args: &Args) {
             let source_file_modified = source_file_meta.modified().unwrap();
 
             // TODO if verbose
-            println!("before adding:\n target: mtime={:?}\n source: ctime={:?},\n         mtime={:?}",
+            println!("before adding:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
                      target_file_modified, source_file_created, source_file_modified);
 
             let both_not_modified = target_file_modified == source_file_created &&
@@ -436,7 +444,7 @@ fn add_command(config: &Config, args: &Args) {
         let source_file_modified = source_file_meta.modified().unwrap();
 
         // TODO if verbose
-        println!("after adding:\n target: mtime={:?}\n source: ctime={:?},\n         mtime={:?}",
+        println!("after adding:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
                  target_file_modified, source_file_created, source_file_modified);
     }
 }
@@ -508,7 +516,7 @@ fn main() {
             add_command(&merged_config, &args)
         }
         _ => {
-            println!("is not implemented")
+            println!("subcommand {:?} is not implemented yet", args.command)
         }
     }
 }
