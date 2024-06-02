@@ -32,10 +32,10 @@ pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &Pat
         }
     }
 
-    // TODO if file does not belong to the given path, add
-    //  something like "../../../home/user/other/target/dir/file"
+    // TODO if file does not belong to the given path, return
+    //  something like "./../../../home/user/other/target/dir/file"
     //  when this relative path will be concatenated with the source directory path we'll get:
-    //  /home/user/dotfiles/../../../home/user/other/target/dir/file
+    //  /home/user/dotfiles/./../../../home/user/other/target/dir/file
     //  which will be resolved to /home/user/other/target/dir/file
     //  and added as /home/user/dotfiles/root_home/user/other/target/dir/file
     target_file_rel_to_target_dir_path_opt.unwrap()

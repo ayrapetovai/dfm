@@ -356,7 +356,6 @@ fn add_command(config: &Config, args: &Args) {
             continue;
         }
 
-
         let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
 
         // check if a conflict could take a place
@@ -509,7 +508,7 @@ fn add_command(config: &Config, args: &Args) {
                          target_file_modified, source_file_created, source_file_modified);
             },
             AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {
-                println!("direct source symlink {:?} to point to the target {:?}", source_symlink, points_to);
+                println!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to);
                 // open if exists or create, if it doesn't
                 let mut symlink_file = match File::create(&source_symlink) {
                     Ok(f) => f,
