@@ -11,6 +11,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 use walkdir::WalkDir;
+use regex::Regex;
+
+use dfm::file_path_relative_to;
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -182,6 +185,12 @@ fn add_command(config: &Config, args: &Args) {
         panic!("unreachable code reached: command {:?} is not `add`", args.command)
     };
 
+    let regexp_for_leading_dot_in_filename = Regex::new(r"^\.").unwrap();
+    let regexp_for_leading_dot_in_path = Regex::new(r"/\.").unwrap();
+
+    let dot_prefix = config.dot_prefix.clone().unwrap();
+    let slash_dot_prefix = String::from_iter(vec!["/", &dot_prefix]);
+
     println!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
 
     if config.source_dir.trim().is_empty() {
@@ -238,6 +247,7 @@ fn add_command(config: &Config, args: &Args) {
                                 error_messages.push(format!("error: {}", e));
                                 None
                             }
+                            // we don't manage directories in source directory
                             _ => None
                         }
                     })
@@ -345,47 +355,24 @@ fn add_command(config: &Config, args: &Args) {
             continue;
         }
 
-        let mut target_file_rel_to_target_dir_path_opt : Option<PathBuf> = None;
-        let mut path_components = Vec::new();
-        for target_file_parent in target_abs_path.ancestors() {
-            if target_dir_abs_path.eq(target_file_parent) {
-                target_file_rel_to_target_dir_path_opt = Some(PathBuf::from_iter(path_components));
-                break;
-            }
-            if let Some(filename) = target_file_parent.file_name() {
-                path_components.insert(0, filename);
-            }
-        };
-
-        if target_file_rel_to_target_dir_path_opt.is_none() {
-            eprintln!("target file {:?} does not belong the to target directory {:?}", target_path, target_dir_abs_path);
-            if !foreign {
-                eprintln!("use --foreign to add it anyway");
-                continue;
-            }
-        }
-
-        let target_file_rel_to_target_dir_path = if target_file_rel_to_target_dir_path_opt.is_none() {
-            // something like "../../../home/user/other/target/dir/file"
-            // when this relative path will be concatenated with the source directory path we'll get:
-            // /home/user/dotfiles/../../../home/user/other/target/dir/file
-            // which will be resolved to /home/user/other/target/dir/file
-            // and added as /home/user/dotfiles/root_home/user/other/target/dir/file
+        if !target_abs_path.starts_with(&target_dir_abs_path) {
+            println!("target {:?} does not reside in target directory {:?}", target_abs_path, target_dir_abs_path);
             println!("the adoption of foreign files is not implemented yet");
             continue;
-        } else {
-            target_file_rel_to_target_dir_path_opt.unwrap()
-        };
+        }
 
-        println!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path.to_str());
+        let target_file_rel_to_target_dir_path = file_path_relative_to(&target_abs_path, &target_dir_abs_path);
 
-        // TODO this converts path '.files/.file' to 'dot_files/.file' - the '.file's dot remains unchanged, is it ok?
-        let source_file_rel_to_source_dir_path = target_file_rel_to_target_dir_path
-            .to_str().unwrap().replace(".", config.dot_prefix.clone().unwrap().as_str());
+        println!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
+
+        // replace dots in filenames and dirnames to dot_prefix from config
+        let source_file_rel_to_source_dir_path = regexp_for_leading_dot_in_filename
+            .replace(target_file_rel_to_target_dir_path.to_str().unwrap(), &dot_prefix).to_string();
+        let source_file_rel_to_source_dir_path = regexp_for_leading_dot_in_path
+            .replace_all(&source_file_rel_to_source_dir_path, &slash_dot_prefix).to_string();
 
         println!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
         let source_file_abs_path = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
-        // TODO if any symlink to source path?
 
         // check if a conflict could take a place
         if source_file_abs_path.exists() {
@@ -485,8 +472,15 @@ fn add_command(config: &Config, args: &Args) {
                     println!("source {:?} removed", source_file);
                 }
 
-                if let Err(e) = fs::copy(target_file.clone(), source_file.clone()) {
-                    eprintln!("copy failed: {}", e)
+                // This unwrap considered to be safe since source file resides in source dir,
+                // thus it has a parent directory.
+                if let Err(e) = fs::create_dir_all(source_file.parent().unwrap()) {
+                    println!("cannot create source parent dir {:?}: {}", source_file.parent(), e)
+                }
+
+                if let Err(e) = fs::copy(&target_file, &source_file) {
+                    eprintln!("copy failed: {}", e);
+                    continue;
                 } else {
                     eprintln!("target {:?} copied to source {:?}", target_file, source_file)
                 }
