@@ -224,10 +224,6 @@ fn add_command(config: &Config, args: &Args) {
         }
     };
 
-    // TODO struct CopyTask { target_path, target_link_path, source_path }
-    //  to store date for creating symlinks
-    let mut target_to_source_list: Vec<(PathBuf, PathBuf)> = Vec::new();
-
     let mut error_messages = Vec::new();
     let traversed_paths = paths.iter()
         .flat_map(|path| {
@@ -256,23 +252,25 @@ fn add_command(config: &Config, args: &Args) {
                     .into_iter()
             }
         })
+        // TODO filter duplicates
         .collect::<Vec<PathBuf>>();
     println!("traversing result is {:?}, errors {:?}", traversed_paths, error_messages);
+
+    // TODO check if error_messages is not empty then do we want fail the execution?
+
+    #[derive(Debug)]
+    enum AddTask {
+        Copy(PathBuf, PathBuf),
+        CreateSymlinkFilePointer(PathBuf, PathBuf),
+    }
+
+    let mut target_to_source_list: Vec<AddTask> = Vec::new();
 
     for target_path in traversed_paths.iter() {
         println!("for argument {:?}", target_path);
 
-        if target_path.is_symlink() {
+        let target_path = if target_path.is_symlink() {
             eprintln!("target {:?} is a symlink", target_path);
-            let target_symlink_metadata = match target_path.metadata() {
-                Ok(m) => m,
-                Err(e) => {
-                    // the symlink is broken
-                    println!("failed to obtain metadata of the target symlink {:?}: {}", target_path, e);
-                    continue;
-                }
-            };
-
             let current_dir = match env::current_dir() {
                 Ok(p) => p,
                 Err(e) => {
@@ -280,8 +278,33 @@ fn add_command(config: &Config, args: &Args) {
                 }
             };
 
-            let target_symlink_abs_path = PathBuf::from_iter(vec![current_dir, target_path.clone()]);
-            println!("target symlink absolute path {:?}", target_symlink_abs_path);
+            let target_symlink_abs_path_raw = PathBuf::from_iter(vec![current_dir, target_path.clone()]);
+            let root = PathBuf::from("/");
+            let mut target_symlink_abs_path = match fs::canonicalize(target_symlink_abs_path_raw.parent().get_or_insert(&root)) {
+                Ok(p) => p,
+                Err(e) => {
+                    println!("cannot obtain the absolute path for target symlink {:?}: {}", target_symlink_abs_path_raw, e);
+                    continue;
+                }
+            };
+            target_symlink_abs_path.push(target_symlink_abs_path_raw.file_name().unwrap());
+            let target_symlink_abs_path = target_symlink_abs_path;
+
+            let target_symlink_pointee_rel_path = match fs::read_link(&target_symlink_abs_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    println!("cannot read target symlink {:?}: {}", target_symlink_abs_path, e);
+                    continue;
+                }
+            };
+            let target_symlink_pointee_abs_path = match fs::canonicalize(target_symlink_pointee_rel_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    println!("cannot obtain the absolute path of the pointee of the target symlink {:?}: {}", target_symlink_abs_path, e);
+                    continue;
+                }
+            };
+            println!("target symlink {:?} points to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
             // TODO if this symlink does not point to the file from the source directory then
             //  remember that we have a symlink to this target, create a symlink-stub in
@@ -292,11 +315,13 @@ fn add_command(config: &Config, args: &Args) {
             //  they want to add a real file under the management such that
             //  there would be a real file in the source dir, so they could apply that file
             //  on the other machines as a regular file.
-            println!("handling symlinks is not implemented yet");
-            continue;
-        }
+            target_to_source_list.push(AddTask::CreateSymlinkFilePointer(target_symlink_abs_path, target_symlink_pointee_abs_path.clone()));
+            target_symlink_pointee_abs_path
+        } else {
+            target_path.clone()
+        };
 
-        let target_abs_path = match fs::canonicalize(target_path) {
+        let target_abs_path = match fs::canonicalize(&target_path) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("cannot obtain the absolute path of the argument {:?}: {}, skipping...", target_path, e);
@@ -320,11 +345,6 @@ fn add_command(config: &Config, args: &Args) {
             continue;
         }
 
-        let Ok(target_file_meta) = target_abs_path.metadata() else {
-            eprintln!("failed to read target file metadata");
-            continue;
-        };
-
         let mut target_file_rel_to_target_dir_path_opt : Option<PathBuf> = None;
         let mut path_components = Vec::new();
         for target_file_parent in target_abs_path.ancestors() {
@@ -338,7 +358,7 @@ fn add_command(config: &Config, args: &Args) {
         };
 
         if target_file_rel_to_target_dir_path_opt.is_none() {
-            eprintln!("file {:?} does not belong to target directory {:?}", target_path, target_dir_abs_path);
+            eprintln!("target file {:?} does not belong the to target directory {:?}", target_path, target_dir_abs_path);
             if !foreign {
                 eprintln!("use --foreign to add it anyway");
                 continue;
@@ -346,12 +366,13 @@ fn add_command(config: &Config, args: &Args) {
         }
 
         let target_file_rel_to_target_dir_path = if target_file_rel_to_target_dir_path_opt.is_none() {
-            todo!("the adoption of foreign files is not implemented yet");
             // something like "../../../home/user/other/target/dir/file"
             // when this relative path will be concatenated with the source directory path we'll get:
             // /home/user/dotfiles/../../../home/user/other/target/dir/file
             // which will be resolved to /home/user/other/target/dir/file
             // and added as /home/user/dotfiles/root_home/user/other/target/dir/file
+            println!("the adoption of foreign files is not implemented yet");
+            continue;
         } else {
             target_file_rel_to_target_dir_path_opt.unwrap()
         };
@@ -366,31 +387,23 @@ fn add_command(config: &Config, args: &Args) {
         let source_file_abs_path = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
         // TODO if any symlink to source path?
 
-        let source_file_exists = source_file_abs_path.exists();
-
         // check if a conflict could take a place
-        if source_file_exists {
-            let Ok(source_file_meta) = source_file_abs_path.metadata() else {
-                eprintln!("failed to read source {:?}'s metadata", source_file_abs_path);
-                continue;
+        if source_file_abs_path.exists() {
+            let target_file_meta = match target_abs_path.metadata() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("failed to read target {:?} metadata, {}", target_abs_path, e);
+                    continue;
+                }
             };
 
-            if target_file_meta.is_dir() && source_file_meta.is_file() {
-                eprintln!("target {:?} is a directory while source {:?} is a file",
-                    source_file_abs_path, target_abs_path);
-                continue;
-            }
-
-            if target_file_meta.is_file() && source_file_meta.is_dir() {
-                eprintln!("target {:?} is a file while source {:?} is a directory",
-                          source_file_abs_path, target_abs_path);
-                continue;
-            }
-
-            if target_file_meta.is_dir() && source_file_meta.is_dir() {
-                eprintln!("directory merging is not yet implemented");
-                continue;
-            }
+            let source_file_meta = match source_file_abs_path.metadata() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("failed to read source {:?} metadata, {}", source_file_abs_path, e);
+                    continue;
+                }
+            };
 
             let source_file_created = match source_file_meta.created() {
                 Ok(t) => t,
@@ -454,7 +467,7 @@ fn add_command(config: &Config, args: &Args) {
             println!("source file {:?} does not exist", source_file_abs_path)
         }
 
-        target_to_source_list.push((target_abs_path, source_file_abs_path));
+        target_to_source_list.push(AddTask::Copy(target_abs_path, source_file_abs_path));
     }
     // TODO check if one can be moved to the other
     //  if content differs
@@ -462,50 +475,61 @@ fn add_command(config: &Config, args: &Args) {
     // TODO filter target duplicates
     // TODO file conflicts like: (tgt1 -> src1) and (tgt2 -> src1) and (tgt1 != tgt2)
 
-    for (target_file, source_file) in target_to_source_list {
-        println!("::copy procedure begins, copying {:?} to {:?}", target_file, source_file);
-        if let Err(e) = fs::remove_file(source_file.clone()) {
-            println!("failed to remove source {:?}: {}", source_file, e);
-        } else {
-            println!("source {:?} removed", source_file);
+    for add_task in target_to_source_list {
+        match add_task {
+            AddTask::Copy(target_file, source_file) => {
+                println!("::copy procedure begins, copying {:?} to {:?}", target_file, source_file);
+                if let Err(e) = fs::remove_file(source_file.clone()) {
+                    println!("failed to remove source {:?}: {}", source_file, e);
+                } else {
+                    println!("source {:?} removed", source_file);
+                }
+
+                if let Err(e) = fs::copy(target_file.clone(), source_file.clone()) {
+                    eprintln!("copy failed: {}", e)
+                } else {
+                    eprintln!("target {:?} copied to source {:?}", target_file, source_file)
+                }
+
+                let permissions = target_file.metadata().unwrap().permissions();
+                println!("copy permissions {:o}", permissions.mode());
+                if let Err(e) = fs::set_permissions(source_file.clone(), permissions.clone()) {
+                    println!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), source_file, e)
+                }
+
+                // TODO fix: if command line is `dfm add .dir` we fall this far, must stop earlier
+                println!("set metadata to {:?}", source_file);
+                let source_file_meta = source_file.metadata().unwrap();
+                let source_creation_time = source_file_meta.created().unwrap();
+                let source_creation = FileTime::from_system_time(source_creation_time);
+
+                if let Err(e) = set_file_mtime(target_file.clone(), source_creation) {
+                    eprintln!("failed to set mtime for target {:?}: {}", target_file, e);
+                }
+
+                if let Err(e) = set_file_mtime(source_file.clone(), source_creation) {
+                    eprintln!("failed to set mtime for source {:?}: {}", target_file, e);
+                }
+
+                let source_file_meta = source_file.metadata().unwrap();
+                let target_file_meta = target_file.metadata().unwrap();
+
+                let target_file_modified = target_file_meta.modified().unwrap();
+                let source_file_created = source_file_meta.created().unwrap();
+                let source_file_modified = source_file_meta.modified().unwrap();
+
+                // TODO if verbose
+                println!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+                         target_file_modified, source_file_created, source_file_modified);
+            },
+            AddTask::CreateSymlinkFilePointer(file_target, points_to) => {
+                println!("::create symlink procedure begins, target symlink {:?}, points to {:?}", file_target, points_to);
+                println!("skipping, not yet implemented");
+            },
+            // _ => {
+            //     panic!("unsupported eunumerator {:?}", add_task);
+            // }
         }
-
-        if let Err(e) = fs::copy(target_file.clone(), source_file.clone()) {
-            eprintln!("copy failed: {}", e)
-        } else {
-            eprintln!("target {:?} copied to source {:?}", target_file, source_file)
-        }
-
-        let permissions = target_file.metadata().unwrap().permissions();
-        println!("copy permissions {:o}", permissions.mode());
-        if let Err(e) = fs::set_permissions(source_file.clone(), permissions.clone()) {
-            println!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), source_file, e)
-        }
-
-        // TODO fix: if command line is `dfm add .dir` we fall this far, must stop earlier
-        println!("set metadata to {:?}", source_file);
-        let source_file_meta = source_file.metadata().unwrap();
-        let source_creation_time =  source_file_meta.created().unwrap();
-        let source_creation = FileTime::from_system_time(source_creation_time);
-
-        if let Err(e)  = set_file_mtime(target_file.clone(), source_creation) {
-            eprintln!("failed to set mtime for target {:?}: {}", target_file, e);
-        }
-
-        if let Err(e)  = set_file_mtime(source_file.clone(), source_creation) {
-            eprintln!("failed to set mtime for source {:?}: {}", target_file, e);
-        }
-
-        let source_file_meta = source_file.metadata().unwrap();
-        let target_file_meta = target_file.metadata().unwrap();
-
-        let target_file_modified = target_file_meta.modified().unwrap();
-        let source_file_created = source_file_meta.created().unwrap();
-        let source_file_modified = source_file_meta.modified().unwrap();
-
-        // TODO if verbose
-        println!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
-                 target_file_modified, source_file_created, source_file_modified);
     }
 }
 
