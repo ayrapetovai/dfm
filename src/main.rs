@@ -10,6 +10,7 @@ use std::str::FromStr;
 use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
+use walkdir::WalkDir;
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -30,7 +31,8 @@ struct Config {
     source_dir: String,
     target_dir: String,
     dot_prefix: Option<String>,
-    symlinks: Option<bool>,
+    manage_symlinks: Option<bool>,
+    // compare_content: Option<bool>, compare files by content
     hooks: Option<Vec<Hook>>,
 }
 
@@ -222,11 +224,42 @@ fn add_command(config: &Config, args: &Args) {
         }
     };
 
-    // TODO fill this list with files if target was a directory
-    //  but not here, after all needed check.
+    // TODO struct CopyTask { target_path, target_link_path, source_path }
+    //  to store date for creating symlinks
     let mut target_to_source_list: Vec<(PathBuf, PathBuf)> = Vec::new();
 
-    for target_path in paths {
+    let mut error_messages = Vec::new();
+    let traversed_paths = paths.iter()
+        .flat_map(|path| {
+            if path.is_dir() {
+                WalkDir::new(path)
+                    .follow_links(false)
+                    .into_iter()
+                    .map(|r| {
+                        match r {
+                            Ok(d) if !d.file_type().is_dir() => Some(d.path().to_path_buf()),
+                            Err(e) => {
+                                error_messages.push(format!("error: {}", e));
+                                None
+                            }
+                            _ => None
+                        }
+                    })
+                    .filter(|o| o.is_some())
+                    .map(|o| o.unwrap())
+                    // FIXME do not create an array
+                    .collect::<Vec<_>>()
+                    .into_iter()
+            } else {
+                // FIXME do not create an array
+                vec![path.clone()]
+                    .into_iter()
+            }
+        })
+        .collect::<Vec<PathBuf>>();
+    println!("traversing result is {:?}, errors {:?}", traversed_paths, error_messages);
+
+    for target_path in traversed_paths.iter() {
         println!("for argument {:?}", target_path);
 
         if target_path.is_symlink() {
@@ -274,7 +307,7 @@ fn add_command(config: &Config, args: &Args) {
         // TODO Check if this is respected tby the code
         // when source dir is:
         //     /home/user/cellar/dotfiles
-        // target dir is bad: 
+        // target dir is bad:
         //     /home/user/cellar/dotfiles
         //     /home/user/cellar
         //     /home/user
@@ -282,23 +315,15 @@ fn add_command(config: &Config, args: &Args) {
         //     /
         //     /home/user/cellar/ansible
         //     /home/user/.config
+        if target_abs_path.starts_with(&source_dir_abs_path) {
+            println!("target {:?} resides in source directory, ignoring", target_abs_path);
+            continue;
+        }
 
         let Ok(target_file_meta) = target_abs_path.metadata() else {
             eprintln!("failed to read target file metadata");
             continue;
         };
-
-        if target_abs_path.is_dir() {
-            if source_dir_abs_path.starts_with(target_abs_path.clone()) {
-                eprintln!("The given target {:?} contains the source directory {:?}",
-                          target_abs_path, source_dir_abs_path);
-                continue;
-            }
-
-            // TODO traverse the target directory, take all paths, and add them to args...
-            println!("target {:?} is a directory, `add` does not support directories yet", target_abs_path);
-            continue;
-        }
 
         let mut target_file_rel_to_target_dir_path_opt : Option<PathBuf> = None;
         let mut path_components = Vec::new();
@@ -514,10 +539,10 @@ fn merge_configs(default: &Config, custom_opt: &Option<Config>) -> Config {
                     } else {
                         default.dot_prefix.to_owned()
                     },
-                symlinks: if custom.symlinks.is_some() {
-                        custom.symlinks.to_owned()
+                manage_symlinks: if custom.manage_symlinks.is_some() {
+                        custom.manage_symlinks.to_owned()
                     } else {
-                        default.symlinks.to_owned()
+                        default.manage_symlinks.to_owned()
                     },
                 hooks: None,
             },
@@ -536,7 +561,7 @@ fn main() {
         source_dir: "".to_owned(),
         target_dir: "$HOME".to_owned(),
         dot_prefix: Some("dot_".to_owned()),
-        symlinks: None,
+        manage_symlinks: None,
         hooks: None,
     };
 
