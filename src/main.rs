@@ -114,6 +114,10 @@ enum Command {
         /// Move target file to the source directory, and create a symlink in the target directory.
         #[arg(long, short, num_args = 0, default_value_t = false)]
         symlink: bool,
+        
+        /// Run only checks, no changes will be made to filesystem.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        dry_run: bool,
     },
 
     // must check conflicts
@@ -163,6 +167,7 @@ fn add_command(config: &Config, args: &Args) {
         allow_foreign: foreign,
         overwrite,
         symlink,
+        dry_run,
         ..
     } = &args.command else {
         panic!("unreachable code reached: command {:?} is not `add`", args.command)
@@ -295,31 +300,28 @@ fn add_command(config: &Config, args: &Args) {
             };
             println!("target symlink {:?} points to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
-            let source_symlink_file_abs_path : PathBuf = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_symlink_abs_path, Some(".symlink"));
-            let source_symlink_file_points_to_right_target = if source_symlink_file_abs_path.exists() {
-                match fs::read_to_string(&source_symlink_file_abs_path) {
+            let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_symlink_abs_path, Some(".symlink"));
+            if source_symlink_file_abs_path.exists() {
+                let source_symlink_file_points_to_right_target = match fs::read_to_string(&source_symlink_file_abs_path) {
                     Ok(file_content) => {
-                        println!("source symlink file {:?} points to {}", source_symlink_file_abs_path, file_content);
+                        println!("source symlink file {:?} points to \"{}\"", source_symlink_file_abs_path, file_content);
                         file_content.trim().eq(target_symlink_pointee_rel_path.to_str().unwrap())
                     },
                     _ => false
-                }
-            } else {
-                false
-            };
-
-            if *overwrite || !source_symlink_file_points_to_right_target {
-                if !source_symlink_file_points_to_right_target {
-                    print!("source symlink file points to the wrong file");
-                }
-                target_to_source_list.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path, target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
-            } else if source_symlink_file_points_to_right_target {
-                println!("for target symlink {:?}, source symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
-            } else if !target_symlink_pointee_abs_path.starts_with(&source_dir_abs_path) {
-                println!("for target symlink {:?}, does not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
-                target_to_source_list.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path, target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
-            } else {
-                println!("target symlink {:?} pointee is managed as {:?}, to add a symlink to source directory use --overwrite", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
+                };
+                if *overwrite || !source_symlink_file_points_to_right_target {
+                    if !source_symlink_file_points_to_right_target {
+                        println!("source symlink file points to the wrong file, must be {:?}", &target_symlink_pointee_rel_path);
+                    }
+                    target_to_source_list.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
+                } else if source_symlink_file_points_to_right_target {
+                    println!("for target symlink {:?}, source symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
+                } else if !target_symlink_pointee_abs_path.starts_with(&source_dir_abs_path) {
+                    println!("for target symlink {:?}, does not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
+                    target_to_source_list.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
+                } else {
+                    println!("target symlink {:?} pointee is managed as {:?}, to add a symlink to source directory use --overwrite", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
+                };
             };
             target_symlink_pointee_abs_path
         } else {
@@ -351,8 +353,7 @@ fn add_command(config: &Config, args: &Args) {
         }
 
         if !target_abs_path.starts_with(&target_dir_abs_path) {
-            println!("target {:?} does not reside in target directory {:?}", target_abs_path, target_dir_abs_path);
-            println!("the adoption of foreign files is not implemented yet");
+            println!("target {:?} does not reside in target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
             continue;
         }
 
@@ -435,7 +436,7 @@ fn add_command(config: &Config, args: &Args) {
 
             eprintln!("no conflict detected for target {:?}", target_abs_path);
         } else if true { // TODO if verbose
-            println!("source file {:?} does not exist", source_file_abs_path)
+            println!("source file {:?} does not exist", source_file_abs_path);
         }
 
         target_to_source_list.push(AddTask::Copy(target_abs_path, source_file_abs_path));
@@ -446,6 +447,10 @@ fn add_command(config: &Config, args: &Args) {
     // TODO filter target duplicates
     // TODO file conflicts like: (tgt1 -> src1) and (tgt2 -> src1) and (tgt1 != tgt2)
 
+    if *dry_run {
+        println!("dry run specified, no changes will be made");
+    }
+
     if target_to_source_list.is_empty() {
         println!("nothing to do");
         return; // TODO with success
@@ -454,9 +459,15 @@ fn add_command(config: &Config, args: &Args) {
     println!("::copy procedure begins, {} tasks", target_to_source_list.len());
 
     for add_task in target_to_source_list {
+        if *dry_run {
+            println!("dry run: copy {:?}", add_task);
+            continue;
+        } else {
+            println!("copy {:?}", add_task);
+        }
+
         match add_task {
             AddTask::Copy(target_file, source_file) => {
-                println!("copying {:?} to {:?}", target_file, source_file);
                 if let Err(e) = fs::remove_file(source_file.clone()) {
                     println!("failed to remove source {:?}: {}", source_file, e);
                 } else {
