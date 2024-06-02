@@ -4,16 +4,14 @@ use std::fs::File;
 use std::io::Read;
 use std::ops::Add;
 use std::os::unix::fs::PermissionsExt;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 use walkdir::WalkDir;
-use regex::Regex;
 
-use dfm::file_path_relative_to;
+use dfm::{Config, filepath_in_source_dir};
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -28,22 +26,6 @@ use dfm::file_path_relative_to;
 static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
 #[allow(dead_code)]
 static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./config/dfm/config.toml";
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Config {
-    source_dir: String,
-    target_dir: String,
-    dot_prefix: Option<String>,
-    manage_symlinks: Option<bool>,
-    // compare_content: Option<bool>, compare files by content
-    hooks: Option<Vec<Hook>>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Hook {
-    when: String,
-    execute: String,
-}
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Dotfile Manager", long_about = None)]
@@ -124,7 +106,7 @@ enum Command {
         #[arg(long, short, num_args = 0, default_value_t = false)]
         allow_foreign: bool,
 
-        /// Overwrite source file on conflict.
+        /// Overwrite source file on conflict and add symlinks.
         #[arg(long, short, num_args = 0, default_value_t = false)]
         overwrite: bool,
 
@@ -184,12 +166,6 @@ fn add_command(config: &Config, args: &Args) {
     } = &args.command else {
         panic!("unreachable code reached: command {:?} is not `add`", args.command)
     };
-
-    let regexp_for_leading_dot_in_filename = Regex::new(r"^\.").unwrap();
-    let regexp_for_leading_dot_in_path = Regex::new(r"/\.").unwrap();
-
-    let dot_prefix = config.dot_prefix.clone().unwrap();
-    let slash_dot_prefix = String::from_iter(vec!["/", &dot_prefix]);
 
     println!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
 
@@ -276,6 +252,8 @@ fn add_command(config: &Config, args: &Args) {
 
     let mut target_to_source_list: Vec<AddTask> = Vec::new();
 
+    println!("::check state procedure begins");
+
     for target_path in traversed_paths.iter() {
         println!("for argument {:?}", target_path);
 
@@ -316,16 +294,29 @@ fn add_command(config: &Config, args: &Args) {
             };
             println!("target symlink {:?} points to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
-            // TODO if this symlink does not point to the file from the source directory then
-            //  remember that we have a symlink to this target, create a symlink-stub in
-            //  the source directory. Else ignore the symlink.
-            //  if symlink name was    $TARGET_DIR/.file.txt
-            //  then create            $SOURCE_DIR/dot_file.txt.symlink
-            //  There is a case when the user has a symlink in the target directory but
-            //  they want to add a real file under the management such that
-            //  there would be a real file in the source dir, so they could apply that file
-            //  on the other machines as a regular file.
-            target_to_source_list.push(AddTask::CreateSymlinkFilePointer(target_symlink_abs_path, target_symlink_pointee_abs_path.clone()));
+            let source_symlink_file_abs_path : PathBuf = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_symlink_abs_path, Some(".symlink"));
+            let source_symlink_file_points_to_right_target = if source_symlink_file_abs_path.exists() {
+                match fs::read_to_string(&source_symlink_file_abs_path) {
+                    Ok(file_content) => {
+                        println!("source symlink file {:?} points to {}", source_symlink_file_abs_path, file_content);
+                        file_content.trim().eq(target_symlink_abs_path.to_str().unwrap())
+                    },
+                    _ => false
+                }
+            } else {
+                false
+            };
+
+            if *overwrite {
+                target_to_source_list.push(AddTask::CreateSymlinkFilePointer(target_symlink_abs_path, target_symlink_pointee_abs_path.clone()));
+            } else if source_symlink_file_points_to_right_target {
+                println!("for target symlink {:?}, source symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
+            } else if !target_symlink_pointee_abs_path.starts_with(&source_dir_abs_path) {
+                println!("for target symlink {:?}, does not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
+                target_to_source_list.push(AddTask::CreateSymlinkFilePointer(target_symlink_abs_path, target_symlink_pointee_abs_path.clone()));
+            } else {
+                println!("target symlink {:?} pointee is managed as {:?}, to add a symlink to source directory use --overwrite", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
+            };
             target_symlink_pointee_abs_path
         } else {
             target_path.clone()
@@ -361,18 +352,8 @@ fn add_command(config: &Config, args: &Args) {
             continue;
         }
 
-        let target_file_rel_to_target_dir_path = file_path_relative_to(&target_abs_path, &target_dir_abs_path);
 
-        println!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
-
-        // replace dots in filenames and dirnames to dot_prefix from config
-        let source_file_rel_to_source_dir_path = regexp_for_leading_dot_in_filename
-            .replace(target_file_rel_to_target_dir_path.to_str().unwrap(), &dot_prefix).to_string();
-        let source_file_rel_to_source_dir_path = regexp_for_leading_dot_in_path
-            .replace_all(&source_file_rel_to_source_dir_path, &slash_dot_prefix).to_string();
-
-        println!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
-        let source_file_abs_path = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
+        let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
 
         // check if a conflict could take a place
         if source_file_abs_path.exists() {
@@ -439,7 +420,7 @@ fn add_command(config: &Config, args: &Args) {
             }
 
             if both_not_modified {
-                eprintln!("not target nor source was modified");
+                eprintln!("neither target nor source were modified");
                 if !overwrite {
                     continue;
                 }
@@ -462,10 +443,17 @@ fn add_command(config: &Config, args: &Args) {
     // TODO filter target duplicates
     // TODO file conflicts like: (tgt1 -> src1) and (tgt2 -> src1) and (tgt1 != tgt2)
 
+    if target_to_source_list.is_empty() {
+        println!("nothing to do");
+        return; // TODO with success
+    }
+
+    println!("::copy procedure begins, {} tasks", target_to_source_list.len());
+
     for add_task in target_to_source_list {
         match add_task {
             AddTask::Copy(target_file, source_file) => {
-                println!("::copy procedure begins, copying {:?} to {:?}", target_file, source_file);
+                println!("copying {:?} to {:?}", target_file, source_file);
                 if let Err(e) = fs::remove_file(source_file.clone()) {
                     println!("failed to remove source {:?}: {}", source_file, e);
                 } else {
