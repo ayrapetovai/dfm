@@ -1,7 +1,7 @@
 use std::borrow::ToOwned;
 use std::{env, fs};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::ops::Add;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -108,6 +108,7 @@ enum Command {
 
         /// Overwrite source file on conflict and add symlinks.
         #[arg(long, short, num_args = 0, default_value_t = false)]
+        // TODO rename to force
         overwrite: bool,
 
         /// Move target file to the source directory, and create a symlink in the target directory.
@@ -247,7 +248,7 @@ fn add_command(config: &Config, args: &Args) {
     #[derive(Debug)]
     enum AddTask {
         Copy(PathBuf, PathBuf),
-        CreateSymlinkFilePointer(PathBuf, PathBuf),
+        CreateSymlinkFilePointer(PathBuf, String),
     }
 
     let mut target_to_source_list: Vec<AddTask> = Vec::new();
@@ -285,7 +286,7 @@ fn add_command(config: &Config, args: &Args) {
                     continue;
                 }
             };
-            let target_symlink_pointee_abs_path = match fs::canonicalize(target_symlink_pointee_rel_path) {
+            let target_symlink_pointee_abs_path = match fs::canonicalize(&target_symlink_pointee_rel_path) {
                 Ok(p) => p,
                 Err(e) => {
                     println!("cannot obtain the absolute path of the pointee of the target symlink {:?}: {}", target_symlink_abs_path, e);
@@ -299,7 +300,7 @@ fn add_command(config: &Config, args: &Args) {
                 match fs::read_to_string(&source_symlink_file_abs_path) {
                     Ok(file_content) => {
                         println!("source symlink file {:?} points to {}", source_symlink_file_abs_path, file_content);
-                        file_content.trim().eq(target_symlink_abs_path.to_str().unwrap())
+                        file_content.trim().eq(target_symlink_pointee_rel_path.to_str().unwrap())
                     },
                     _ => false
                 }
@@ -307,13 +308,16 @@ fn add_command(config: &Config, args: &Args) {
                 false
             };
 
-            if *overwrite {
-                target_to_source_list.push(AddTask::CreateSymlinkFilePointer(target_symlink_abs_path, target_symlink_pointee_abs_path.clone()));
+            if *overwrite || !source_symlink_file_points_to_right_target {
+                if !source_symlink_file_points_to_right_target {
+                    print!("source symlink file points to the wrong file");
+                }
+                target_to_source_list.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path, target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
             } else if source_symlink_file_points_to_right_target {
                 println!("for target symlink {:?}, source symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
             } else if !target_symlink_pointee_abs_path.starts_with(&source_dir_abs_path) {
                 println!("for target symlink {:?}, does not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
-                target_to_source_list.push(AddTask::CreateSymlinkFilePointer(target_symlink_abs_path, target_symlink_pointee_abs_path.clone()));
+                target_to_source_list.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path, target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
             } else {
                 println!("target symlink {:?} pointee is managed as {:?}, to add a symlink to source directory use --overwrite", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
             };
@@ -504,9 +508,20 @@ fn add_command(config: &Config, args: &Args) {
                 println!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
                          target_file_modified, source_file_created, source_file_modified);
             },
-            AddTask::CreateSymlinkFilePointer(file_target, points_to) => {
-                println!("::create symlink procedure begins, target symlink {:?}, points to {:?}", file_target, points_to);
-                println!("skipping, not yet implemented");
+            AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {
+                println!("direct source symlink {:?} to point to the target {:?}", source_symlink, points_to);
+                // open if exists or create, if it doesn't
+                let mut symlink_file = match File::create(&source_symlink) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        println!("failed to create/open source symlink file {:?}: {}", source_symlink, e);
+                        continue;
+                    }
+                };
+                if let Err(e) = symlink_file.write(points_to.as_bytes()) {
+                    println!("failed to write a path {} into the source symlink file {:?}: {}", points_to, source_symlink, e);
+                    continue;
+                }
             },
             // _ => {
             //     panic!("unsupported eunumerator {:?}", add_task);
