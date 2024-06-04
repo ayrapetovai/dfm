@@ -67,30 +67,6 @@ enum Command {
         path: PathBuf,
     },
 
-    /// If no conflict detected copies files from the source directory to the target directory.
-    /// The files considered to be managed after this operation.
-    #[command(arg_required_else_help = true)]
-    Apply {
-        // empty means all, alright?
-        /// Files to be updated from source directory to target.
-        paths: Option<Vec<PathBuf>>,
-        /// Invert pattern matching.
-        invert_match: bool, // -v
-        /// Run merge tool on conflicts.
-        merge: bool,
-    },
-
-    Status {
-        all: bool,
-        managed: bool,
-        unmanaged: bool,
-        unapplyed: bool,
-        ignored: bool,
-        ignored_patterns: bool,
-        unused_ignored_patterns: bool,
-        difference: bool,
-    },
-
     /// If no conflicts detected copies files from the target directory to the source directory.
     /// The files considered to be managed after this operation.
     #[command(arg_required_else_help = true)]
@@ -118,6 +94,43 @@ enum Command {
         /// Run only checks, no changes will be made to filesystem.
         #[arg(long, short, num_args = 0, default_value_t = false)]
         dry_run: bool,
+    },
+
+    /// If no conflict detected copies files from the source directory to the target directory.
+    /// The files considered to be managed after this operation.
+    #[command(arg_required_else_help = true)]
+    Apply {
+        // empty means all, alright?
+        /// Files to be updated from source directory to target.
+        paths: Option<Vec<PathBuf>>,
+        
+        /// Invert pattern matching.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        invert_match: bool, // -v
+        
+        /// Run merge tool on conflicts.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        merge: bool,
+
+        /// Overwrite target file on conflict.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        // TODO rename to force
+        overwrite: bool,
+
+        /// Run only checks, no changes will be made to filesystem.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        dry_run: bool,
+    },
+
+    Status {
+        all: bool,
+        managed: bool,
+        unmanaged: bool,
+        unapplyed: bool,
+        ignored: bool,
+        ignored_patterns: bool,
+        unused_ignored_patterns: bool,
+        difference: bool,
     },
 
     // must check conflicts
@@ -543,6 +556,20 @@ fn add_command(config: &Config, args: &Args) {
     }
 }
 
+fn apply_command(config: &Config, args: &Args) {
+    let Command::Apply {
+        paths,
+        merge,
+        overwrite,
+        dry_run,
+        ..
+    } = &args.command else {
+        panic!("unreachable code reached: command {:?} is not `apply`", args.command)
+    };
+
+    println!("apply paths {:?}, merge {}, overwrite {}, dry-run {}", paths.to_owned(), merge, overwrite, dry_run);
+}
+
 fn read_config() -> Option<Config> {
     let path_to_config_file = envmnt::get_or_panic("HOME")
         .add("/")
@@ -608,7 +635,10 @@ fn main() {
         },
         Command::Add { .. } => {
             add_command(&merged_config, &args)
-        }
+        },
+        Command::Apply { .. } => {
+            apply_command(&merged_config, &args)
+        },
         _ => {
             println!("subcommand {:?} is not implemented yet", args.command)
         }
