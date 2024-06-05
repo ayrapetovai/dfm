@@ -12,7 +12,15 @@ pub struct Config {
     pub dot_prefix: Option<String>,
     pub manage_symlinks: Option<bool>,
     // pub compare_content: Option<bool>, compare files by content
+    
+    // assign shell commands (with args of dfm) on the events of dfm
+    // like: pre_add, post_add, on_add_failed, on_add_success
+    // pre_add_merge, post_add_merge, on_add_merge_failed
     pub hooks: Option<Vec<Hook>>,
+ 
+    // if true ignore files and directories in the target directory
+    // that don't start with a dot, by default - false
+    pub dotfiles_only: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

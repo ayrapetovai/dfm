@@ -50,7 +50,7 @@ write source path with a $HOME prepended and relative path.
 Write $HOME to target path variable of the config
 if --config is given then error, print help
 
-### Add and Apply
+### Add and Apply Conflict Detection
 Subcommand `add` copy files from target directory to source directory, subcommand `apply` copy from
 source directory to target directory respectively.
 Before perform any coping the check any modification conflict present.  
@@ -71,3 +71,12 @@ that target file was edited by user or by `git`.
     will overwrite new changes in the target file (conflict).
     4. if TF.mtime > SF.ctime && SF.ctime < SF.mtime then, both files was modified independently, both `add` and
     `apply` subcommands will overwrite new modifications (conflict).
+
+### Add
+
+### Apply
+The subcommand takes the names of a files from target directory.
+If the specified filename does not exist in target directory, then `apply` will calculate the corresponding names
+in the source directory. If there is no such a file in source directory - error.
+For existing target files: replacement, for non-existing files: creation (does not require special conditions).
+Replacement checks if there is no conflict.
