@@ -5,13 +5,12 @@ use std::io::{Read, Write};
 use std::ops::Add;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::str::FromStr;
 use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 use walkdir::WalkDir;
 
-use dfm::{Config, filepath_in_source_dir};
+use dfm::{calc_working_dir_paths, Config, filepath_in_source_dir};
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -103,11 +102,11 @@ enum Command {
         // empty means all, alright?
         /// Files to be updated from source directory to target.
         paths: Option<Vec<PathBuf>>,
-        
+
         /// Invert pattern matching.
         #[arg(long, short, num_args = 0, default_value_t = false)]
         invert_match: bool, // -v
-        
+
         /// Run merge tool on conflicts.
         #[arg(long, short, num_args = 0, default_value_t = false)]
         merge: bool,
@@ -188,44 +187,8 @@ fn add_command(config: &Config, args: &Args) {
 
     println!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
 
-    if config.source_dir.trim().is_empty() {
-        println!("failed to read source directory path, does config file present on path {}?", "<todo>");
-        return // TODO with error
-    }
-
-    println!("using target directory from config (original) {:?}", config.target_dir);
-
-    let target_dir_path_expanded = envmnt::expand(&config.target_dir, None);
-    println!("using target directory from config (expanded) {}", target_dir_path_expanded);
-
-    let target_dir_abs_path = match PathBuf::from_str(target_dir_path_expanded.as_str()) {
-        Ok(p) => match fs::canonicalize(p.clone()){
-            Ok(p) => p,
-            Err(e) => {
-                println!("cannot obtain an absolute path to the target directory {:?}: {}", p, e);
-                return // TODO with error
-            }
-        },
-        Err(e) => panic!("target directory path is bad {}", e)
-    };
-
-    println!("using source directory from config (original) {:?}", config.source_dir);
-
-    let source_dir_path_expanded = envmnt::expand(&config.source_dir, None);
-    println!("using source directory from config (expanded) {}", source_dir_path_expanded);
-
-    let source_dir_abs_path = match PathBuf::from_str(source_dir_path_expanded.as_str()) {
-        Ok(p) => match fs::canonicalize(p) {
-            Ok(p) => p,
-            Err(e) => {
-                println!("cannot access to source directory path {}: {}", source_dir_path_expanded, e);
-                return // TODO with error
-            }
-        },
-        Err(e) => {
-            println!("source directory path is bad {}", e);
-            return // TODO with error
-        }
+    let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
+        panic!("cannot obtain working directories paths");
     };
 
     let mut error_messages = Vec::new();
@@ -550,7 +513,7 @@ fn add_command(config: &Config, args: &Args) {
                 }
             },
             // _ => {
-            //     panic!("unsupported eunumerator {:?}", add_task);
+            //     panic!("unsupported enumerator {:?}", add_task);
             // }
         }
     }
@@ -568,6 +531,10 @@ fn apply_command(config: &Config, args: &Args) {
     };
 
     println!("apply paths {:?}, merge {}, overwrite {}, dry-run {}", paths.to_owned(), merge, overwrite, dry_run);
+
+    let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
+        panic!("cannot obtain working directories paths");
+    };
 }
 
 fn read_config() -> Option<Config> {
