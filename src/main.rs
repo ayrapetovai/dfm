@@ -83,7 +83,7 @@ enum Command {
 
         /// Overwrite source file on conflict and add symlinks.
         #[arg(long, short, num_args = 0, default_value_t = false)]
-        // TODO rename to force
+        // TODO rename to `force`?
         overwrite: bool,
 
         /// Move target file to the source directory, and create a symlink in the target directory.
@@ -95,6 +95,7 @@ enum Command {
         dry_run: bool,
     },
 
+    // TODO rename to `sync`?
     /// If no conflict detected copies files from the source directory to the target directory.
     /// The files considered to be managed after this operation.
     #[command(arg_required_else_help = true)]
@@ -563,21 +564,25 @@ fn apply_command(config: &Config, args: &Args) {
     //  a non existing file
 }
 
-fn read_config() -> Option<Config> {
+fn read_config(home_rel_path_to_config_file: &str) -> Option<Config> {
     let path_to_config_file = envmnt::get_or_panic("HOME")
         .add("/")
-        .add(CONFIG_FILE_NAME_IN_HOME);
+        .add(home_rel_path_to_config_file);
     eprintln!("config file path {}", path_to_config_file);
     let config_file = File::open(path_to_config_file);
     let mut config_file_content = String::new();
     config_file.unwrap().read_to_string(&mut config_file_content).expect("TODO: panic message");
-    let config_opt: Option<Config> = match toml::from_str(&config_file_content) {
+    return match toml::from_str(&config_file_content) {
         Err(_) => None,
         Ok(c) => Some(c)
     };
-    config_opt
 }
 
+// TODO move to library
+//  create to separate structures, one for a config file (with Options), one to be
+//  default config object and a processing config object (the result of merge of
+//  default and custom configs, without Options, and with a flag whether a custom
+//  config was provided or not)
 fn merge_configs(default: &Config, custom_opt: &Option<Config>) -> Config {
     match custom_opt {
         Some(custom) =>
@@ -616,6 +621,7 @@ fn main() {
         eprintln!("Environment variable $HOME is not set")
     }
 
+    // TODO create a function that will return a default config
     let default_config = Config {
         source_dir: "".to_owned(),
         target_dir: "$HOME".to_owned(),
@@ -625,7 +631,9 @@ fn main() {
         dotfiles_only: Some(false),
     };
 
-    let config = read_config();
+    // TODO try to read config from ~/.config/...
+    //  create a full absolute PathBuf for `read_config` function and pass it
+    let config = read_config(CONFIG_FILE_NAME_IN_HOME);
     let merged_config =  merge_configs(&default_config, &config);
 
     match args.command {
