@@ -222,9 +222,12 @@ fn add_command(config: &Config, args: &Args) {
         })
         // TODO filter duplicates
         .collect::<Vec<PathBuf>>();
-    println!("traversing result is {:?}, errors {:?}", traversed_paths, error_messages);
+    println!("traversing result is {:?}", traversed_paths);
 
-    // TODO check if error_messages is not empty then do we want fail the execution?
+    if !error_messages.is_empty() {
+        println!("failed to process some subdirectories or files in targets {:?}", error_messages);
+        return // TODO with error
+    }
 
     #[derive(Debug)]
     enum AddTask {
@@ -535,6 +538,29 @@ fn apply_command(config: &Config, args: &Args) {
     let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
         panic!("cannot obtain working directories paths");
     };
+    
+    // TODO apply without paths-arguments must copy all files from the source dir to target
+    
+    // TODO traverse all directories in given paths
+    //  get the list of files to work on
+    //  each file in the target directory could be:
+    //  a symlink, that points not into the source directory
+    //  a symlink, that points into the source directory pointing at the corresponding file
+    //  a symlink, that points into the source directory pointing at the non corresponding file
+    //  a symlink, that has an associated symlink file in the source directory
+    //  an existing file, that has no corresponding file in the source directory
+    //  an existing file, that has a corresponding file in the source directory
+    //  a non existing file, that has no corresponding file in the source directory
+    //  a non existing file, that has a corresponding file in the source directory
+    
+    // TODO it is cool to make the `apply` subcommand to be able to take a path from
+    //  the source directory, to make is easier to copy just cloned files, that don't yet
+    //  exist in the home directory.
+    //  each file in the source directory could be:
+    //  an existing file, that has no corresponding file in the target directory
+    //  an existing file, that has a corresponding file in the target directory
+    //  an existing file, that has a corresponding symlink in the target directory
+    //  a non existing file
 }
 
 fn read_config() -> Option<Config> {
@@ -573,6 +599,11 @@ fn merge_configs(default: &Config, custom_opt: &Option<Config>) -> Config {
                         default.manage_symlinks.to_owned()
                     },
                 hooks: None,
+                dotfiles_only: if custom_opt.is_some() {
+                    custom.dotfiles_only.to_owned()
+                } else {
+                    default.dotfiles_only.to_owned()
+                }
             },
         None => default.clone()
     }
@@ -591,6 +622,7 @@ fn main() {
         dot_prefix: Some("dot_".to_owned()),
         manage_symlinks: None,
         hooks: None,
+        dotfiles_only: Some(false),
     };
 
     let config = read_config();
