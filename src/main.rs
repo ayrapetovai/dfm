@@ -8,9 +8,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
-use walkdir::WalkDir;
 
-use dfm::{calc_working_dir_paths, Config, filepath_in_source_dir};
+use dfm::{calc_working_dir_paths, Config, filepath_in_source_dir, list_directory, ListDirectories};
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -192,37 +191,11 @@ fn add_command(config: &Config, args: &Args) {
         panic!("cannot obtain working directories paths");
     };
 
-    let mut error_messages = Vec::new();
-    let traversed_paths = paths.iter()
-        .flat_map(|path| {
-            if path.is_dir() {
-                WalkDir::new(path)
-                    .follow_links(false)
-                    .into_iter()
-                    .map(|r| {
-                        match r {
-                            Ok(d) if !d.file_type().is_dir() => Some(d.path().to_path_buf()),
-                            Err(e) => {
-                                error_messages.push(format!("error: {}", e));
-                                None
-                            }
-                            // we don't manage directories in source directory
-                            _ => None
-                        }
-                    })
-                    .filter(|o| o.is_some())
-                    .map(|o| o.unwrap())
-                    // FIXME do not create an array
-                    .collect::<Vec<_>>()
-                    .into_iter()
-            } else {
-                // FIXME do not create an array
-                vec![path.clone()]
-                    .into_iter()
-            }
-        })
-        // TODO filter duplicates
-        .collect::<Vec<PathBuf>>();
+    let ListDirectories{
+        found: traversed_paths,
+        errors: error_messages,
+        ..
+    } = list_directory(paths).unwrap();
     println!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
@@ -539,9 +512,21 @@ fn apply_command(config: &Config, args: &Args) {
     let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
         panic!("cannot obtain working directories paths");
     };
-    
+
     // TODO apply without paths-arguments must copy all files from the source dir to target
-    
+    let ref paths = paths.clone().unwrap();
+    let ListDirectories{
+        found: traversed_paths,
+        errors: error_messages,
+        ..
+    } = list_directory(paths).unwrap();
+    println!("traversing result is {:?}", traversed_paths);
+
+    if !error_messages.is_empty() {
+        println!("path traversing was done with errors: {:?}", error_messages);
+        return // TODO exit with error
+    }
+
     // TODO traverse all directories in given paths
     //  get the list of files to work on
     //  each file in the target directory could be:
@@ -553,7 +538,7 @@ fn apply_command(config: &Config, args: &Args) {
     //  an existing file, that has a corresponding file in the source directory
     //  a non existing file, that has no corresponding file in the source directory
     //  a non existing file, that has a corresponding file in the source directory
-    
+
     // TODO it is cool to make the `apply` subcommand to be able to take a path from
     //  the source directory, to make is easier to copy just cloned files, that don't yet
     //  exist in the home directory.

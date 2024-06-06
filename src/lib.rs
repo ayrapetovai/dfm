@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -145,6 +146,51 @@ pub fn calc_working_dir_paths(config: &Config) -> Result<(PathBuf, PathBuf), Err
     };
 
     return Ok((target_dir_abs_path, source_dir_abs_path));
+}
+
+#[derive(Debug)]
+pub struct ListDirectories {
+    pub found: Vec<PathBuf>,
+    pub errors: Vec<String>,
+}
+
+pub fn list_directory(paths: &Vec<PathBuf>) -> Result<ListDirectories, Error> {
+    let mut error_messages = Vec::new();
+    let traversed_paths = paths.iter()
+        .flat_map(|path| {
+            if path.is_dir() {
+                WalkDir::new(path)
+                    .follow_links(false)
+                    .into_iter()
+                    .map(|r| {
+                        match r {
+                            Ok(d) if !d.file_type().is_dir() => Some(d.path().to_path_buf()),
+                            Err(e) => {
+                                error_messages.push(format!("error: {}", e));
+                                None
+                            }
+                            // we don't manage directories in source directory
+                            _ => None
+                        }
+                    })
+                    .filter(|o| o.is_some())
+                    .map(|o| o.unwrap())
+                    // FIXME do not create an array
+                    .collect::<Vec<_>>()
+                    .into_iter()
+            } else {
+                // FIXME do not create an array
+                vec![path.clone()]
+                    .into_iter()
+            }
+        })
+        // TODO filter duplicates
+        .collect::<Vec<PathBuf>>();
+
+    Ok(ListDirectories {
+        found: traversed_paths,
+        errors: error_messages,
+    })
 }
 
 #[test]
