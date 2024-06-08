@@ -55,6 +55,7 @@ pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &Pat
     }
 }
 
+// TODO replace `config` with dot_prefix: &String
 pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, source_dir_abs_path: &PathBuf, target_abs_path: &PathBuf, add_postfix_opt: Option<&str>) -> PathBuf {
     let regexp_for_leading_dot_in_filename = Regex::new(r#"^\."#).unwrap();
     let regexp_for_leading_dot_in_path = Regex::new(r#"/\.[^.]"#).unwrap();
@@ -87,7 +88,7 @@ pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, so
     return remove_dots_from_path(&ret);
 }
 
-fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
+pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
     if path.to_str().unwrap() == "/" {
         return PathBuf::from(path);
     }

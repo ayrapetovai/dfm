@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 
-use dfm::{calc_working_dir_paths, Config, filepath_in_source_dir, list_directory, ListDirectories};
+use dfm::{calc_working_dir_paths, Config, filepath_in_source_dir, list_directory, ListDirectories, remove_dots_from_path};
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -527,26 +527,121 @@ fn apply_command(config: &Config, args: &Args) {
         return // TODO exit with error
     }
 
+    enum ApplyTask {
+        Copy(PathBuf, PathBuf),
+        CreateSymlinkFile(PathBuf, String),
+    }
+
+    let mut tasks: Vec<ApplyTask> = vec![];
+
+    for target_path in traversed_paths.iter() {
+        let target_path_abs = PathBuf::from_iter(vec!(&target_dir_abs_path, &target_path));
+        let target_path_abs = remove_dots_from_path(&target_path_abs);
+        println!("target absolute path {:?}", target_path_abs);
+
+        if target_path_abs.exists() {
+            if target_path_abs.is_symlink() {
+                let target_symlink_followed_abs_path = fs::canonicalize(&target_path_abs).unwrap();
+
+                let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_path_abs, None);
+                if target_symlink_followed_abs_path == source_file_abs_path {
+                    println!("target symlink {:?} points to the source file {:?}, skipping...", target_path_abs, source_file_abs_path);
+                    continue;
+                }
+                
+                let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_path_abs, Some(".symlink"));
+                let target_symlink_pointee_path = fs::read_link(&target_path_abs).unwrap();
+                let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
+                if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
+                    println!("target symlink {:?} points to {:?}, skipping...", target_path_abs, target_symlink_pointee_path.to_str().unwrap());
+                    continue;
+                } else {
+                    println!("target symlink {:?} points to {:?}, must point to {:?}", target_path_abs, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                }
+
+                if !target_symlink_followed_abs_path.starts_with(&source_dir_abs_path) {
+                    println!("target symlink {:?} does not point to the source directory, skipping...", target_path_abs);
+                    // TODO remove the symlink?
+                    continue;
+                }
+                
+                // also the case is handled when the symlink pints inside the source directory but
+                // to the wrong file
+                tasks.push(ApplyTask::CreateSymlinkFile(target_path_abs.clone(), source_file_content));
+                continue;
+            }
+
+            // existing target file is not a symlink
+            let source_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_path_abs, None);
+            if !source_abs_path.exists() {
+                println!("target {:?} is unmanaged, no source {:?} found, skipping...", target_path_abs, source_abs_path);
+                continue; // TODO error
+            }
+        }
+
+        // if a path of a source dir file was given
+        //let check_source_abs_path = PathBuf::from_iter(vec![&source_dir_abs_path, &target_path]);
+    }
+
     // TODO traverse all directories in given paths
     //  get the list of files to work on
     //  each file in the target directory could be:
     //  a symlink, that points not into the source directory
+    //    exit with error, or remove if --overwrite?
     //  a symlink, that points into the source directory pointing at the corresponding file
+    //    do nothing
     //  a symlink, that points into the source directory pointing at the non corresponding file
+    //    exit with error, if --overwrite then remove the link and create one pointing to the right file
     //  a symlink, that has an associated symlink file in the source directory
+    //    if the link points to the file specified in the source symlink file then do nothing
+    //    otherwise error or if --overwrite then recreate  the link.
     //  an existing file, that has no corresponding file in the source directory
+    //    error "target file is not managed"
     //  an existing file, that has a corresponding file in the source directory
+    //    if target file was not modified then overwrite it with the source file,
+    //    otherwise error or if --overwrite then overwrite or if --merge call merge tool
     //  a non existing file, that has no corresponding file in the source directory
+    //    error "file not found and not managed"
     //  a non existing file, that has a corresponding file in the source directory
+    //    copy the source file to the path of a target file
 
     // TODO it is cool to make the `apply` subcommand to be able to take a path from
     //  the source directory, to make is easier to copy just cloned files, that don't yet
     //  exist in the home directory.
     //  each file in the source directory could be:
     //  an existing file, that has no corresponding file in the target directory
+    //    copy file from source directory to the path of the target file
     //  an existing file, that has a corresponding file in the target directory
+    //    if target file is not modified then copy source file to the path of the target file
+    //    or error or if --overwrite then copy, or is --merge then run merge
     //  an existing file, that has a corresponding symlink in the target directory
+    //    do nothing, but if the symlink pints to the wrong file recreate it if --overwrite
     //  a non existing file
+    //    error "file does not exist and is not managed"
+
+    // TODO add option "backup target file before overwrite", all backups must be stored in the specified
+    //  directory, maybe not in the source directory.
+
+    if tasks.is_empty() {
+        println!("nothing to do");
+        return;
+    }
+
+    if *dry_run {
+        println!("dry run ");
+        return;
+    }
+
+    for task in tasks.iter() {
+        match task {
+            ApplyTask::Copy(p1, p2) => {
+                println!("copy {:?} to {:?}", p1, p2);
+            },
+            ApplyTask::CreateSymlinkFile(p, s) => {
+                println!("create symlink {:?} with content {:?}", p, s);
+            }
+        }
+    }
 }
 
 fn read_config(home_rel_path_to_config_file: &str) -> Option<Config> {
@@ -598,6 +693,9 @@ fn merge_configs(default: &Config, custom_opt: &Option<Config>) -> Config {
         None => default.clone()
     }
 }
+
+// TODO add an interactive mode, the application should ask user before each modification in
+//  filesystem it wants to make.
 
 fn main() {
     let args = Args::parse();
