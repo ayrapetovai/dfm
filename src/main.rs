@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 
-use dfm::{calc_working_dir_paths, compare_files_by_timestamps, CompareByTimestamp, Config, create_default_config, file_path_relative_to, filepath_in_source_dir, list_directory, ListDirectories, remove_dots_from_path};
+use dfm::*;
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -170,6 +170,30 @@ fn init_command(_config: &Config, args: &Args) {
     };
 
     println!("init with path {}", path.to_str().unwrap());
+    // TODO The supposed workflow is:
+    //  Setting up an existing repo with dotfiles:
+    //  - user downloads the repository, with the source directory locating at the root of
+    //  the repository, or a one of its subdirectories.
+    //  - user executes `$ dfm init path/to/repo/` or with path directly to the source directory.
+    //  - user executes `$ dfm apply` to copy all the dotfiles to the home directory.
+    //  or creating a new repo for dotfiles:
+    //  - user crates a directory somewhere in filesystem to make it a source directory.
+    //  - user executes `$ dfm init path/to/that/new/dir`.
+    //  - user executes `$ dfm add` to add all dotfiles under the management.
+    //  The given path considered to be the source directory path
+    //  If not exists then exit with error.
+    //  If this path contains a file .dfm-root, then the program reads the file content,
+    //  the content is a path to the source root.
+    //  If the path from the .dfm-root does not exist then exit with error.
+    //  Recursively search for the source directory, by the way.
+    //  Having source directory, search a config file of the program inside of it,
+    //  apply the `apply` subcommand to the found config file.
+    //  In the config file in the target directory, we must set the `source_dir` variable
+    //  to the path of the source source directory.
+    //  Create a file .dfm-root with content "." if not exists in the source directory.
+    
+    // TODO the apply subcommand must not overwrite the value of the source_dir variable of
+    //  the programs config file. Actually the value mast not be manages somehow.
 }
 
 fn add_command(config: &Config, args: &Args) {
@@ -508,9 +532,11 @@ fn apply_command(config: &Config, args: &Args) {
             println!("provided path of a source {:?}", source_file_abs_path);
 
             let target_file_rel_to_target_dir = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path);
-            let dot_prefix = config.dot_prefix.clone().unwrap();
+            let dot_prefix = config.dot_prefix.clone();
             let target_file_rel_to_target_dir = target_file_rel_to_target_dir.to_str().unwrap().replace(&dot_prefix, ".");
+            // TODO ".symlink" postfix is hardcoded
             let target_file_rel_to_target_dir = if source_file_abs_path.to_str().unwrap().ends_with(".symlink") {
+                // TODO ".symlink" postfix is hardcoded
                 target_file_rel_to_target_dir.replace(".symlink", "")
             } else {
                 target_file_rel_to_target_dir
@@ -520,6 +546,7 @@ fn apply_command(config: &Config, args: &Args) {
             println!("inferred target {:?}", target_file_abs_path);
             
             if !target_file_abs_path.exists() && source_file_abs_path.exists() {
+                // TODO ".symlink" postfix is hardcoded
                 if source_file_abs_path.to_str().unwrap().ends_with(".symlink") {
                     let source_file_content = fs::read_to_string(&source_file_abs_path).unwrap();
                     println!("source is a symlink file, pointing to {}", source_file_content);
@@ -539,6 +566,8 @@ fn apply_command(config: &Config, args: &Args) {
                     continue; // success
                 }
             }
+            // TODO check if the pointee of the symlink also is under management and needs to be
+            //  applied.
             target_file_abs_path
         } else {
             target_abs_path
@@ -554,6 +583,7 @@ fn apply_command(config: &Config, args: &Args) {
                     continue;
                 }
 
+                // TODO ".symlink" postfix is hardcoded
                 let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
                 if source_symlink_file_abs_path.exists() {
                     let target_symlink_pointee_path = fs::read_link(&target_abs_path).unwrap();
@@ -736,58 +766,7 @@ fn apply_command(config: &Config, args: &Args) {
     }
 }
 
-fn read_config(path_to_config_file: &PathBuf) -> Option<Config> {
-    eprintln!("config file path {:?}", path_to_config_file);
-
-    let config_file_content = match fs::read_to_string(path_to_config_file) {
-        Ok(s) => s,
-        Err(e) => {
-            println!("failed to read config file {:?}: {}", path_to_config_file, e);
-            return None
-        }
-    };
-
-    return match toml::from_str(&config_file_content) {
-        Err(_) => None,
-        Ok(c) => Some(c)
-    };
-}
-
-// TODO move to library
-//  create to separate structures, one for a config file (with Options), one to be
-//  default config object and a processing config object (the result of merge of
-//  default and custom configs, without Options, and with a flag whether a custom
-//  config was provided or not)
-fn merge_configs(default: &Config, custom_opt: &Option<Config>) -> Config {
-    match custom_opt {
-        Some(custom) =>
-            Config {
-                source_dir: custom.source_dir.to_owned(),
-                target_dir: if ! custom.target_dir.is_empty() {
-                        custom.target_dir.to_owned()
-                    } else {
-                        default.target_dir.to_owned()
-                    },
-                dot_prefix: if custom.dot_prefix.is_some() {
-                        custom.dot_prefix.to_owned()
-                    } else {
-                        default.dot_prefix.to_owned()
-                    },
-                manage_symlinks: if custom.manage_symlinks.is_some() {
-                        custom.manage_symlinks.to_owned()
-                    } else {
-                        default.manage_symlinks.to_owned()
-                    },
-                hooks: None,
-                dotfiles_only: if custom_opt.is_some() {
-                    custom.dotfiles_only.to_owned()
-                } else {
-                    default.dotfiles_only.to_owned()
-                }
-            },
-        None => default.clone()
-    }
-}
+// TODO fail the program execution if on of the check of any of the subcommands fails.
 
 // TODO add an interactive mode, the application should ask user before each modification in
 //  filesystem it wants to make.
@@ -808,8 +787,8 @@ fn main() {
         .add(CONFIG_FILE_NAME_IN_HOME);
     let path_to_config_file = PathBuf::from(path_to_config_file);
 
-    let config = read_config(&path_to_config_file);
-    let merged_config =  merge_configs(&default_config, &config);
+    let config_from_file = read_config(&path_to_config_file);
+    let merged_config =  merge_configs(&default_config, &config_from_file);
 
     match args.command {
         Command::Init { .. } => {

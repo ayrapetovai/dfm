@@ -1,15 +1,17 @@
+use std::fs;
 use std::io::Error;
 use std::ops::Add;
 use std::path::PathBuf;
 use std::str::FromStr;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct Config {
+pub struct ConfigFile {
     pub source_dir: String,
-    pub target_dir: String,
+    pub target_dir: Option<String>,
     pub dot_prefix: Option<String>,
     pub manage_symlinks: Option<bool>,
     // pub compare_content: Option<bool>, compare files by content
@@ -17,7 +19,7 @@ pub struct Config {
     // assign shell commands (with args of dfm) on the events of dfm
     // like: pre_add, post_add, on_add_failed, on_add_success
     // pre_add_merge, post_add_merge, on_add_merge_failed
-    pub hooks: Option<Vec<Hook>>,
+    pub hooks: Option<Vec<HookFile>>,
 
     // if true ignore files and directories in the target directory
     // that don't start with a dot, by default - false
@@ -25,6 +27,31 @@ pub struct Config {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct HookFile {
+    pub when: String,
+    pub execute: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub config_file_found: bool,
+    pub source_dir: String,
+    pub target_dir: String,
+    pub dot_prefix: String,
+    pub manage_symlinks: bool,
+    // pub compare_content: Option<bool>, compare files by content
+
+    // assign shell commands (with args of dfm) on the events of dfm
+    // like: pre_add, post_add, on_add_failed, on_add_success
+    // pre_add_merge, post_add_merge, on_add_merge_failed
+    pub hooks:Vec<Hook>,
+
+    // if true ignore files and directories in the target directory
+    // that don't start with a dot, by default - false
+    pub dotfiles_only: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct Hook {
     pub when: String,
     pub execute: String,
@@ -32,12 +59,58 @@ pub struct Hook {
 
 pub fn create_default_config() -> Config {
     Config {
+        config_file_found: false,
         source_dir: "".to_owned(),
         target_dir: "$HOME".to_owned(),
-        dot_prefix: Some("dot_".to_owned()),
-        manage_symlinks: None,
-        hooks: None,
-        dotfiles_only: Some(false),
+        dot_prefix: "dot_".to_owned(),
+        manage_symlinks: true,
+        hooks: vec![],
+        dotfiles_only: false,
+    }
+}
+
+pub fn read_config(path_to_config_file: &PathBuf) -> Option<ConfigFile> {
+    eprintln!("config file path {:?}", path_to_config_file);
+
+    let config_file_content = match fs::read_to_string(path_to_config_file) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("failed to read config file {:?}: {}", path_to_config_file, e);
+            return None
+        }
+    };
+
+    return match toml::from_str(&config_file_content) {
+        Err(_) => None,
+        Ok(c) => Some(c)
+    };
+}
+
+pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>) -> Config {
+    match custom_opt {
+        Some(custom) =>
+            Config {
+                config_file_found: true,
+                source_dir: custom.source_dir.to_owned(),
+                target_dir: match custom.target_dir.to_owned() {
+                    Some(v) => v.clone(),
+                    None => default.target_dir.to_owned()
+                },
+                dot_prefix: match &custom.dot_prefix {
+                    Some(v) => v.clone(),
+                    None => default.dot_prefix.to_string()
+                },
+                manage_symlinks: match custom.manage_symlinks {
+                    Some(v) => v,
+                    None => default.manage_symlinks.to_owned()
+                },
+                hooks: vec![], // TODO implement hooks
+                dotfiles_only: match custom.dotfiles_only {
+                    Some(v) => v,
+                    None => default.dotfiles_only.to_owned()
+                }
+            },
+        None => default.clone()
     }
 }
 
@@ -71,7 +144,7 @@ pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, so
     let regexp_for_leading_dot_in_filename = Regex::new(r#"^\."#).unwrap();
     let regexp_for_leading_dot_in_path = Regex::new(r#"/\.[^.]"#).unwrap();
 
-    let dot_prefix = config.dot_prefix.clone().unwrap();
+    let dot_prefix = config.dot_prefix.clone();
     let slash_dot_prefix = String::from_iter(vec!["/", &dot_prefix]);
 
     let target_file_rel_to_target_dir_path = file_path_relative_to(target_abs_path, &target_dir_abs_path);
