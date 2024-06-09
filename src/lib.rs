@@ -13,12 +13,12 @@ pub struct Config {
     pub dot_prefix: Option<String>,
     pub manage_symlinks: Option<bool>,
     // pub compare_content: Option<bool>, compare files by content
-    
+
     // assign shell commands (with args of dfm) on the events of dfm
     // like: pre_add, post_add, on_add_failed, on_add_success
     // pre_add_merge, post_add_merge, on_add_merge_failed
     pub hooks: Option<Vec<Hook>>,
- 
+
     // if true ignore files and directories in the target directory
     // that don't start with a dot, by default - false
     pub dotfiles_only: Option<bool>,
@@ -92,7 +92,7 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
     if path.to_str().unwrap() == "/" {
         return PathBuf::from(path);
     }
- 
+
     let mut go_back_counter = 0;
     let mut ret = String::new();
     for ancestor in path.iter().rev() {
@@ -192,6 +192,77 @@ pub fn list_directory(paths: &Vec<PathBuf>) -> Result<ListDirectories, Error> {
         found: traversed_paths,
         errors: error_messages,
     })
+}
+
+pub enum CompareByTimestamp {
+    TargetModified,
+    SourceModified,
+    BothModified,
+    NonModified,
+}
+
+pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_path: &PathBuf) -> Result<CompareByTimestamp, Error> {
+    let target_file_meta = match target_abs_path.metadata() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("failed to read target {:?} metadata, {}", target_abs_path, e);
+            return Err(e);
+        }
+    };
+
+    let source_file_meta = match source_file_abs_path.metadata() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("failed to read source {:?} metadata, {}", source_file_abs_path, e);
+            return Err(e);
+        }
+    };
+
+    let source_file_created = match source_file_meta.created() {
+        Ok(t) => t,
+        Err(e) => {
+            println!("this filesystem does not support creation time for files (try to recompile the program): {}", e);
+            return Err(e);
+        }
+    };
+    let target_file_modified = target_file_meta.modified().unwrap();
+    let source_file_modified = source_file_meta.modified().unwrap();
+
+    // TODO if verbose
+    println!("current state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+             target_file_modified, source_file_created, source_file_modified);
+
+    let both_not_modified = target_file_modified == source_file_created &&
+        source_file_created == source_file_modified;
+    let only_source_modified = target_file_modified == source_file_created &&
+        source_file_created < source_file_modified || target_file_modified < source_file_modified;
+    let only_target_modified = target_file_modified > source_file_created &&
+        source_file_created == source_file_modified || target_file_modified > source_file_modified;
+    let both_modified = target_file_modified > source_file_created &&
+        source_file_created < source_file_modified;
+
+    // TODO if source file does not required to be changed still
+    //  need to check its permissions, and copy them if needed.
+    //  Modifying permission does not make modification date change.
+
+    // conflict cases
+    if both_modified {
+        return Ok(CompareByTimestamp::BothModified);
+    }
+
+    if only_source_modified {
+        return Ok(CompareByTimestamp::SourceModified);
+    }
+
+    if both_not_modified {
+        return Ok(CompareByTimestamp::NonModified);
+    }
+
+    if only_target_modified { // TODO if verbose
+        return Ok(CompareByTimestamp::TargetModified);
+    }
+
+    Err(Error::other("the timestamps of the files under comparison are in inconsistent state"))
 }
 
 #[test]
