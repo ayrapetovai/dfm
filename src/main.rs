@@ -67,7 +67,7 @@ enum Command {
 
     /// If no conflicts detected copies files from the target directory to the source directory.
     /// The files considered to be managed after this operation.
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = false)]
     Add {
         /// Files to be copied to the source directory from target.
         paths: Option<Vec<PathBuf>>,
@@ -97,7 +97,7 @@ enum Command {
     // TODO rename to `sync`?
     /// If no conflict detected copies files from the source directory to the target directory.
     /// The files considered to be managed after this operation.
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = false)]
     Apply {
         /// Files to be updated from source directory to target.
         paths: Option<Vec<PathBuf>>,
@@ -213,7 +213,8 @@ fn add_command(config: &Config, args: &Args) {
     let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
         panic!("cannot obtain working directories paths");
     };
-    
+
+    // TODO add without paths-arguments must copy all files from the target dir to source
     let Some(paths) = paths else {
         println!("adding whole target directory is not implemented yet");
         return;
@@ -506,7 +507,11 @@ fn apply_command(config: &Config, args: &Args) {
     };
 
     // TODO apply without paths-arguments must copy all files from the source dir to target
-    let ref paths = paths.clone().unwrap();
+    let Some(paths) = paths else {
+        println!("apply whole source directory is not implemented yet");
+        return;
+    };
+
     let ListDirectories{
         found: traversed_paths,
         errors: error_messages,
