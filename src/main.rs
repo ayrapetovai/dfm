@@ -1,7 +1,7 @@
 use std::borrow::ToOwned;
 use std::{env, fs};
 use std::fs::File;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::ops::Add;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -387,15 +387,13 @@ fn add_command(config: &Config, args: &Args) {
     println!("::copy procedure begins, {} tasks", tasks.len());
 
     for add_task in tasks {
-        if *dry_run {
-            println!("dry run: copy {:?}", add_task);
-            continue;
-        } else {
-            println!("copy {:?}", add_task);
-        }
-
         match add_task {
             AddTask::Copy(target_file, source_file) => {
+                println!("copy target {:?} to source {:?}", target_file, source_file);
+                if *dry_run {
+                    continue;
+                }
+
                 if let Err(e) = fs::remove_file(source_file.clone()) {
                     println!("failed to remove source {:?}: {}", source_file, e);
                 } else {
@@ -448,6 +446,10 @@ fn add_command(config: &Config, args: &Args) {
             },
             AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {
                 println!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to);
+                if *dry_run {
+                    continue;
+                }
+
                 // open if exists or create, if it doesn't
                 let mut symlink_file = match File::create(&source_symlink) {
                     Ok(f) => f,
@@ -501,7 +503,7 @@ fn apply_command(config: &Config, args: &Args) {
 
     enum ApplyTask {
         Copy(PathBuf, PathBuf),
-        CreateSymlinkFile(PathBuf, String),
+        CreateOrUpdateSymlink(PathBuf, String),
     }
 
     let mut tasks: Vec<ApplyTask> = vec![];
@@ -530,7 +532,7 @@ fn apply_command(config: &Config, args: &Args) {
                         continue;
                     } else {
                         println!("target symlink {:?} points to {:?}, must point to {:?}", target_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
-                        tasks.push(ApplyTask::CreateSymlinkFile(target_abs_path.clone(), source_file_content));
+                        tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
                         continue;
                     }
                 } else {
@@ -543,7 +545,7 @@ fn apply_command(config: &Config, args: &Args) {
 
                 // also the case is handled when the symlink pints inside the source directory but
                 // to the wrong file
-                tasks.push(ApplyTask::CreateSymlinkFile(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_string()));
+                tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_string()));
                 continue;
             }
 
@@ -561,7 +563,7 @@ fn apply_command(config: &Config, args: &Args) {
                     continue;
                 }
             };
-            
+
             match cmp {
                 CompareByTimestamp::BothModified => {
                     // TODO add merge
@@ -588,7 +590,7 @@ fn apply_command(config: &Config, args: &Args) {
         } else {
             // target file does not exist
             println!("target {:?} does not exist", target_abs_path);
-            
+
             let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if source_file_abs_path.exists() {
                 println!("source {:?} will be copied to the target {:?}", source_file_abs_path, target_abs_path);
@@ -599,7 +601,7 @@ fn apply_command(config: &Config, args: &Args) {
                 if source_symlink_file_abs_path.exists() {
                     println!("source symlink file {:?} will be used to crate a target symlink", source_symlink_file_abs_path);
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
-                    tasks.push(ApplyTask::CreateSymlinkFile(target_abs_path.clone(), source_file_content));
+                    tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
                     continue; // success
                 } else {
                     println!("for target {:?} no corresponding source file found", target_abs_path);
@@ -613,7 +615,7 @@ fn apply_command(config: &Config, args: &Args) {
         if source_file_abs_path.exists() {
             if source_file_abs_path.ends_with(".symlink") {
                 let source_file_content = fs::read_to_string(&source_file_abs_path).unwrap();
-                tasks.push(ApplyTask::CreateSymlinkFile(target_abs_path, source_file_content));
+                tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path, source_file_content));
                 continue; // success
             } else {
                 tasks.push(ApplyTask::Copy(target_abs_path, source_file_abs_path));
@@ -634,13 +636,46 @@ fn apply_command(config: &Config, args: &Args) {
         return;
     }
 
+    println!("::copy procedure begins, {} tasks", tasks.len());
+
     for task in tasks.iter() {
         match task {
             ApplyTask::Copy(target_file, source_file) => {
-                println!("copy {:?} to {:?}", source_file, target_file);
+                println!("copy source {:?} to target {:?}", source_file, target_file);
+                if *dry_run {
+                    continue;
+                }
             },
-            ApplyTask::CreateSymlinkFile(target_file, points_to) => {
-                println!("create symlink {:?} pointing to {:?}", target_file, points_to);
+            ApplyTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
+                println!("create symlink {:?} pointing to {:?}", target_symlink_file_path, points_to);
+                if *dry_run {
+                    continue;
+                }
+
+                if let Err(e) = symlink::remove_symlink_file(target_symlink_file_path) {
+                    match e.kind() {
+                        ErrorKind::NotFound => {
+                            println!("target symlink {:?} does not exist", target_symlink_file_path);
+                            // is ok
+                        },
+                        _ => {
+                            println!("failed to remove symlink {:?}: {}", target_symlink_file_path, e);
+                            continue; // TODO error
+                        }
+                    }
+                }
+                let points_to = if points_to.starts_with("./") {
+                    &points_to[2..]
+                } else {
+                    points_to.as_str()
+                };
+                let pointee = PathBuf::from(points_to);
+
+                if let Err(e) = symlink::symlink_file(pointee, target_symlink_file_path) {
+                    println!("failed to crate a symlink {:?}: {}", target_symlink_file_path, e);
+                    continue; // TODO error
+                }
+                println!("target symlink {:?} updated", target_symlink_file_path)
             }
         }
     }
