@@ -80,3 +80,23 @@ If the specified filename does not exist in target directory, then `apply` will 
 in the source directory. If there is no such a file in source directory - error.
 For existing target files: replacement, for non-existing files: creation (does not require special conditions).
 Replacement checks if there is no conflict.
+Traverse all directories in given paths, get the list of files to work on
+each file in the target directory could be:
+- a symlink, that points not into the source directory
+    - exit with error, or remove if --overwrite?
+- a symlink, that points into the source directory pointing at the corresponding file
+    - do nothing
+- a symlink, that points into the source directory pointing at the non-corresponding file
+    - exit with error, if --overwrite then remove the link and create one pointing to the right file
+- a symlink, that has an associated symlink file in the source directory
+    - if the link points to the file specified in the source symlink file then do nothing
+    - otherwise error or if --overwrite then recreate  the link.
+- an existing file, that has no corresponding file in the source directory
+    - error "target file is not managed"
+- an existing file, that has a corresponding file in the source directory
+    - if target file was not modified then overwrite it with the source file,
+    - otherwise error or if --overwrite then overwrite or if --merge call merge tool
+- a non-existing file, that has no corresponding file in the source directory
+    - error "file not found and not managed"
+- a non-existing file, that has a corresponding file in the source directory
+    - copy the source file to the path of a target file
