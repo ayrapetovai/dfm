@@ -108,7 +108,9 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
     let mut ret = String::new();
     for ancestor in path.iter().rev() {
         let name= ancestor.to_str().unwrap();
-        if name == ".." {
+        if name == "." && ret.chars().nth(0).unwrap() == '/' {
+            ret.remove(0);
+        } else if name == ".." {
             go_back_counter += 1;
         } else if name != "." && name != "/" {
             if go_back_counter > 0 {
@@ -286,4 +288,6 @@ fn test_remove_dots_from_path() {
     assert_eq!(remove_dots_from_path(&PathBuf::from("/a/b/../../d/e")), PathBuf::from("/d/e"));
     assert_eq!(remove_dots_from_path(&PathBuf::from("/a/../../d/e")), PathBuf::from("../d/e"));
     assert_eq!(remove_dots_from_path(&PathBuf::from("/../../d/e")), PathBuf::from("../../d/e"));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/b/e/./f/g")), PathBuf::from("/a/b/e/f/g"));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("./f/g")), PathBuf::from("f/g"));
 }

@@ -9,17 +9,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 
-use dfm::{
-    calc_working_dir_paths,
-    compare_files_by_timestamps,
-    CompareByTimestamp,
-    Config,
-    create_default_config,
-    filepath_in_source_dir,
-    list_directory,
-    ListDirectories,
-    remove_dots_from_path
-};
+use dfm::{calc_working_dir_paths, compare_files_by_timestamps, CompareByTimestamp, Config, create_default_config, file_path_relative_to, filepath_in_source_dir, list_directory, ListDirectories, remove_dots_from_path};
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -513,6 +503,47 @@ fn apply_command(config: &Config, args: &Args) {
         let target_abs_path = remove_dots_from_path(&target_abs_path);
         println!("target absolute path {:?}", target_abs_path);
 
+        let target_abs_path = if target_abs_path.starts_with(&source_dir_abs_path) {
+            let source_file_abs_path = target_abs_path;
+            println!("provided path of a source {:?}", source_file_abs_path);
+
+            let target_file_rel_to_target_dir = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path);
+            let dot_prefix = config.dot_prefix.clone().unwrap();
+            let target_file_rel_to_target_dir = target_file_rel_to_target_dir.to_str().unwrap().replace(&dot_prefix, ".");
+            let target_file_rel_to_target_dir = if source_file_abs_path.to_str().unwrap().ends_with(".symlink") {
+                target_file_rel_to_target_dir.replace(".symlink", "")
+            } else {
+                target_file_rel_to_target_dir
+            };
+            let target_file_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &target_file_rel_to_target_dir]);
+            let target_file_abs_path = remove_dots_from_path(&target_file_abs_path);
+            println!("inferred target {:?}", target_file_abs_path);
+            
+            if !target_file_abs_path.exists() && source_file_abs_path.exists() {
+                if source_file_abs_path.to_str().unwrap().ends_with(".symlink") {
+                    let source_file_content = fs::read_to_string(&source_file_abs_path).unwrap();
+                    println!("source is a symlink file, pointing to {}", source_file_content);
+                    tasks.push(ApplyTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
+                    continue; // success
+                } else {
+                    println!("regular file creating task");
+                    tasks.push(ApplyTask::Copy(target_file_abs_path, source_file_abs_path));
+                    continue; // success
+                }
+            } else if source_file_abs_path.exists() {
+                let target_symlink_pointee = fs::read_link(&target_file_abs_path).unwrap();
+                let source_file_content: String = fs::read_to_string(&source_file_abs_path).unwrap().trim().to_string();
+                if !source_file_content.eq(target_symlink_pointee.to_str().unwrap()) {
+                    println!("target symlink {:?} points to {:?}, must point to {:?}", target_file_abs_path, target_symlink_pointee, source_file_content);
+                    tasks.push(ApplyTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
+                    continue; // success
+                }
+            }
+            target_file_abs_path
+        } else {
+            target_abs_path
+        };
+            
         if target_abs_path.exists() {
             if target_abs_path.is_symlink() {
                 let target_symlink_followed_abs_path = fs::canonicalize(&target_abs_path).unwrap();
@@ -606,20 +637,6 @@ fn apply_command(config: &Config, args: &Args) {
                 } else {
                     println!("for target {:?} no corresponding source file found", target_abs_path);
                 }
-            }
-        }
-
-        // target file does not exist and its path does not correspond to any of source files
-        // if a path of a source dir file was given
-        let source_file_abs_path = PathBuf::from_iter(vec![&source_dir_abs_path, &target_path]);
-        if source_file_abs_path.exists() {
-            if source_file_abs_path.ends_with(".symlink") {
-                let source_file_content = fs::read_to_string(&source_file_abs_path).unwrap();
-                tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path, source_file_content));
-                continue; // success
-            } else {
-                tasks.push(ApplyTask::Copy(target_abs_path, source_file_abs_path));
-                continue; // success
             }
         }
     }
