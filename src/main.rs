@@ -548,26 +548,30 @@ fn apply_command(config: &Config, args: &Args) {
                     println!("target symlink {:?} points to the source file {:?}, skipping...", target_path_abs, source_file_abs_path);
                     continue;
                 }
-                
+
                 let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_path_abs, Some(".symlink"));
-                let target_symlink_pointee_path = fs::read_link(&target_path_abs).unwrap();
-                let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
-                if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
-                    println!("target symlink {:?} points to {:?}, skipping...", target_path_abs, target_symlink_pointee_path.to_str().unwrap());
-                    continue;
+                if source_symlink_file_abs_path.exists() {
+                    let target_symlink_pointee_path = fs::read_link(&target_path_abs).unwrap();
+                    let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
+                    if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
+                        println!("target symlink {:?} points to {:?}, skipping...", target_path_abs, target_symlink_pointee_path.to_str().unwrap());
+                        continue;
+                    } else {
+                        println!("target symlink {:?} points to {:?}, must point to {:?}", target_path_abs, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                        tasks.push(ApplyTask::CreateSymlinkFile(target_path_abs.clone(), source_file_content));
+                        continue;
+                    }
                 } else {
-                    println!("target symlink {:?} points to {:?}, must point to {:?}", target_path_abs, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                    if !target_symlink_followed_abs_path.starts_with(&source_dir_abs_path) {
+                        println!("target symlink {:?} does not point to the source directory, skipping...", target_path_abs);
+                        // TODO remove the symlink?
+                        continue;
+                    }
                 }
 
-                if !target_symlink_followed_abs_path.starts_with(&source_dir_abs_path) {
-                    println!("target symlink {:?} does not point to the source directory, skipping...", target_path_abs);
-                    // TODO remove the symlink?
-                    continue;
-                }
-                
                 // also the case is handled when the symlink pints inside the source directory but
                 // to the wrong file
-                tasks.push(ApplyTask::CreateSymlinkFile(target_path_abs.clone(), source_file_content));
+                tasks.push(ApplyTask::CreateSymlinkFile(target_path_abs.clone(), source_file_abs_path.to_str().unwrap().to_string()));
                 continue;
             }
 
