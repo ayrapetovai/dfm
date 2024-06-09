@@ -70,7 +70,7 @@ enum Command {
     #[command(arg_required_else_help = true)]
     Add {
         /// Files to be copied to the source directory from target.
-        paths: Vec<PathBuf>,
+        paths: Option<Vec<PathBuf>>,
 
         /// Run merge tool on conflicts.
         #[arg(long, short, num_args = 0, default_value_t = false)]
@@ -99,7 +99,6 @@ enum Command {
     /// The files considered to be managed after this operation.
     #[command(arg_required_else_help = true)]
     Apply {
-        // empty means all, alright?
         /// Files to be updated from source directory to target.
         paths: Option<Vec<PathBuf>>,
 
@@ -213,6 +212,11 @@ fn add_command(config: &Config, args: &Args) {
 
     let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
         panic!("cannot obtain working directories paths");
+    };
+    
+    let Some(paths) = paths else {
+        println!("adding whole target directory is not implemented yet");
+        return;
     };
 
     let ListDirectories{
