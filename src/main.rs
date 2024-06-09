@@ -645,6 +645,44 @@ fn apply_command(config: &Config, args: &Args) {
                 if *dry_run {
                     continue;
                 }
+                match fs::copy(source_file, target_file) {
+                    Err(e) => {
+                        println!("failed to copy {}", e);
+                        continue; // error
+                    },
+                    _ => {}
+                }
+
+                let permissions = source_file.metadata().unwrap().permissions();
+                println!("copy permissions {:o}", permissions.mode());
+                if let Err(e) = fs::set_permissions(target_file, permissions.clone()) {
+                    println!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), target_file, e)
+                }
+
+                // TODO need some other algorithm do detect conflict
+                //  current one forces to change the creation time of the source file
+                //  Looks like the program needs to store some state,
+                //  maybe use some kind of a database would be ok, like ~/.cache/dfm/synctime.db to
+                //  store information for each file synchronization there?
+
+                // recreate source file to update its creation time
+                fs::remove_file(source_file).unwrap();
+                fs::copy(target_file, source_file).unwrap();
+
+                let source_file_creation_time = FileTime::from_system_time(source_file.metadata().unwrap().created().unwrap());
+                set_file_mtime(target_file, source_file_creation_time).expect("TODO: panic message");
+                set_file_mtime(source_file, source_file_creation_time).expect("TODO: panic message");
+
+                let source_file_meta = source_file.metadata().unwrap();
+                let target_file_meta = target_file.metadata().unwrap();
+
+                let target_file_modified = target_file_meta.modified().unwrap();
+                let source_file_created = source_file_meta.created().unwrap();
+                let source_file_modified = source_file_meta.modified().unwrap();
+
+                // TODO if verbose
+                println!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+                         target_file_modified, source_file_created, source_file_modified);
             },
             ApplyTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
                 println!("create symlink {:?} pointing to {:?}", target_symlink_file_path, points_to);
