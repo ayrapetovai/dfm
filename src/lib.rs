@@ -30,6 +30,17 @@ pub struct Hook {
     pub execute: String,
 }
 
+pub fn create_default_config() -> Config {
+    Config {
+        source_dir: "".to_owned(),
+        target_dir: "$HOME".to_owned(),
+        dot_prefix: Some("dot_".to_owned()),
+        manage_symlinks: None,
+        hooks: None,
+        dotfiles_only: Some(false),
+    }
+}
+
 pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &PathBuf) -> PathBuf {
     let mut target_file_rel_to_target_dir_path_opt: Option<PathBuf> = None;
     let mut path_components = Vec::new();

@@ -1,7 +1,7 @@
 use std::borrow::ToOwned;
 use std::{env, fs};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::ops::Add;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -9,7 +9,17 @@ use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 
-use dfm::{calc_working_dir_paths, compare_files_by_timestamps, CompareByTimestamp, Config, filepath_in_source_dir, list_directory, ListDirectories, remove_dots_from_path};
+use dfm::{
+    calc_working_dir_paths,
+    compare_files_by_timestamps,
+    CompareByTimestamp,
+    Config,
+    create_default_config,
+    filepath_in_source_dir,
+    list_directory,
+    ListDirectories,
+    remove_dots_from_path
+};
 
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
@@ -636,14 +646,17 @@ fn apply_command(config: &Config, args: &Args) {
     }
 }
 
-fn read_config(home_rel_path_to_config_file: &str) -> Option<Config> {
-    let path_to_config_file = envmnt::get_or_panic("HOME")
-        .add("/")
-        .add(home_rel_path_to_config_file);
-    eprintln!("config file path {}", path_to_config_file);
-    let config_file = File::open(path_to_config_file);
-    let mut config_file_content = String::new();
-    config_file.unwrap().read_to_string(&mut config_file_content).expect("TODO: panic message");
+fn read_config(path_to_config_file: &PathBuf) -> Option<Config> {
+    eprintln!("config file path {:?}", path_to_config_file);
+
+    let config_file_content = match fs::read_to_string(path_to_config_file) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("failed to read config file {:?}: {}", path_to_config_file, e);
+            return None
+        }
+    };
+
     return match toml::from_str(&config_file_content) {
         Err(_) => None,
         Ok(c) => Some(c)
@@ -696,19 +709,16 @@ fn main() {
         eprintln!("Environment variable $HOME is not set")
     }
 
-    // TODO create a function that will return a default config
-    let default_config = Config {
-        source_dir: "".to_owned(),
-        target_dir: "$HOME".to_owned(),
-        dot_prefix: Some("dot_".to_owned()),
-        manage_symlinks: None,
-        hooks: None,
-        dotfiles_only: Some(false),
-    };
+    let default_config = create_default_config();
 
     // TODO try to read config from ~/.config/...
     //  create a full absolute PathBuf for `read_config` function and pass it
-    let config = read_config(CONFIG_FILE_NAME_IN_HOME);
+    let path_to_config_file = envmnt::get_or_panic("HOME")
+        .add("/")
+        .add(CONFIG_FILE_NAME_IN_HOME);
+    let path_to_config_file = PathBuf::from(path_to_config_file);
+
+    let config = read_config(&path_to_config_file);
     let merged_config =  merge_configs(&default_config, &config);
 
     match args.command {
