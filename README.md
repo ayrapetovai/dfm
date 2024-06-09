@@ -100,3 +100,16 @@ each file in the target directory could be:
     - error "file not found and not managed"
 - a non-existing file, that has a corresponding file in the source directory
     - copy the source file to the path of a target file
+
+The `apply` subcommand is able to take a path from the source directory,
+to make is easier to copy just cloned files, that don't yet exist in the home directory.
+Each file in the source directory could be:
+- an existing file, that has no corresponding file in the target directory
+    - copy file from source directory to the path of the target file
+- an existing file, that has a corresponding file in the target directory
+    - if target file is not modified then copy source file to the path of the target file
+    - or error or if --overwrite then copy, or is --merge then run merge
+- an existing file, that has a corresponding symlink in the target directory
+    - do nothing, but if the symlink pints to the wrong file recreate it if --overwrite
+- a non-existing file
+    - error "file does not exist and is not managed"
