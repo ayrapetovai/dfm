@@ -2,7 +2,6 @@ use std::borrow::ToOwned;
 use std::{env, fs};
 use std::fs::File;
 use std::io::{ErrorKind, Write};
-use std::ops::Add;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -15,14 +14,7 @@ use dfm::*;
 // toml https://docs.rs/toml/latest/toml/
 // env https://docs.rs/envmnt/latest/envmnt/
 
-// $ cat ~/.cellar/.dfm-root
-// ./dotfiles
-
-// $ cat ~/.cellar/dotfiles
-// .
-
 static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
-#[allow(dead_code)]
 static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./config/dfm/config.toml";
 
 #[derive(Parser, Debug)]
@@ -35,15 +27,15 @@ struct Args {
     //arbitrary_command: String,
 
     /// Do not perform actions only checks and reports.
-    #[arg(long, num_args = 0, default_value_t = false)]
+    #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
     dry_run: bool,
 
     /// Report exhaustiveness level: 0, 1, 2.
-    #[arg(long, num_args = 1, default_value_t = 1, value_name = "LEVEL")]
+    #[arg(long, short = 'v', num_args = 1, default_value_t = 1, value_name = "LEVEL")]
     verbose: u8, // 0 - don't output anything, 1 - print action, 2 - print debug
 
     /// Use other config.
-    #[arg(long, num_args = 1, required = false, value_name = "PATH")]
+    #[arg(long, short = 'c', num_args = 1, required = false, value_name = "PATH")]
     config: Option<PathBuf>,
 
     /// Prefix for dotfiles in source directory.
@@ -56,17 +48,15 @@ enum Command {
 
     // ./config/dfm/config.toml must be crated only with `init` no other command cannot do this
     // because otherwise it will create an empty config file with no source dir and no target dir
-    /// Check marker files in source directory.
-    /// Copies the config file from the source directory to the target directory.
-    /// Updates the source directory location variable in config.
+    /// Initialize config file with the source directory.
     Init {
         /// Specifies the source directory.
         #[arg(required = true)]
         path: PathBuf,
     },
 
-    /// If no conflicts detected copies files from the target directory to the source directory.
-    /// The files considered to be managed after this operation.
+    // TODO rename to `push`?
+    /// Add file under management, or copy changes to the source directory.
     #[command(arg_required_else_help = false)]
     Add {
         /// Files to be copied to the source directory from target.
@@ -90,13 +80,12 @@ enum Command {
         symlink: bool,
 
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
         dry_run: bool,
     },
 
-    // TODO rename to `sync`?
-    /// If no conflict detected copies files from the source directory to the target directory.
-    /// The files considered to be managed after this operation.
+    // TODO rename to `pull`?
+    /// Copy changes for source directory to the target directory.
     #[command(arg_required_else_help = false)]
     Apply {
         /// Files to be updated from source directory to target.
@@ -116,22 +105,47 @@ enum Command {
         overwrite: bool,
 
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
         dry_run: bool,
     },
 
+    /// Show status of managed files. [default: --difference]
     Status {
-        all: bool,
-        managed: bool,
-        unmanaged: bool,
-        unapplyed: bool,
-        ignored: bool,
-        ignored_patterns: bool,
-        unused_ignored_patterns: bool,
+        /// Difference between target files and source files [default]
+        #[arg(long, short = 'd', num_args = 0, default_value_t = true)]
         difference: bool,
+
+        /// Full report: differences, management, ignoring.
+        #[arg(long, short = 'a', num_args = 0, default_value_t = false)]
+        all: bool,
+
+        /// List managed files
+        #[arg(long, short = 'm', num_args = 0, default_value_t = false)]
+        managed: bool,
+
+        /// List unmanaged files.
+        #[arg(long, short = 'M', num_args = 0, default_value_t = false)]
+        unmanaged: bool,
+
+        /// Source files that was not applied.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        never_applied: bool,
+
+        /// List ignored files.
+        #[arg(long, short = 'i', num_args = 0, default_value_t = false)]
+        ignored: bool,
+
+        /// List pattern used to ignore files.
+        #[arg(long, short = 'p', num_args = 0, default_value_t = false)]
+        ignored_patterns: bool,
+
+        /// List unused ignore patterns.
+        #[arg(long, short = 'P', num_args = 0, default_value_t = false)]
+        useless_patterns: bool,
     },
 
     // must check conflicts
+    /// Remove file from management (does not delete the file).
     Forget {
         path: PathBuf,
     },
@@ -139,22 +153,27 @@ enum Command {
     // TODO add to .config/dfm/config.toml?
     // .dfm_ignored_paths
     // .dfm_ignored_patterns
+    /// Ignore a file executing add, apply or status subcommands.
     Ignore {
         paths: Option<Vec<PathBuf>>,
         pattern: String,
         what: IgnoreTargetType,
     },
 
-    Set {
-        source: PathBuf,
-        target: PathBuf,
-    },
+    /// Get or set config properties.
+    Config {
+        /// Print the specified config property.
+        #[arg(long, short, num_args = 1, required = false, required_unless_present_any = ["set", "list"], value_name = "NAME")]
+        get: Option<String>,
 
-    Get {
-        source: PathBuf,
-        target: PathBuf,
+        /// Set config property to a specified value.
+        #[arg(long, short, num_args = 2, required = false, required_unless_present_any = ["get", "list"], value_names = ["NAME", "VALUE"])]
+        set: Option<Vec<String>>,
+
+        /// List all config properties.
+        #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
+        list: bool,
     },
-    PrintDefaultConfig,
 }
 
 #[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
@@ -190,7 +209,7 @@ fn init_command(_config: &Config, args: &Args) {
     //  In the config file in the target directory, we must set the `source_dir` variable
     //  to the path of the source source directory.
     //  Create a file .dfm-root with content "." if not exists in the source directory.
-    
+
     // TODO the apply subcommand must not overwrite the value of the source_dir variable of
     //  the programs config file. Actually the value mast not be manages somehow.
 }
@@ -220,7 +239,7 @@ fn add_command(config: &Config, args: &Args) {
         return;
     };
 
-    let ListDirectories{
+    let ListDirectories {
         found: traversed_paths,
         errors: error_messages,
         ..
@@ -405,8 +424,8 @@ fn add_command(config: &Config, args: &Args) {
 
     println!("::copy procedure begins, {} tasks", tasks.len());
 
-    for add_task in tasks {
-        match add_task {
+    for task in tasks {
+        match task {
             AddTask::Copy(target_file, source_file) => {
                 println!("copy target {:?} to source {:?}", target_file, source_file);
                 if *dry_run {
@@ -553,7 +572,7 @@ fn apply_command(config: &Config, args: &Args) {
             let target_file_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &target_file_rel_to_target_dir]);
             let target_file_abs_path = remove_dots_from_path(&target_file_abs_path);
             println!("inferred target {:?}", target_file_abs_path);
-            
+
             if !target_file_abs_path.exists() && source_file_abs_path.exists() {
                 // TODO ".symlink" postfix is hardcoded
                 if source_file_abs_path.to_str().unwrap().ends_with(".symlink") {
@@ -581,7 +600,7 @@ fn apply_command(config: &Config, args: &Args) {
         } else {
             target_abs_path
         };
-            
+
         if target_abs_path.exists() {
             if target_abs_path.is_symlink() {
                 let target_symlink_followed_abs_path = fs::canonicalize(&target_abs_path).unwrap();
@@ -789,11 +808,14 @@ fn main() {
 
     let default_config = create_default_config();
 
-    // TODO try to read config from ~/.config/...
-    //  create a full absolute PathBuf for `read_config` function and pass it
-    let path_to_config_file = envmnt::get_or_panic("HOME")
-        .add("/")
-        .add(CONFIG_FILE_NAME_IN_HOME);
+    // TODO to use XDS_CONFIG_HOME or not to use?
+    let home_path = envmnt::get_or_panic("HOME");
+    let path_to_config_in_xdg_dir = PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_XDG_CONFIG]);
+    let path_to_config_file = if path_to_config_in_xdg_dir.exists() {
+        path_to_config_in_xdg_dir
+    } else {
+        PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_HOME])
+    };
     let path_to_config_file = PathBuf::from(path_to_config_file);
 
     let config_from_file = read_config(&path_to_config_file);
