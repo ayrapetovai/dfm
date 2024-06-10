@@ -585,7 +585,7 @@ fn apply_command(config: &Config, args: &Args) {
                     tasks.push(ApplyTask::Copy(target_file_abs_path, source_file_abs_path));
                     continue; // success
                 }
-            } else if source_file_abs_path.exists() {
+            } else if target_file_abs_path.is_symlink() && source_file_abs_path.exists() {
                 let target_symlink_pointee = fs::read_link(&target_file_abs_path).unwrap();
                 let source_file_content: String = fs::read_to_string(&source_file_abs_path).unwrap().trim().to_string();
                 if !source_file_content.eq(target_symlink_pointee.to_str().unwrap()) {
