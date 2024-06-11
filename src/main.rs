@@ -1,12 +1,13 @@
 use std::borrow::ToOwned;
 use std::{env, fs};
 use std::fs::File;
-use std::io::{ErrorKind, Write};
+use std::io::{Error, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
+use log::{debug, error, info, trace, warn};
 
 use dfm::*;
 
@@ -26,13 +27,13 @@ struct Args {
 
     //arbitrary_command: String,
 
-    /// Do not perform actions only checks and reports.
+    /// Do not perform actions, only checks and reports.
     #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
     dry_run: bool,
 
-    /// Report exhaustiveness level: 0, 1, 2.
-    #[arg(long, short = 'v', num_args = 1, default_value_t = 1, value_name = "LEVEL")]
-    verbose: u8, // 0 - don't output anything, 1 - print action, 2 - print debug
+    /// Verbosity level: 0 - quite, 1 - brief, 2 - info, 3 - debug.
+    #[arg(long, short = 'v', num_args = 1, default_value_t = 1, value_name = "LEVEL_NUMBER")]
+    verbosity: usize, // 0 - don't output anything, 1 - brief info, 2 - info print action, 3 - print debug
 
     /// Use other config.
     #[arg(long, short = 'c', num_args = 1, required = false, value_name = "PATH")]
@@ -60,6 +61,8 @@ enum Command {
     #[command(arg_required_else_help = false)]
     Add {
         /// Files to be copied to the source directory from target.
+        /// If omitted - add all files in the target directory.
+        #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
 
         /// Run merge tool on conflicts.
@@ -89,6 +92,8 @@ enum Command {
     #[command(arg_required_else_help = false)]
     Apply {
         /// Files to be updated from source directory to target.
+        /// If omitted - apply all files in the source directory.
+        #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
 
         /// Invert pattern matching.
@@ -109,7 +114,7 @@ enum Command {
         dry_run: bool,
     },
 
-    /// Show status of managed files. [default: --difference]
+    /// Show status of managed files. [default: show difference]
     Status {
         /// Difference between target files and source files [default]
         #[arg(long, short = 'd', num_args = 0, default_value_t = true)]
@@ -182,9 +187,9 @@ enum IgnoreTargetType {
     Pattern,
 }
 
-fn init_command(_config: &Config, args: &Args) {
+fn init_command(_config: &Config, args: &Args) -> Result<(), Error> {
     let Command::Init { path, .. } = &args.command else {
-        panic!("unreachable code reached: command {:?} is not `init`", args.command)
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `init`", args.command)));
     };
 
     println!("init with path {}", path.to_str().unwrap());
@@ -212,9 +217,10 @@ fn init_command(_config: &Config, args: &Args) {
 
     // TODO the apply subcommand must not overwrite the value of the source_dir variable of
     //  the programs config file. Actually the value mast not be manages somehow.
+    Ok(())
 }
 
-fn add_command(config: &Config, args: &Args) {
+fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
     let Command::Add {
         paths,
         merge,
@@ -224,10 +230,12 @@ fn add_command(config: &Config, args: &Args) {
         dry_run,
         ..
     } = &args.command else {
-        panic!("unreachable code reached: command {:?} is not `add`", args.command)
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `add`", args.command)));
     };
 
-    println!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
+    let dry_run = if !dry_run { args.dry_run } else { true };
+
+    debug!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
 
     let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
         panic!("cannot obtain working directories paths");
@@ -243,11 +251,13 @@ fn add_command(config: &Config, args: &Args) {
         errors: error_messages,
         ..
     } = list_directory(&paths).unwrap();
-    println!("traversing result is {:?}", traversed_paths);
+    debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
-        println!("failed to process some subdirectories or files in targets {:?}", error_messages);
-        return // TODO with error
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("failed to process some subdirectories or files in targets {:?}", error_messages)
+        ));
     }
 
     #[derive(Debug)]
@@ -258,13 +268,13 @@ fn add_command(config: &Config, args: &Args) {
 
     let mut tasks: Vec<AddTask> = Vec::new();
 
-    println!("::check state procedure begins");
+    debug!("::check state procedure begins");
 
     for target_path in traversed_paths.iter() {
-        println!("for argument {:?}", target_path);
+        info!("checking {:?}", target_path);
 
         let target_path = if target_path.is_symlink() {
-            eprintln!("target {:?} is a symlink", target_path);
+            debug!("target {:?} is a symlink", target_path);
             let current_dir = match env::current_dir() {
                 Ok(p) => p,
                 Err(e) => {
@@ -277,7 +287,7 @@ fn add_command(config: &Config, args: &Args) {
             let mut target_symlink_abs_path = match fs::canonicalize(target_symlink_abs_path_raw.parent().get_or_insert(&root)) {
                 Ok(p) => p,
                 Err(e) => {
-                    println!("cannot obtain the absolute path for target symlink {:?}: {}", target_symlink_abs_path_raw, e);
+                    error!("cannot obtain the absolute path for target symlink {:?}: {}", target_symlink_abs_path_raw, e);
                     continue;
                 }
             };
@@ -287,25 +297,25 @@ fn add_command(config: &Config, args: &Args) {
             let target_symlink_pointee_rel_path = match fs::read_link(&target_symlink_abs_path) {
                 Ok(p) => p,
                 Err(e) => {
-                    println!("cannot read target symlink {:?}: {}", target_symlink_abs_path, e);
+                    error!("cannot read target symlink {:?}: {}", target_symlink_abs_path, e);
                     continue;
                 }
             };
             let target_symlink_pointee_abs_path = match fs::canonicalize(&target_symlink_pointee_rel_path) {
                 Ok(p) => p,
                 Err(e) => {
-                    println!("cannot obtain the absolute path of the pointee of the target symlink {:?}: {}", target_symlink_abs_path, e);
+                    error!("cannot obtain the absolute path of the pointee of the target symlink {:?}: {}", target_symlink_abs_path, e);
                     continue;
                 }
             };
-            println!("target symlink {:?} points to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
+            debug!("target symlink {:?}\n\tpoints to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
             let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_symlink_abs_path, Some(".symlink"));
             let source_symlink_file_exists = source_symlink_file_abs_path.exists();
             let source_symlink_file_points_to_right_target = if source_symlink_file_exists {
                  match fs::read_to_string(&source_symlink_file_abs_path) {
                     Ok(file_content) => {
-                        println!("source symlink file {:?} points to \"{}\"", source_symlink_file_abs_path, file_content);
+                        debug!("source symlink file {:?}\n\tpoints to \"{}\"", source_symlink_file_abs_path, file_content);
                         file_content.trim().eq(target_symlink_pointee_rel_path.to_str().unwrap())
                     },
                     _ => false
@@ -315,16 +325,16 @@ fn add_command(config: &Config, args: &Args) {
             };
             if *overwrite || source_symlink_file_exists && !source_symlink_file_points_to_right_target {
                 if !source_symlink_file_points_to_right_target {
-                    println!("source symlink file points to the wrong file, must be {:?}", &target_symlink_pointee_rel_path);
+                    debug!("source symlink file points to the wrong file, must be {:?}", &target_symlink_pointee_rel_path);
                 }
                 tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
             } else if source_symlink_file_points_to_right_target {
-                println!("for target symlink {:?}, source symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
+                debug!("for target symlink {:?},\n\tsource symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
             } else if !target_symlink_pointee_abs_path.starts_with(&source_dir_abs_path) {
-                println!("for target symlink {:?}, does not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
+                debug!("for target symlink {:?},\n\tdoes not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
                 tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
             } else {
-                println!("target symlink {:?} pointee is managed as {:?}, to add a symlink to source directory use --overwrite", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
+                debug!("target symlink {:?}\n\tpointee is managed as {:?}", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
             };
             target_symlink_pointee_abs_path
         } else {
@@ -334,7 +344,7 @@ fn add_command(config: &Config, args: &Args) {
         let target_abs_path = match fs::canonicalize(&target_path) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("cannot obtain the absolute path of the argument {:?}: {}, skipping...", target_path, e);
+                error!("cannot obtain the absolute path of the argument {:?}: {}, skipping...", target_path, e);
                 continue;
             }
         };
@@ -351,12 +361,12 @@ fn add_command(config: &Config, args: &Args) {
         //     /home/user/cellar/ansible
         //     /home/user/.config
         if target_abs_path.starts_with(&source_dir_abs_path) {
-            println!("target {:?} resides in source directory, ignoring", target_abs_path);
+            info!("target {:?} resides in source directory, ignoring", target_abs_path);
             continue;
         }
 
         if !target_abs_path.starts_with(&target_dir_abs_path) {
-            println!("target {:?} does not reside in target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
+            info!("target {:?} does not reside in target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
             continue;
         }
 
@@ -367,7 +377,7 @@ fn add_command(config: &Config, args: &Args) {
             let cmp = match compare_files_by_timestamps(&target_abs_path, &source_file_abs_path) {
                 Ok(c) => c,
                 Err(e) => {
-                    println!("failed to compare target file and source file: {:?}", e);
+                    debug!("failed to compare target file and source file: {:?}", e);
                     continue;
                 }
             };
@@ -375,33 +385,33 @@ fn add_command(config: &Config, args: &Args) {
             // conflict cases
             match cmp {
                 CompareByTimestamp::BothModified => {
-                    eprintln!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
+                    info!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
                         target_abs_path, source_file_abs_path);
-                    if ! overwrite {
+                    if !overwrite {
                         continue;
                     }
                 },
                 CompareByTimestamp::SourceModified => {
-                    eprintln!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
+                    info!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
                               source_file_abs_path, target_abs_path);
                     if !overwrite {
                         continue;
                     }
                 },
                 CompareByTimestamp::NonModified => {
-                    eprintln!("neither target nor source were modified");
+                    info!("neither target nor source were modified");
                     if !overwrite {
                         continue;
                     }
                 },
                 CompareByTimestamp::TargetModified => { // TODO if verbose
-                    eprintln!("only target {:?} was modified, no conflicts", target_abs_path);
+                    info!("only target {:?} was modified, no conflicts", target_abs_path);
                 },
             }
 
-            eprintln!("no conflict detected for target {:?}", target_abs_path);
-        } else if true { // TODO if verbose
-            println!("source file {:?} does not exist", source_file_abs_path);
+            info!("no conflict detected for target {:?}", target_abs_path);
+        } else {
+            info!("source file {:?} does not exist", source_file_abs_path);
         }
 
         tasks.push(AddTask::Copy(target_abs_path, source_file_abs_path));
@@ -412,62 +422,62 @@ fn add_command(config: &Config, args: &Args) {
     // TODO filter target duplicates
     // TODO file conflicts like: (tgt1 -> src1) and (tgt2 -> src1) and (tgt1 != tgt2)
 
-    if *dry_run {
-        println!("dry run specified, no changes will be made");
-    }
-
     if tasks.is_empty() {
-        println!("nothing to do");
-        return; // TODO with success
+        info!("nothing to do");
+        return Ok(()); // TODO with success
     }
 
-    println!("::copy procedure begins, {} tasks", tasks.len());
+    if dry_run {
+        info!("dry run specified, no changes will be made");
+    }
+
+    debug!("::copy procedure begins, {} tasks", tasks.len());
 
     for task in tasks {
         match task {
             AddTask::Copy(target_file, source_file) => {
-                println!("copy target {:?} to source {:?}", target_file, source_file);
-                if *dry_run {
+                info!("copy target {:?} to source {:?}", target_file, source_file);
+                if dry_run {
                     continue;
                 }
 
                 if let Err(e) = fs::remove_file(source_file.clone()) {
-                    println!("failed to remove source {:?}: {}", source_file, e);
+                    info!("failed to remove source {:?}: {}", source_file, e);
                 } else {
-                    println!("source {:?} removed", source_file);
+                    info!("source {:?} removed", source_file);
                 }
 
                 // This unwrap considered to be safe since source file resides in source dir,
                 // thus it has a parent directory.
                 if let Err(e) = fs::create_dir_all(source_file.parent().unwrap()) {
-                    println!("cannot create source parent dir {:?}: {}", source_file.parent(), e)
+                    info!("cannot create source parent dir {:?}: {}", source_file.parent(), e)
                 }
 
                 if let Err(e) = fs::copy(&target_file, &source_file) {
-                    eprintln!("copy failed: {}", e);
+                    error!("copy failed: {}", e);
                     continue;
                 } else {
-                    eprintln!("target {:?} copied to source {:?}", target_file, source_file)
+                    error!("target {:?} copied to source {:?}", target_file, source_file)
                 }
 
                 let permissions = target_file.metadata().unwrap().permissions();
-                println!("copy permissions {:o}", permissions.mode());
+                trace!("copy permissions {:o}", permissions.mode());
                 if let Err(e) = fs::set_permissions(source_file.clone(), permissions.clone()) {
-                    println!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), source_file, e)
+                    error!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), source_file, e)
                 }
 
                 // TODO fix: if command line is `dfm add .dir` we fall this far, must stop earlier
-                println!("set metadata to {:?}", source_file);
+                trace!("set metadata to {:?}", source_file);
                 let source_file_meta = source_file.metadata().unwrap();
                 let source_creation_time = source_file_meta.created().unwrap();
                 let source_creation = FileTime::from_system_time(source_creation_time);
 
                 if let Err(e) = set_file_mtime(target_file.clone(), source_creation) {
-                    eprintln!("failed to set mtime for target {:?}: {}", target_file, e);
+                    error!("failed to set mtime for target {:?}: {}", target_file, e);
                 }
 
                 if let Err(e) = set_file_mtime(source_file.clone(), source_creation) {
-                    eprintln!("failed to set mtime for source {:?}: {}", target_file, e);
+                    error!("failed to set mtime for source {:?}: {}", target_file, e);
                 }
 
                 let source_file_meta = source_file.metadata().unwrap();
@@ -478,12 +488,12 @@ fn add_command(config: &Config, args: &Args) {
                 let source_file_modified = source_file_meta.modified().unwrap();
 
                 // TODO if verbose
-                println!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+                debug!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
                          target_file_modified, source_file_created, source_file_modified);
             },
             AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {
-                println!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to);
-                if *dry_run {
+                info!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to);
+                if dry_run {
                     continue;
                 }
 
@@ -491,12 +501,12 @@ fn add_command(config: &Config, args: &Args) {
                 let mut symlink_file = match File::create(&source_symlink) {
                     Ok(f) => f,
                     Err(e) => {
-                        println!("failed to create/open source symlink file {:?}: {}", source_symlink, e);
+                        error!("failed to create/open source symlink file {:?}: {}", source_symlink, e);
                         continue;
                     }
                 };
                 if let Err(e) = symlink_file.write(points_to.as_bytes()) {
-                    println!("failed to write a path {} into the source symlink file {:?}: {}", points_to, source_symlink, e);
+                    error!("failed to write a path {} into the source symlink file {:?}: {}", points_to, source_symlink, e);
                     continue;
                 }
             },
@@ -505,9 +515,10 @@ fn add_command(config: &Config, args: &Args) {
             // }
         }
     }
+    Ok(())
 }
 
-fn apply_command(config: &Config, args: &Args) {
+fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
     let Command::Apply {
         paths,
         merge,
@@ -515,10 +526,12 @@ fn apply_command(config: &Config, args: &Args) {
         dry_run,
         ..
     } = &args.command else {
-        panic!("unreachable code reached: command {:?} is not `apply`", args.command)
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `apply`", args.command)));
     };
+    
+    let dry_run = if !dry_run { args.dry_run } else { true };
 
-    println!("apply paths {:?}, merge {}, overwrite {}, dry-run {}", paths.to_owned(), merge, overwrite, dry_run);
+    debug!("apply paths {:?}, merge {}, overwrite {}, dry-run {}", paths.to_owned(), merge, overwrite, dry_run);
 
     let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
         panic!("cannot obtain working directories paths");
@@ -534,11 +547,13 @@ fn apply_command(config: &Config, args: &Args) {
         errors: error_messages,
         ..
     } = list_directory(&paths).unwrap();
-    println!("traversing result is {:?}", traversed_paths);
+    debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
-        println!("path traversing was done with errors: {:?}", error_messages);
-        return // TODO exit with error
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("failed to process some subdirectories or files in source {:?}", error_messages)
+        ));
     }
 
     enum ApplyTask {
@@ -549,13 +564,15 @@ fn apply_command(config: &Config, args: &Args) {
     let mut tasks: Vec<ApplyTask> = vec![];
 
     for target_path in traversed_paths.iter() {
+        info!("checking {:?}", target_path);
+
         let target_abs_path = PathBuf::from_iter(vec!(&target_dir_abs_path, &target_path));
         let target_abs_path = remove_dots_from_path(&target_abs_path);
-        println!("target absolute path {:?}", target_abs_path);
+        debug!("target absolute path {:?}", target_abs_path);
 
         let target_abs_path = if target_abs_path.starts_with(&source_dir_abs_path) {
             let source_file_abs_path = target_abs_path;
-            println!("provided path of a source {:?}", source_file_abs_path);
+            debug!("provided path of a source {:?}", source_file_abs_path);
 
             let target_file_rel_to_target_dir = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path);
             let dot_prefix = config.dot_prefix.clone();
@@ -569,17 +586,17 @@ fn apply_command(config: &Config, args: &Args) {
             };
             let target_file_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &target_file_rel_to_target_dir]);
             let target_file_abs_path = remove_dots_from_path(&target_file_abs_path);
-            println!("inferred target {:?}", target_file_abs_path);
+            debug!("inferred target {:?}", target_file_abs_path);
 
             if !target_file_abs_path.exists() && source_file_abs_path.exists() {
                 // TODO ".symlink" postfix is hardcoded
                 if source_file_abs_path.to_str().unwrap().ends_with(".symlink") {
                     let source_file_content = fs::read_to_string(&source_file_abs_path).unwrap();
-                    println!("source is a symlink file, pointing to {}", source_file_content);
+                    debug!("source is a symlink file, pointing to {}", source_file_content);
                     tasks.push(ApplyTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
                     continue; // success
                 } else {
-                    println!("regular file creating task");
+                    debug!("regular file creating task");
                     tasks.push(ApplyTask::Copy(target_file_abs_path, source_file_abs_path));
                     continue; // success
                 }
@@ -587,7 +604,7 @@ fn apply_command(config: &Config, args: &Args) {
                 let target_symlink_pointee = fs::read_link(&target_file_abs_path).unwrap();
                 let source_file_content: String = fs::read_to_string(&source_file_abs_path).unwrap().trim().to_string();
                 if !source_file_content.eq(target_symlink_pointee.to_str().unwrap()) {
-                    println!("target symlink {:?} points to {:?}, must point to {:?}", target_file_abs_path, target_symlink_pointee, source_file_content);
+                    info!("target symlink {:?} points to {:?},\n\tmust point to {:?}", target_file_abs_path, target_symlink_pointee, source_file_content);
                     tasks.push(ApplyTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
                     continue; // success
                 }
@@ -605,7 +622,7 @@ fn apply_command(config: &Config, args: &Args) {
 
                 let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
                 if target_symlink_followed_abs_path == source_file_abs_path {
-                    println!("target symlink {:?} points to the source file {:?}, skipping...", target_abs_path, source_file_abs_path);
+                    info!("target symlink {:?}\t\npoints to the source file {:?}, skipping...", target_abs_path, source_file_abs_path);
                     continue;
                 }
 
@@ -615,16 +632,16 @@ fn apply_command(config: &Config, args: &Args) {
                     let target_symlink_pointee_path = fs::read_link(&target_abs_path).unwrap();
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
                     if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
-                        println!("target symlink {:?} points to {:?}, skipping...", target_abs_path, target_symlink_pointee_path.to_str().unwrap());
+                        info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_abs_path, target_symlink_pointee_path.to_str().unwrap());
                         continue;
                     } else {
-                        println!("target symlink {:?} points to {:?}, must point to {:?}", target_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                        info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
                         tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
                         continue;
                     }
                 } else {
                     if !target_symlink_followed_abs_path.starts_with(&source_dir_abs_path) {
-                        println!("target symlink {:?} does not point to the source directory, skipping...", target_abs_path);
+                        info!("target symlink {:?} does not point to the source directory, skipping...", target_abs_path);
                         // TODO remove the symlink?
                         continue;
                     }
@@ -639,14 +656,14 @@ fn apply_command(config: &Config, args: &Args) {
             // existing target file is not a symlink
             let source_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if !source_abs_path.exists() {
-                println!("target {:?} is unmanaged, no source {:?} found, skipping...", target_abs_path, source_abs_path);
+                info!("target {:?} is unmanaged,\n\tno source {:?} found, skipping...", target_abs_path, source_abs_path);
                 continue; // TODO error
             }
 
             let cmp = match compare_files_by_timestamps(&target_abs_path, &source_abs_path) {
                 Ok(c) => c,
                 Err(e) => {
-                    println!("failed to compare target file and source file: {:?}", e);
+                    error!("failed to compare target file and source file: {:?}", e);
                     continue;
                 }
             };
@@ -654,44 +671,44 @@ fn apply_command(config: &Config, args: &Args) {
             match cmp {
                 CompareByTimestamp::BothModified => {
                     // TODO add merge
-                    println!("both source and target was modified, merge needed");
+                    warn!("both source and target was modified, merge needed");
                     if !overwrite {
                         continue; // TODO error
                     }
                 },
                 CompareByTimestamp::NonModified => {
-                    println!("both source and target were not modified, no action needed, skipping...");
+                    info!("both source and target were not modified, no action needed, skipping...");
                     continue; // success
                 },
                 CompareByTimestamp::TargetModified => {
-                    println!("target was modified, applying source will overwrite those changes");
+                    warn!("target was modified, applying source will overwrite those changes");
                     if !overwrite {
                         continue; // TODO error
                     }
                 },
                 CompareByTimestamp::SourceModified => {
-                    println!("only the source was modified")
+                    info!("only the source was modified")
                 }
             }
             tasks.push(ApplyTask::Copy(target_abs_path.clone(), source_abs_path));
         } else {
             // target file does not exist
-            println!("target {:?} does not exist", target_abs_path);
+            debug!("target {:?} does not exist", target_abs_path);
 
             let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if source_file_abs_path.exists() {
-                println!("source {:?} will be copied to the target {:?}", source_file_abs_path, target_abs_path);
+                info!("source {:?} will be copied\n\tto the target {:?}", source_file_abs_path, target_abs_path);
                 tasks.push(ApplyTask::Copy(target_abs_path.clone(), source_file_abs_path));
                 continue; // success
             } else {
                 let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
                 if source_symlink_file_abs_path.exists() {
-                    println!("source symlink file {:?} will be used to crate a target symlink", source_symlink_file_abs_path);
+                    info!("source symlink file {:?} will be used to crate a target symlink", source_symlink_file_abs_path);
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
                     tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
                     continue; // success
                 } else {
-                    println!("for target {:?} no corresponding source file found", target_abs_path);
+                    warn!("for target {:?} no corresponding source file found", target_abs_path);
                 }
             }
         }
@@ -700,36 +717,36 @@ fn apply_command(config: &Config, args: &Args) {
     // TODO add option "backup target file before overwrite", all backups must be stored in the specified
     //  directory, maybe not in the source directory.
 
-    if *dry_run {
-        println!("dry run specified, no changes will be made");
-    }
-
     if tasks.is_empty() {
-        println!("nothing to do");
-        return;
+        info!("nothing to do");
+        return Ok(());
     }
 
-    println!("::copy procedure begins, {} tasks", tasks.len());
+    if dry_run {
+        info!("dry run specified, no changes will be made");
+    }
+
+    debug!("::copy procedure begins, {} tasks", tasks.len());
 
     for task in tasks.iter() {
         match task {
             ApplyTask::Copy(target_file, source_file) => {
-                println!("copy source {:?} to target {:?}", source_file, target_file);
-                if *dry_run {
+                info!("copy source {:?}\n\tto target {:?}", source_file, target_file);
+                if dry_run {
                     continue;
                 }
                 match fs::copy(source_file, target_file) {
                     Err(e) => {
-                        println!("failed to copy {}", e);
+                        error!("failed to copy {}", e);
                         continue; // error
                     },
                     _ => {}
                 }
 
                 let permissions = source_file.metadata().unwrap().permissions();
-                println!("copy permissions {:o}", permissions.mode());
+                trace!("copy permissions {:o}", permissions.mode());
                 if let Err(e) = fs::set_permissions(target_file, permissions.clone()) {
-                    println!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), target_file, e)
+                    error!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), target_file, e)
                 }
 
                 // TODO need some other algorithm do detect conflict
@@ -754,23 +771,23 @@ fn apply_command(config: &Config, args: &Args) {
                 let source_file_modified = source_file_meta.modified().unwrap();
 
                 // TODO if verbose
-                println!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+                debug!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
                          target_file_modified, source_file_created, source_file_modified);
             },
             ApplyTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
-                println!("create symlink {:?} pointing to {:?}", target_symlink_file_path, points_to);
-                if *dry_run {
+                info!("create symlink {:?} pointing\n\tto {:?}", target_symlink_file_path, points_to);
+                if dry_run {
                     continue;
                 }
 
                 if let Err(e) = symlink::remove_symlink_file(target_symlink_file_path) {
                     match e.kind() {
                         ErrorKind::NotFound => {
-                            println!("target symlink {:?} does not exist", target_symlink_file_path);
+                            info!("target symlink {:?} does not exist", target_symlink_file_path);
                             // is ok
                         },
                         _ => {
-                            println!("failed to remove symlink {:?}: {}", target_symlink_file_path, e);
+                            error!("failed to remove symlink {:?}: {}", target_symlink_file_path, e);
                             continue; // TODO error
                         }
                     }
@@ -783,13 +800,14 @@ fn apply_command(config: &Config, args: &Args) {
                 let pointee = PathBuf::from(points_to);
 
                 if let Err(e) = symlink::symlink_file(pointee, target_symlink_file_path) {
-                    println!("failed to crate a symlink {:?}: {}", target_symlink_file_path, e);
+                    error!("failed to crate a symlink {:?}: {}", target_symlink_file_path, e);
                     continue; // TODO error
                 }
-                println!("target symlink {:?} updated", target_symlink_file_path)
+                debug!("target symlink {:?} updated", target_symlink_file_path)
             }
         }
     }
+    Ok(())
 }
 
 // TODO fail the program execution if on of the check of any of the subcommands fails.
@@ -797,11 +815,19 @@ fn apply_command(config: &Config, args: &Args) {
 // TODO add an interactive mode, the application should ask user before each modification in
 //  filesystem it wants to make.
 
-fn main() {
+fn main() -> Result<(), Error> {
     let args = Args::parse();
 
+    if let Err(e) = stderrlog::new()
+        .module(module_path!())
+        .verbosity(args.verbosity)
+        .show_level(false)
+        .init() {
+        return Err(Error::other(e));
+    }
+ 
     if !envmnt::exists("HOME") {
-        eprintln!("Environment variable $HOME is not set")
+        return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"));
     }
 
     let default_config = create_default_config();
@@ -819,7 +845,7 @@ fn main() {
     let config_from_file = read_config(&path_to_config_file);
     let merged_config =  merge_configs(&default_config, &config_from_file);
 
-    match args.command {
+    return match args.command {
         Command::Init { .. } => {
             init_command(&merged_config, &args)
         },
@@ -830,7 +856,7 @@ fn main() {
             apply_command(&merged_config, &args)
         },
         _ => {
-            println!("subcommand {:?} is not implemented yet", args.command)
+            Err(Error::new(ErrorKind::Unsupported, format!("subcommand {:?} is not implemented yet", args)))
         }
-    }
+    };
 }

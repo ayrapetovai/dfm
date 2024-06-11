@@ -3,6 +3,8 @@ use std::io::Error;
 use std::ops::Add;
 use std::path::PathBuf;
 use std::str::FromStr;
+use log::debug;
+use log::error;
 use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
@@ -70,12 +72,12 @@ pub fn create_default_config() -> Config {
 }
 
 pub fn read_config(path_to_config_file: &PathBuf) -> Option<ConfigFile> {
-    eprintln!("config file path {:?}", path_to_config_file);
+    debug!("config file path {:?}", path_to_config_file);
 
     let config_file_content = match fs::read_to_string(path_to_config_file) {
         Ok(s) => s,
         Err(e) => {
-            println!("failed to read config file {:?}: {}", path_to_config_file, e);
+            error!("failed to read config file {:?}: {}", path_to_config_file, e);
             return None
         }
     };
@@ -149,7 +151,7 @@ pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, so
 
     let target_file_rel_to_target_dir_path = file_path_relative_to(target_abs_path, &target_dir_abs_path);
 
-    println!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
+    debug!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
 
     // replace dots in filenames and dirnames to dot_prefix from config
     let filename = regexp_for_leading_dot_in_filename.replace(target_file_rel_to_target_dir_path.file_name().unwrap().to_str().unwrap(), &dot_prefix).to_string();
@@ -167,7 +169,7 @@ pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, so
         source_file_rel_to_source_dir_path = source_file_rel_to_source_dir_path.add(postfix);
     }
 
-    println!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
+    debug!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
     let ret = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
     return remove_dots_from_path(&ret);
 }
@@ -205,29 +207,29 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
 
 pub fn calc_working_dir_paths(config: &Config) -> Result<(PathBuf, PathBuf), Error> {
     if config.source_dir.trim().is_empty() {
-        println!("failed to read source directory path, does config file present on path {}?", "<todo>");
+        error!("failed to read source directory path, does config file present on path {}?", "<todo>");
         return Err(Error::other("failed to read source path from the config file: empty string"));
     }
 
-    println!("using target directory from config (original) {:?}", config.target_dir);
+    debug!("using target directory from config (original) {:?}", config.target_dir);
 
     let target_dir_path_expanded = envmnt::expand(&config.target_dir, None);
-    println!("using target directory from config (expanded) {}", target_dir_path_expanded);
+    debug!("using target directory from config (expanded) {}", target_dir_path_expanded);
 
     let target_dir_abs_path = match PathBuf::from_str(target_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
         Err(e) => panic!("target directory path is bad {}", e)
     };
 
-    println!("using source directory from config (original) {:?}", config.source_dir);
+    debug!("using source directory from config (original) {:?}", config.source_dir);
 
     let source_dir_path_expanded = envmnt::expand(&config.source_dir, None);
-    println!("using source directory from config (expanded) {}", source_dir_path_expanded);
+    debug!("using source directory from config (expanded) {}", source_dir_path_expanded);
 
     let source_dir_abs_path = match PathBuf::from_str(source_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
         Err(e) => {
-            println!("source directory path is bad {}", e);
+            error!("source directory path is bad {}", e);
             return Err(Error::other(e));
         }
     };
@@ -291,7 +293,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_pa
     let target_file_meta = match target_abs_path.metadata() {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("failed to read target {:?} metadata, {}", target_abs_path, e);
+            error!("failed to read target {:?} metadata, {}", target_abs_path, e);
             return Err(e);
         }
     };
@@ -299,7 +301,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_pa
     let source_file_meta = match source_file_abs_path.metadata() {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("failed to read source {:?} metadata, {}", source_file_abs_path, e);
+            error!("failed to read source {:?} metadata, {}", source_file_abs_path, e);
             return Err(e);
         }
     };
@@ -307,7 +309,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_pa
     let source_file_created = match source_file_meta.created() {
         Ok(t) => t,
         Err(e) => {
-            println!("this filesystem does not support creation time for files (try to recompile the program): {}", e);
+            error!("this filesystem does not support creation time for files (try to recompile the program): {}", e);
             return Err(e);
         }
     };
@@ -315,7 +317,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_pa
     let source_file_modified = source_file_meta.modified().unwrap();
 
     // TODO if verbose
-    println!("current state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+    debug!("current state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
              target_file_modified, source_file_created, source_file_modified);
 
     let both_not_modified = target_file_modified == source_file_created &&
