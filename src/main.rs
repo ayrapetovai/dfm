@@ -211,12 +211,15 @@ fn init_command(_config: &Config, args: &Args) -> Result<(), Error> {
     //  Recursively search for the source directory, by the way.
     //  Having source directory, search a config file of the program inside of it,
     //  apply the `apply` subcommand to the found config file.
+    //  If the config file does not exist in source directory then create the config
+    //  file in the $XDG_CONFIG_PATH (or $HOME?) directory and fill with with default
+    //  config parameters from the call of `default_config` function.
     //  In the config file in the target directory, we must set the `source_dir` variable
     //  to the path of the source source directory.
     //  Create a file .dfm-root with content "." if not exists in the source directory.
 
     // TODO the apply subcommand must not overwrite the value of the source_dir variable of
-    //  the programs config file. Actually the value mast not be manages somehow.
+    //  the programs config file. Actually the source_dir value must not be managed somehow.
     Ok(())
 }
 
@@ -442,7 +445,7 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
                 }
 
                 if let Err(e) = fs::remove_file(source_file.clone()) {
-                    info!("failed to remove source {:?}: {}", source_file, e);
+                    warn!("failed to remove source {:?}: {}", source_file, e);
                 } else {
                     info!("source {:?} removed", source_file);
                 }
@@ -457,7 +460,7 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
                     error!("copy failed: {}", e);
                     continue;
                 } else {
-                    error!("target {:?} copied to source {:?}", target_file, source_file)
+                    info!("target {:?} copied to source {:?}", target_file, source_file)
                 }
 
                 let permissions = target_file.metadata().unwrap().permissions();
@@ -735,6 +738,12 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
                 if dry_run {
                     continue;
                 }
+
+                if let Err(e) = fs::create_dir_all(target_file.parent().unwrap()) {
+                    error!("cannot create source parent dir {:?}: {}", target_file.parent(), e);
+                    continue; // error
+                }
+
                 match fs::copy(source_file, target_file) {
                     Err(e) => {
                         error!("failed to copy {}", e);
@@ -810,6 +819,13 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
     Ok(())
 }
 
+// TODO Implement management of foreign files. Must check if shier paths contains the home path
+//  and ask for --force if so. Because at the other machine those files could be located in a
+//  directory with some other username. Substitute that path with $HOME?
+
+// TODO If verbosity = 1 was specified then write to stdout only one line per each target/source,
+//  no matter if that was an error or a necessity to use flags --overwrite or --merge.
+
 // TODO fail the program execution if on of the check of any of the subcommands fails.
 
 // TODO add an interactive mode, the application should ask user before each modification in
@@ -821,7 +837,7 @@ fn main() -> Result<(), Error> {
     if let Err(e) = stderrlog::new()
         .module(module_path!())
         .verbosity(args.verbosity)
-        .show_level(false)
+        .show_level(args.verbosity > 2)
         .init() {
         return Err(Error::other(e));
     }

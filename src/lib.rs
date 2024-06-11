@@ -3,7 +3,7 @@ use std::io::Error;
 use std::ops::Add;
 use std::path::PathBuf;
 use std::str::FromStr;
-use log::debug;
+use log::{debug, trace};
 use log::error;
 use regex::Regex;
 use serde::Deserialize;
@@ -211,20 +211,20 @@ pub fn calc_working_dir_paths(config: &Config) -> Result<(PathBuf, PathBuf), Err
         return Err(Error::other("failed to read source path from the config file: empty string"));
     }
 
-    debug!("using target directory from config (original) {:?}", config.target_dir);
+    trace!("using target directory from config (original) {:?}", config.target_dir);
 
     let target_dir_path_expanded = envmnt::expand(&config.target_dir, None);
-    debug!("using target directory from config (expanded) {}", target_dir_path_expanded);
+    trace!("using target directory from config (expanded) {}", target_dir_path_expanded);
 
     let target_dir_abs_path = match PathBuf::from_str(target_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
         Err(e) => panic!("target directory path is bad {}", e)
     };
 
-    debug!("using source directory from config (original) {:?}", config.source_dir);
+    trace!("using source directory from config (original) {:?}", config.source_dir);
 
     let source_dir_path_expanded = envmnt::expand(&config.source_dir, None);
-    debug!("using source directory from config (expanded) {}", source_dir_path_expanded);
+    trace!("using source directory from config (expanded) {}", source_dir_path_expanded);
 
     let source_dir_abs_path = match PathBuf::from_str(source_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
