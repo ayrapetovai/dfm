@@ -233,17 +233,16 @@ fn add_command(config: &Config, args: &Args) {
         panic!("cannot obtain working directories paths");
     };
 
-    // TODO add without paths-arguments must copy all files from the target dir to source
-    let Some(paths) = paths else {
-        println!("adding whole target directory is not implemented yet");
-        return;
+    let paths = match paths {
+        Some(p) => p.clone(),
+        None => vec![target_dir_abs_path.clone()]
     };
 
     let ListDirectories {
         found: traversed_paths,
         errors: error_messages,
         ..
-    } = list_directory(paths).unwrap();
+    } = list_directory(&paths).unwrap();
     println!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
@@ -525,17 +524,16 @@ fn apply_command(config: &Config, args: &Args) {
         panic!("cannot obtain working directories paths");
     };
 
-    // TODO apply without paths-arguments must copy all files from the source dir to target
-    let Some(paths) = paths else {
-        println!("apply whole source directory is not implemented yet");
-        return;
+    let paths = match paths {
+        Some(p) => p.clone(),
+        None => vec![source_dir_abs_path.clone()]
     };
 
     let ListDirectories{
         found: traversed_paths,
         errors: error_messages,
         ..
-    } = list_directory(paths).unwrap();
+    } = list_directory(&paths).unwrap();
     println!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {

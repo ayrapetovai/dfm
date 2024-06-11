@@ -241,7 +241,7 @@ pub struct ListDirectories {
     pub errors: Vec<String>,
 }
 
-pub fn list_directory(paths: &Vec<PathBuf>) -> Result<ListDirectories, Error> {
+pub fn list_directory(paths: &[PathBuf]) -> Result<ListDirectories, Error> {
     let mut error_messages = Vec::new();
     let traversed_paths = paths.iter()
         .flat_map(|path| {
