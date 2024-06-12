@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{Error, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 use log::{debug, error, info, trace, warn};
@@ -167,11 +167,14 @@ enum Command {
     // TODO add to .config/dfm/config.toml?
     // .dfm_ignored_paths
     // .dfm_ignored_patterns
-    /// Ignore a file executing add, apply or status subcommands.
+    /// Ignore a file when processing other subcommands.
+    #[command(arg_required_else_help = true)]
     Ignore {
-        paths: Option<Vec<PathBuf>>,
-        pattern: String,
-        what: IgnoreTargetType,
+        #[arg(long, short, num_args = 0.., value_name = "PATH")]
+        files: Option<Vec<PathBuf>>,
+
+        #[arg(long, short, num_args = 0.., value_name = "REGEXP")]
+        regexps: Option<Vec<String>>,
     },
 
     /// Get or set config properties.
@@ -190,12 +193,6 @@ enum Command {
         
         // path: bool, // print the path to the config file that will be used
     },
-}
-
-#[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
-enum IgnoreTargetType {
-    Path,
-    Pattern,
 }
 
 fn init_command(_config: &Config, args: &Args) -> Result<(), Error> {
@@ -363,17 +360,6 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
             }
         };
 
-        // TODO Check if this is respected tby the code
-        // when source dir is:
-        //     /home/user/cellar/dotfiles
-        // target dir is bad:
-        //     /home/user/cellar/dotfiles
-        //     /home/user/cellar
-        //     /home/user
-        //     /home
-        //     /
-        //     /home/user/cellar/ansible
-        //     /home/user/.config
         if target_abs_path.starts_with(&source_dir_abs_path) {
             info!("target {:?} resides in source directory, ignoring", target_abs_path);
             continue;
@@ -430,11 +416,6 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
 
         tasks.push(AddTask::Copy(target_abs_path, source_file_abs_path));
     }
-    // TODO check if one can be moved to the other
-    //  if content differs
-
-    // TODO filter target duplicates
-    // TODO file conflicts like: (tgt1 -> src1) and (tgt2 -> src1) and (tgt1 != tgt2)
 
     if tasks.is_empty() {
         info!("nothing to do");
@@ -482,7 +463,6 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
                     error!("failed to set permissions {:?} to source {:?}: {}", permissions.mode(), source_file, e)
                 }
 
-                // TODO fix: if command line is `dfm add .dir` we fall this far, must stop earlier
                 trace!("set metadata to {:?}", source_file);
                 let source_file_meta = source_file.metadata().unwrap();
                 let source_creation_time = source_file_meta.created().unwrap();
@@ -503,7 +483,6 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
                 let source_file_created = source_file_meta.created().unwrap();
                 let source_file_modified = source_file_meta.modified().unwrap();
 
-                // TODO if verbose
                 debug!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
                          target_file_modified, source_file_created, source_file_modified);
             },
@@ -526,9 +505,6 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
                     continue;
                 }
             },
-            // _ => {
-            //     panic!("unsupported enumerator {:?}", add_task);
-            // }
         }
     }
     Ok(())
@@ -717,6 +693,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
                 tasks.push(ApplyTask::Copy(target_abs_path.clone(), source_file_abs_path));
                 continue; // success
             } else {
+                // TODO ".symlink" postfix is hardcoded
                 let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
                 if source_symlink_file_abs_path.exists() {
                     info!("source symlink file {:?} will be used to crate a target symlink", source_symlink_file_abs_path);
@@ -941,6 +918,7 @@ fn forget_command(config: &Config, args: &Args) -> Result<(), Error> {
                 if source_abs_path.to_str().unwrap().ends_with(".symlink") {
                     let source_symlink_file_abs_path = source_abs_path;
                     let source_rel_path = file_path_relative_to(&source_symlink_file_abs_path, &source_dir_abs_path);
+                    // TODO ".symlink" postfix is hardcoded
                     let source_rel_str = source_rel_path.to_str().unwrap()
                         .replace(&config.dot_prefix, ".")
                         .replace(".symlink", "");

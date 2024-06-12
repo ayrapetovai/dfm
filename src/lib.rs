@@ -244,7 +244,7 @@ pub struct ListDirectories {
 
 pub fn list_directory(paths: &[PathBuf]) -> Result<ListDirectories, Error> {
     let mut error_messages = Vec::new();
-    let traversed_paths = paths.iter()
+    let mut traversed_paths = paths.iter()
         .flat_map(|path| {
             if path.is_dir() {
                 WalkDir::new(path)
@@ -274,6 +274,8 @@ pub fn list_directory(paths: &[PathBuf]) -> Result<ListDirectories, Error> {
         })
         // TODO filter duplicates
         .collect::<Vec<PathBuf>>();
+
+    traversed_paths.dedup();
 
     Ok(ListDirectories {
         found: traversed_paths,
