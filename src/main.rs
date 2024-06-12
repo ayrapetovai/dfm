@@ -324,7 +324,7 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
             };
             debug!("target symlink {:?}\n\tpoints to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
-            let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_symlink_abs_path, Some(".symlink"));
+            let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_symlink_abs_path, Some(".symlink"));
             let source_symlink_file_exists = source_symlink_file_abs_path.exists();
             let source_symlink_file_points_to_right_target = if source_symlink_file_exists {
                  match fs::read_to_string(&source_symlink_file_abs_path) {
@@ -384,7 +384,7 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
             continue;
         }
 
-        let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+        let source_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
 
         // check if a conflict could take a place
         if source_file_abs_path.exists() {
@@ -636,14 +636,14 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
             if target_abs_path.is_symlink() {
                 let target_symlink_followed_abs_path = fs::canonicalize(&target_abs_path).unwrap();
 
-                let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+                let source_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
                 if target_symlink_followed_abs_path == source_file_abs_path {
                     info!("target symlink {:?}\t\npoints to the source file {:?}, skipping...", target_abs_path, source_file_abs_path);
                     continue;
                 }
 
                 // TODO ".symlink" postfix is hardcoded
-                let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
+                let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
                 if source_symlink_file_abs_path.exists() {
                     let target_symlink_pointee_path = fs::read_link(&target_abs_path).unwrap();
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
@@ -670,7 +670,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
             }
 
             // existing target file is not a symlink
-            let source_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+            let source_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if !source_abs_path.exists() {
                 info!("target {:?} is unmanaged,\n\tno source {:?} found, skipping...", target_abs_path, source_abs_path);
                 continue; // TODO error
@@ -711,13 +711,13 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
             // target file does not exist
             debug!("target {:?} does not exist", target_abs_path);
 
-            let source_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+            let source_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if source_file_abs_path.exists() {
                 info!("source {:?} will be copied\n\tto the target {:?}", source_file_abs_path, target_abs_path);
                 tasks.push(ApplyTask::Copy(target_abs_path.clone(), source_file_abs_path));
                 continue; // success
             } else {
-                let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
+                let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
                 if source_symlink_file_abs_path.exists() {
                     info!("source symlink file {:?} will be used to crate a target symlink", source_symlink_file_abs_path);
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
@@ -895,7 +895,7 @@ fn forget_command(config: &Config, args: &Args) -> Result<(), Error> {
                 tasks.push(ForgetTask::Delete(target_abs_path.clone()));
             }
 
-            let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
+            let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
             if source_symlink_file_abs_path.exists() {
                 let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
                 if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
@@ -975,7 +975,7 @@ fn forget_command(config: &Config, args: &Args) -> Result<(), Error> {
                 }
             } else if target_abs_path.starts_with(&target_dir_abs_path) {
                 debug!("target {:?} resides in target directory", target_abs_path);
-                let source_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+                let source_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
                 if source_abs_path.exists() {
                     let cmp = match compare_files_by_timestamps(&target_abs_path, &source_abs_path) {
                         Ok(c) => c,
@@ -1053,14 +1053,12 @@ fn forget_command(config: &Config, args: &Args) -> Result<(), Error> {
 // TODO add option "backup target file before overwrite", all backups must be stored in the specified
 //  directory, maybe not in the source directory.
 
-// TODO Implement management of foreign files. Must check if shier paths contains the home path
+// TODO Implement management of foreign files. Must check if their paths contain the home path
 //  and ask for --force if so. Because at the other machine those files could be located in a
 //  directory with some other username. Substitute that path with $HOME?
 
 // TODO If verbosity = 1 was specified then write to stdout only one line per each target/source,
 //  no matter if that was an error or a necessity to use flags --overwrite or --merge.
-
-// TODO fail the program execution if on of the check of any of the subcommands fails.
 
 // TODO add an interactive mode, the application should ask user before each modification in
 //  filesystem it wants to make.

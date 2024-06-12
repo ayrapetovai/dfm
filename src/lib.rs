@@ -142,12 +142,10 @@ pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &Pat
     }
 }
 
-// TODO replace `config` with dot_prefix: &String
-pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, source_dir_abs_path: &PathBuf, target_abs_path: &PathBuf, add_postfix_opt: Option<&str>) -> PathBuf {
+pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, source_dir_abs_path: &PathBuf, target_abs_path: &PathBuf, add_postfix_opt: Option<&str>) -> PathBuf {
     let regexp_for_leading_dot_in_filename = Regex::new(r#"^\."#).unwrap();
     let regexp_for_leading_dot_in_path = Regex::new(r#"/\.[^.]"#).unwrap();
 
-    let dot_prefix = config.dot_prefix.clone();
     let slash_dot_prefix = String::from_iter(vec!["/", &dot_prefix]);
 
     let target_file_rel_to_target_dir_path = file_path_relative_to(target_abs_path, &target_dir_abs_path);
@@ -155,8 +153,8 @@ pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, so
     trace!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
 
     // replace dots in filenames and dirnames to dot_prefix from config
-    let filename = regexp_for_leading_dot_in_filename.replace(target_file_rel_to_target_dir_path.file_name().unwrap().to_str().unwrap(), &dot_prefix).to_string();
-    let parent = regexp_for_leading_dot_in_filename.replace(target_file_rel_to_target_dir_path.parent().unwrap().to_str().unwrap(), &dot_prefix).to_string();
+    let filename = regexp_for_leading_dot_in_filename.replace(target_file_rel_to_target_dir_path.file_name().unwrap().to_str().unwrap(), dot_prefix).to_string();
+    let parent = regexp_for_leading_dot_in_filename.replace(target_file_rel_to_target_dir_path.parent().unwrap().to_str().unwrap(), dot_prefix).to_string();
     let mut dirname = regexp_for_leading_dot_in_path.replace_all(&parent, &slash_dot_prefix).to_string();
     if !dirname.is_empty() {
         dirname.push('/');
