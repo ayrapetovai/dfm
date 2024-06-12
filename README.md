@@ -30,23 +30,9 @@ Regular run (non init subcommand):
 2. if not found then try to read ~/.dfm.toml,
 3. if not found then raise an error and print help.
 
-## Ignored Files
+### Ignored Files
 The source directory is ignored by default, yet the directory that contains it is not ignored.
 All files and subdirectories of the containing source directory can be added under the management.
-
-### Init
-Thi command modifies dotfile manager's config file if it exists.
-Subcommand `init` is meant to run before any config files was created in target directory.
-The `init` will check if `dot_prefix` config parameter is set to value used in source folder.
-if config file exists, check that specified source dir exists and contains `.dfm-source` file,
-if not create dir and file, print "already initialized" and exit
-take a path, check if it != $HOME look for .fdm-source, if exists read the source dir path from it, if not exists
-search in the path recursively until find a file .fdm-source, if not found then error and print help
-create ~/.config/dfm/config.toml, if exists
-do not override values, write source dir path to it, if source path has expanded $HOME prefix
-write source path with a $HOME prepended and relative path.
-Write $HOME to target path variable of the config
-if --config is given then error, print help
 
 ### Add and Apply Conflict Detection
 Subcommand `add` copy files from target directory to source directory, subcommand `apply` copy from
@@ -68,7 +54,36 @@ that target file was edited by user or by `git`.
     `add` subcommand will copy new version of the target file to the source file (no conflict), `apply` subcommand
     will overwrite new changes in the target file (conflict).
     4. if TF.mtime > SF.ctime && SF.ctime < SF.mtime then, both files was modified independently, both `add` and
-    `apply` subcommands will overwrite new modifications (conflict).
+   `apply` subcommands will overwrite new modifications (conflict).
+
+### Init
+The supposed workflow is this:
+
+Setting up an existing repo with dotfiles:
+- user downloads the repository, with the source directory locating at the root of
+the repository, or a one of its subdirectories.
+- user executes `$ dfm init path/to/repo/` or with path directly to the source directory.
+- user executes `$ dfm apply` to copy all the dotfiles to the home directory.
+
+Creating a new repo for dotfiles:
+- user crates a directory somewhere in filesystem to make it a source directory.
+- user executes `$ dfm init path/to/that/new/dir`.
+- user executes `$ dfm add` to add all dotfiles under the management.
+
+The given path considered to be the source directory path.
+- If the given path does not exist then exit with error.
+- If this path contains a file .dfm-root, then the program reads the file content,
+the content is a path to the source root.
+- If the path from the `.dfm_root` does not exist then exit with error.
+Recursively search for the source directory, by the way.
+- Having source directory, search a config file of the program inside of it,
+apply the `apply` subcommand to the found config file.
+- If the config file does not exist in source directory then create the config
+file in the `$XDG_CONFIG_PATH` (or `$HOME`?) directory and fill with default
+config parameters from the call of `default_config` function.
+- In the config file in the target directory, we must set the `source_dir` variable
+to the path of the source directory.
+- Create a file `.dfm_root` with content "." if not exists in the source directory.
 
 ### Add
 The subcommand take the paths of the target directory (does not operate on paths in the source directory, unlike

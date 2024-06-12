@@ -174,7 +174,7 @@ enum Command {
         files: Option<Vec<PathBuf>>,
 
         #[arg(long, short, num_args = 0.., value_name = "REGEXP")]
-        regexps: Option<Vec<String>>,
+        patterns: Option<Vec<String>>,
     },
 
     /// Get or set config properties.
@@ -201,30 +201,7 @@ fn init_command(_config: &Config, args: &Args) -> Result<(), Error> {
     };
 
     debug!("init with path {}", path.to_str().unwrap());
-    // TODO The supposed workflow is:
-    //  Setting up an existing repo with dotfiles:
-    //  - user downloads the repository, with the source directory locating at the root of
-    //  the repository, or a one of its subdirectories.
-    //  - user executes `$ dfm init path/to/repo/` or with path directly to the source directory.
-    //  - user executes `$ dfm apply` to copy all the dotfiles to the home directory.
-    //  or creating a new repo for dotfiles:
-    //  - user crates a directory somewhere in filesystem to make it a source directory.
-    //  - user executes `$ dfm init path/to/that/new/dir`.
-    //  - user executes `$ dfm add` to add all dotfiles under the management.
-    //  The given path considered to be the source directory path
-    //  If not exists then exit with error.
-    //  If this path contains a file .dfm-root, then the program reads the file content,
-    //  the content is a path to the source root.
-    //  If the path from the .dfm-root does not exist then exit with error.
-    //  Recursively search for the source directory, by the way.
-    //  Having source directory, search a config file of the program inside of it,
-    //  apply the `apply` subcommand to the found config file.
-    //  If the config file does not exist in source directory then create the config
-    //  file in the $XDG_CONFIG_PATH (or $HOME?) directory and fill with with default
-    //  config parameters from the call of `default_config` function.
-    //  In the config file in the target directory, we must set the `source_dir` variable
-    //  to the path of the source source directory.
-    //  Create a file .dfm-root with content "." if not exists in the source directory.
+    
 
     // TODO the apply subcommand must not overwrite the value of the source_dir variable of
     //  the programs config file. Actually the source_dir value must not be managed somehow.
