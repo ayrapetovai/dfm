@@ -47,7 +47,7 @@ struct Args {
 #[derive(Debug, Subcommand)]
 enum Command {
 
-    // ./config/dfm/config.toml must be crated only with `init` no other command cannot do this
+    // ./config/dfm/config.toml must be crated only with `init` no other command is allowed to do this
     // because otherwise it will create an empty config file with no source dir and no target dir
     /// Initialize config file with the source directory.
     Init {
@@ -187,6 +187,8 @@ enum Command {
         /// List all config properties.
         #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
         list: bool,
+        
+        // path: bool, // print the path to the config file that will be used
     },
 }
 
@@ -201,7 +203,7 @@ fn init_command(_config: &Config, args: &Args) -> Result<(), Error> {
         return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `init`", args.command)));
     };
 
-    println!("init with path {}", path.to_str().unwrap());
+    debug!("init with path {}", path.to_str().unwrap());
     // TODO The supposed workflow is:
     //  Setting up an existing repo with dotfiles:
     //  - user downloads the repository, with the source directory locating at the root of
