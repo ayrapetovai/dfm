@@ -152,7 +152,16 @@ enum Command {
     // must check conflicts
     /// Remove file from management (does not delete the file).
     Forget {
-        path: PathBuf,
+        paths: Option<Vec<PathBuf>>,
+
+        /// Delete source file on conflict.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        // TODO rename to force?
+        overwrite: bool,
+
+        /// Run only checks, no changes will be made to filesystem.
+        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        dry_run: bool,
     },
 
     // TODO add to .config/dfm/config.toml?
@@ -238,7 +247,7 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
 
     let dry_run = if !dry_run { args.dry_run } else { true };
 
-    debug!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths.to_owned(), merge, foreign, overwrite, symlink);
+    debug!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths, merge, foreign, overwrite, symlink);
 
     let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
         panic!("cannot obtain working directories paths");
@@ -444,10 +453,12 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
                     continue;
                 }
 
-                if let Err(e) = fs::remove_file(source_file.clone()) {
-                    warn!("failed to remove source {:?}: {}", source_file, e);
-                } else {
-                    info!("source {:?} removed", source_file);
+                if source_file.exists() {
+                    if let Err(e) = fs::remove_file(source_file.clone()) {
+                        error!("failed to remove source {:?}: {}", source_file, e);
+                    } else {
+                        info!("source {:?} removed", source_file);
+                    }
                 }
 
                 // This unwrap considered to be safe since source file resides in source dir,
@@ -531,10 +542,10 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
     } = &args.command else {
         return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `apply`", args.command)));
     };
-    
+
     let dry_run = if !dry_run { args.dry_run } else { true };
 
-    debug!("apply paths {:?}, merge {}, overwrite {}, dry-run {}", paths.to_owned(), merge, overwrite, dry_run);
+    debug!("apply paths {:?}, merge {}, overwrite {}, dry-run {}", paths, merge, overwrite, dry_run);
 
     let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
         panic!("cannot obtain working directories paths");
@@ -717,9 +728,6 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
         }
     }
 
-    // TODO add option "backup target file before overwrite", all backups must be stored in the specified
-    //  directory, maybe not in the source directory.
-
     if tasks.is_empty() {
         info!("nothing to do");
         return Ok(());
@@ -819,6 +827,230 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
     Ok(())
 }
 
+fn forget_command(config: &Config, args: &Args) -> Result<(), Error> {
+    let Command::Forget {
+        paths,
+        overwrite,
+        dry_run,
+        ..
+    } = &args.command else {
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `add`", args.command)));
+    };
+
+    let dry_run = if !dry_run { args.dry_run } else { true };
+
+    debug!("add paths {:?}, overwrite {}, dry-run {}", paths, overwrite, dry_run);
+
+    let Ok((target_dir_abs_path, source_dir_abs_path)) = calc_working_dir_paths(&config) else {
+        panic!("cannot obtain working directories paths");
+    };
+
+    let paths = match paths {
+        Some(p) => p.clone(),
+        None => vec![target_dir_abs_path.clone()]
+    };
+
+    let ListDirectories {
+        found: traversed_paths,
+        errors: error_messages,
+        ..
+    } = list_directory(&paths).unwrap();
+    debug!("traversing result is {:?}", traversed_paths);
+
+    if !error_messages.is_empty() {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("failed to process some subdirectories or files in targets {:?}", error_messages)
+        ));
+    }
+
+    #[derive(Debug)]
+    enum ForgetTask {
+        Delete(PathBuf),
+    }
+
+    let mut tasks: Vec<ForgetTask> = Vec::new();
+
+    debug!("::check state procedure begins");
+
+    for target_path in traversed_paths.iter() {
+        info!("checking {:?}", target_path);
+
+        if target_path.is_symlink() {
+            let target_abs_path = PathBuf::from_iter(vec![&target_dir_abs_path, &target_path]);
+            let target_abs_path = remove_dots_from_path(&target_abs_path);
+            let target_symlink_pointee_path = match fs::read_link(&target_abs_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    error!("failed to follow target symlink {:?}: {}", target_abs_path, e);
+                    return Err(e);
+                }
+            };
+
+            debug!("target symlink {:?}\n\tpoints to {:?}", target_abs_path, target_symlink_pointee_path);
+            if target_symlink_pointee_path.starts_with(&source_dir_abs_path) {
+                info!("target symlink {:?}\n\tpoints into source directory, removing", target_abs_path);
+                tasks.push(ForgetTask::Delete(target_abs_path.clone()));
+            }
+
+            let source_symlink_file_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
+            if source_symlink_file_abs_path.exists() {
+                let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
+                if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
+                    info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_abs_path, target_symlink_pointee_path.to_str().unwrap());
+                    tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
+                    continue;
+                } else {
+                    info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                    if *overwrite {
+                        tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
+                    } else {
+                        info!("specify --overwrite to delete source {:?}", source_symlink_file_abs_path);
+                    }
+                    continue; // success
+                }
+            } else {
+                debug!("symlink {:?}\n\tdoes not have source symlink file {:?}, skipping...", target_abs_path, source_symlink_file_abs_path);
+            }
+        }
+
+        let target_abs_path_res = fs::canonicalize(&target_path);
+        if target_abs_path_res.is_err() {
+            // we are given a path in source dir
+            if target_path.is_symlink() {
+                debug!("symlink {:?} is broken: {:?}", target_path, target_abs_path_res);
+                continue; // error
+            }
+
+            let source_file_abs_path = PathBuf::from_iter(vec![&source_dir_abs_path, &target_path]);
+            if source_file_abs_path.exists() {
+                info!("source {:?} will be removed", source_file_abs_path);
+                tasks.push(ForgetTask::Delete(source_file_abs_path));
+                continue; // success
+            } else {
+                info!("source {:?} does not exist, skipping...", source_file_abs_path);
+                continue; // success?
+            }
+        } else {
+            let target_abs_path = target_abs_path_res.unwrap(); // safe
+            if target_abs_path.starts_with(&source_dir_abs_path) {
+                let source_abs_path = target_abs_path;
+                debug!("target {:?} resides in source directory", source_abs_path);
+                if source_abs_path.to_str().unwrap().ends_with(".symlink") {
+                    let source_symlink_file_abs_path = source_abs_path;
+                    let source_rel_path = file_path_relative_to(&source_symlink_file_abs_path, &source_dir_abs_path);
+                    let source_rel_str = source_rel_path.to_str().unwrap()
+                        .replace(&config.dot_prefix, ".")
+                        .replace(".symlink", "");
+                    let target_symlink_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &source_rel_str]);
+                    if target_symlink_abs_path.exists() {
+                        let target_symlink_pointee_path = match fs::read_link(&target_symlink_abs_path) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                error!("failed to read symlink {:?}: {}", target_symlink_abs_path, e);
+                                return Err(e);
+                            }
+                        };
+                        let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
+                        if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
+                            info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_symlink_abs_path, target_symlink_pointee_path.to_str().unwrap());
+                            tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
+                            continue;
+                        } else {
+                            info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_symlink_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                            if *overwrite {
+                                tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
+                            } else {
+                                info!("specify --overwrite to delete source {:?}", source_symlink_file_abs_path);
+                            }
+                            continue; // success
+                        }
+                    }
+                } else {
+                    info!("source {:?} will be removed", source_abs_path);
+                    tasks.push(ForgetTask::Delete(source_abs_path));
+                    continue; // success
+                }
+            } else if target_abs_path.starts_with(&target_dir_abs_path) {
+                debug!("target {:?} resides in target directory", target_abs_path);
+                let source_abs_path = filepath_in_source_dir(&config, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+                if source_abs_path.exists() {
+                    let cmp = match compare_files_by_timestamps(&target_abs_path, &source_abs_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("failed to compare target and source files: {}", e);
+                            return Err(e);
+                        }
+                    };
+                    if CompareByTimestamp::SourceModified == cmp || CompareByTimestamp::BothModified == cmp {
+                        // source was modified and if we remove it then we will lose the modifications
+                        warn!("source {:?}, was modified, run with --overwrite", source_abs_path);
+                        if !overwrite {
+                            continue; // error
+                        }
+                    }
+                    info!("source {:?} will be removed", source_abs_path);
+                    tasks.push(ForgetTask::Delete(source_abs_path));
+                    continue; // success
+                } else {
+                    info!("source {:?} does not exist, skipping...", source_abs_path);
+                    continue; // success
+                }
+            } else {
+                warn!("target {:?}\n\tresides outside the target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
+                continue;
+            }
+        }
+    }
+
+    if tasks.is_empty() {
+        info!("nothing to do");
+        return Ok(());
+    }
+
+    if dry_run {
+        info!("dry run specified, no changes will be made");
+    }
+
+    debug!("::remove procedure begins, {} tasks", tasks.len());
+
+    for task in tasks.iter() {
+        match task {
+            ForgetTask::Delete(source_file) => {
+                info!("delete {:?}", source_file);
+                if dry_run {
+                    continue;
+                }
+
+                // TODO check if remove_file follows links then it must not be used
+                if let Err(e) = fs::remove_file(&source_file) {
+                    error!("failed to remove file {:?}: {}", source_file, e);
+                    return Err(e);
+                }
+
+                let mut parent_opt = source_file.parent();
+                while let Some(dir) = parent_opt {
+                    parent_opt = dir.parent();
+                    if dir != source_dir_abs_path && dir.starts_with(&source_dir_abs_path) && dir.read_dir()?.next().is_none() {
+                        info!("removing empty directory {:?}", dir);
+                        if let Err(e) = fs::remove_dir(dir) {
+                            error!("failed to remove parent directory {:?}: {}", dir, e);
+                            return Err(e);
+                        }
+                    } else {
+                        trace!("removing stopped at {:?}", dir);
+                        break;
+                    }
+                }
+            },
+        }
+    }
+    Ok(())
+}
+
+// TODO add option "backup target file before overwrite", all backups must be stored in the specified
+//  directory, maybe not in the source directory.
+
 // TODO Implement management of foreign files. Must check if shier paths contains the home path
 //  and ask for --force if so. Because at the other machine those files could be located in a
 //  directory with some other username. Substitute that path with $HOME?
@@ -841,7 +1073,7 @@ fn main() -> Result<(), Error> {
         .init() {
         return Err(Error::other(e));
     }
- 
+
     if !envmnt::exists("HOME") {
         return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"));
     }
@@ -870,6 +1102,9 @@ fn main() -> Result<(), Error> {
         },
         Command::Apply { .. } => {
             apply_command(&merged_config, &args)
+        },
+        Command::Forget { .. } => {
+            forget_command(&merged_config, &args)
         },
         _ => {
             Err(Error::new(ErrorKind::Unsupported, format!("subcommand {:?} is not implemented yet", args)))

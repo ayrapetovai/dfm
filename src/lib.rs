@@ -3,6 +3,7 @@ use std::io::Error;
 use std::ops::Add;
 use std::path::PathBuf;
 use std::str::FromStr;
+
 use log::{debug, trace};
 use log::error;
 use regex::Regex;
@@ -72,7 +73,7 @@ pub fn create_default_config() -> Config {
 }
 
 pub fn read_config(path_to_config_file: &PathBuf) -> Option<ConfigFile> {
-    debug!("config file path {:?}", path_to_config_file);
+    trace!("config file path {:?}", path_to_config_file);
 
     let config_file_content = match fs::read_to_string(path_to_config_file) {
         Ok(s) => s,
@@ -151,7 +152,7 @@ pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, so
 
     let target_file_rel_to_target_dir_path = file_path_relative_to(target_abs_path, &target_dir_abs_path);
 
-    debug!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
+    trace!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
 
     // replace dots in filenames and dirnames to dot_prefix from config
     let filename = regexp_for_leading_dot_in_filename.replace(target_file_rel_to_target_dir_path.file_name().unwrap().to_str().unwrap(), &dot_prefix).to_string();
@@ -169,7 +170,7 @@ pub fn filepath_in_source_dir(config: &Config, target_dir_abs_path: &PathBuf, so
         source_file_rel_to_source_dir_path = source_file_rel_to_source_dir_path.add(postfix);
     }
 
-    debug!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
+    trace!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
     let ret = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
     return remove_dots_from_path(&ret);
 }
@@ -282,6 +283,7 @@ pub fn list_directory(paths: &[PathBuf]) -> Result<ListDirectories, Error> {
     })
 }
 
+#[derive(Eq, PartialEq)]
 pub enum CompareByTimestamp {
     TargetModified,
     SourceModified,
