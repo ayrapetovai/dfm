@@ -15,6 +15,7 @@ use dfm::*;
 // opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
 // toml https://docs.rs/toml/latest/toml/
 // env https://docs.rs/envmnt/latest/envmnt/
+// xdg https://wiki.archlinux.org/title/XDG_Base_Directory
 
 static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
 static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./dfm/config.toml";
@@ -722,7 +723,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
                 // TODO need some other algorithm do detect conflict
                 //  current one forces to change the creation time of the source file
                 //  Looks like the program needs to store some state,
-                //  maybe use some kind of a database would be ok, like ~/.cache/dfm/synctime.db to
+                //  maybe use some kind of a database would be ok, like ~/.local/state/dfm/state.toml to
                 //  store information for each file synchronization there?
 
                 // recreate source file to update its creation time
