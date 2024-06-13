@@ -201,7 +201,6 @@ fn init_command(_config: &Config, args: &Args) -> Result<(), Error> {
     };
 
     debug!("init with path {}", path.to_str().unwrap());
-    
 
     // TODO the apply subcommand must not overwrite the value of the source_dir variable of
     //  the programs config file. Actually the source_dir value must not be managed somehow.
@@ -298,7 +297,10 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
             };
             debug!("target symlink {:?}\n\tpoints to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
-            let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_symlink_abs_path, Some(".symlink"));
+            let source_symlink_file_abs_path = filepath_in_source_dir(
+                &config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
+                &target_symlink_abs_path, Some(&config.symlink_postfix)
+            );
             let source_symlink_file_exists = source_symlink_file_abs_path.exists();
             let source_symlink_file_points_to_right_target = if source_symlink_file_exists {
                  match fs::read_to_string(&source_symlink_file_abs_path) {
@@ -546,10 +548,8 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
             let target_file_rel_to_target_dir = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path);
             let dot_prefix = config.dot_prefix.clone();
             let target_file_rel_to_target_dir = target_file_rel_to_target_dir.to_str().unwrap().replace(&dot_prefix, ".");
-            // TODO ".symlink" postfix is hardcoded
-            let target_file_rel_to_target_dir = if source_file_abs_path.to_str().unwrap().ends_with(".symlink") {
-                // TODO ".symlink" postfix is hardcoded
-                target_file_rel_to_target_dir.replace(".symlink", "")
+            let target_file_rel_to_target_dir = if source_file_abs_path.to_str().unwrap().ends_with(&config.symlink_postfix) {
+                target_file_rel_to_target_dir.replace(&config.symlink_postfix, "")
             } else {
                 target_file_rel_to_target_dir
             };
@@ -558,8 +558,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
             debug!("inferred target {:?}", target_file_abs_path);
 
             if !target_file_abs_path.exists() && source_file_abs_path.exists() {
-                // TODO ".symlink" postfix is hardcoded
-                if source_file_abs_path.to_str().unwrap().ends_with(".symlink") {
+                if source_file_abs_path.to_str().unwrap().ends_with(&config.symlink_postfix) {
                     let source_file_content = fs::read_to_string(&source_file_abs_path).unwrap();
                     debug!("source is a symlink file, pointing to {}", source_file_content);
                     tasks.push(ApplyTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
@@ -595,8 +594,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
                     continue;
                 }
 
-                // TODO ".symlink" postfix is hardcoded
-                let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
+                let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(&config.symlink_postfix));
                 if source_symlink_file_abs_path.exists() {
                     let target_symlink_pointee_path = fs::read_link(&target_abs_path).unwrap();
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
@@ -670,8 +668,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
                 tasks.push(ApplyTask::Copy(target_abs_path.clone(), source_file_abs_path));
                 continue; // success
             } else {
-                // TODO ".symlink" postfix is hardcoded
-                let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
+                let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(&config.symlink_postfix));
                 if source_symlink_file_abs_path.exists() {
                     info!("source symlink file {:?} will be used to crate a target symlink", source_symlink_file_abs_path);
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
@@ -849,7 +846,10 @@ fn forget_command(config: &Config, args: &Args) -> Result<(), Error> {
                 tasks.push(ForgetTask::Delete(target_abs_path.clone()));
             }
 
-            let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(".symlink"));
+            let source_symlink_file_abs_path = filepath_in_source_dir(
+                &config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
+                &target_abs_path, Some(&config.symlink_postfix)
+            );
             if source_symlink_file_abs_path.exists() {
                 let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
                 if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
@@ -892,13 +892,12 @@ fn forget_command(config: &Config, args: &Args) -> Result<(), Error> {
             if target_abs_path.starts_with(&source_dir_abs_path) {
                 let source_abs_path = target_abs_path;
                 debug!("target {:?} resides in source directory", source_abs_path);
-                if source_abs_path.to_str().unwrap().ends_with(".symlink") {
+                if source_abs_path.to_str().unwrap().ends_with(&config.symlink_postfix) {
                     let source_symlink_file_abs_path = source_abs_path;
                     let source_rel_path = file_path_relative_to(&source_symlink_file_abs_path, &source_dir_abs_path);
-                    // TODO ".symlink" postfix is hardcoded
                     let source_rel_str = source_rel_path.to_str().unwrap()
                         .replace(&config.dot_prefix, ".")
-                        .replace(".symlink", "");
+                        .replace(&config.symlink_postfix, "");
                     let target_symlink_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &source_rel_str]);
                     if target_symlink_abs_path.exists() {
                         let target_symlink_pointee_path = match fs::read_link(&target_symlink_abs_path) {

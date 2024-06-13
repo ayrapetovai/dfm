@@ -16,6 +16,7 @@ pub struct ConfigFile {
     pub source_dir: String,
     pub target_dir: Option<String>,
     pub dot_prefix: Option<String>,
+    pub symlink_postfix: Option<String>,
     pub manage_symlinks: Option<bool>,
     // pub compare_content: Option<bool>, compare files by content
 
@@ -41,6 +42,7 @@ pub struct Config {
     pub source_dir: String,
     pub target_dir: String,
     pub dot_prefix: String,
+    pub symlink_postfix: String,
     pub manage_symlinks: bool,
     // pub compare_content: Option<bool>, compare files by content
 
@@ -66,6 +68,7 @@ pub fn create_default_config() -> Config {
         source_dir: "".to_owned(),
         target_dir: "$HOME".to_owned(),
         dot_prefix: "dot_".to_owned(),
+        symlink_postfix: ".symlink".to_owned(),
         manage_symlinks: true,
         hooks: vec![],
         dotfiles_only: false,
@@ -102,6 +105,10 @@ pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>) -> Confi
                 dot_prefix: match &custom.dot_prefix {
                     Some(v) => v.clone(),
                     None => default.dot_prefix.to_string()
+                },
+                symlink_postfix: match &custom.symlink_postfix {
+                    Some(v) => v.clone(),
+                    None => default.symlink_postfix.to_string()
                 },
                 manage_symlinks: match custom.manage_symlinks {
                     Some(v) => v,
