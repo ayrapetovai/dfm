@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 use log::{debug, error, info, trace, warn};
+use microxdg::Xdg;
 
 use dfm::*;
 
@@ -16,7 +17,7 @@ use dfm::*;
 // env https://docs.rs/envmnt/latest/envmnt/
 
 static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
-static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./config/dfm/config.toml";
+static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./dfm/config.toml";
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Dotfile Manager", long_about = None)]
@@ -1028,21 +1029,37 @@ fn main() -> Result<(), Error> {
         return Err(Error::other(e));
     }
 
+    let default_config = create_default_config();
+
+    let xdg = match Xdg::new() {
+        Ok(v) => v,
+        Err(e) => {
+            error!("failed to obtain $XDG_CONFIG_PATH value: {}", e);
+            return Err(Error::other(e));
+        }
+    };
+
     if !envmnt::exists("HOME") {
         return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"));
     }
-
-    let default_config = create_default_config();
-
-    // TODO to use XDS_CONFIG_HOME or not to use?
     let home_path = envmnt::get_or_panic("HOME");
-    let path_to_config_in_xdg_dir = PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_XDG_CONFIG]);
-    let path_to_config_file = if path_to_config_in_xdg_dir.exists() {
-        path_to_config_in_xdg_dir
-    } else {
-        PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_HOME])
+    let config_in_home = PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_HOME]);
+
+    let path_to_config_file = match xdg.config() {
+        Ok(path_to_config_dir) => {
+            let config_path = PathBuf::from_iter(vec![path_to_config_dir.to_str().unwrap(), &CONFIG_FILE_NAME_IN_XDG_CONFIG]);
+            if config_path.exists() {
+                config_path
+            } else {
+                trace!("config file was not found {:?}", config_path);
+                config_in_home
+            }
+        },
+        Err(e) => {
+            trace!("xdg config path is absent: {}", e);
+            config_in_home
+        }
     };
-    let path_to_config_file = PathBuf::from(path_to_config_file);
 
     let config_from_file = read_config(&path_to_config_file);
     let merged_config =  merge_configs(&default_config, &config_from_file);

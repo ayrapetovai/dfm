@@ -190,6 +190,7 @@ dependencies = [
  "envmnt",
  "filetime_creation",
  "log",
+ "microxdg",
  "regex",
  "serde",
  "stderrlog",
@@ -362,6 +363,12 @@ name = "memchr"
 version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
+
+[[package]]
+name = "microxdg"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdcd3dc4ca0d1a9b1b80576639e93911a3e1db25a31ab6e6ba33027429adde5e"
 
 [[package]]
 name = "num-traits"
