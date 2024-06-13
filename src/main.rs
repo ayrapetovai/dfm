@@ -164,7 +164,6 @@ enum Command {
         dry_run: bool,
     },
 
-    // TODO add to .config/dfm/config.toml?
     // .dfm_ignored_paths
     // .dfm_ignored_patterns
     /// Ignore a file when processing other subcommands.
@@ -190,7 +189,7 @@ enum Command {
         /// List all config properties.
         #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
         list: bool,
-        
+
         // path: bool, // print the path to the config file that will be used
     },
 }
@@ -383,7 +382,7 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
                         continue;
                     }
                 },
-                CompareByTimestamp::TargetModified => { // TODO if verbose
+                CompareByTimestamp::TargetModified => {
                     info!("only target {:?} was modified, no conflicts", target_abs_path);
                 },
             }
@@ -398,7 +397,7 @@ fn add_command(config: &Config, args: &Args) -> Result<(), Error> {
 
     if tasks.is_empty() {
         info!("nothing to do");
-        return Ok(()); // TODO with success
+        return Ok(());
     }
 
     if dry_run {
@@ -624,7 +623,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
             let source_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if !source_abs_path.exists() {
                 info!("target {:?} is unmanaged,\n\tno source {:?} found, skipping...", target_abs_path, source_abs_path);
-                continue; // TODO error
+                continue; // TODO is this an error?
             }
 
             let cmp = match compare_files_by_timestamps(&target_abs_path, &source_abs_path) {
@@ -640,7 +639,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
                     // TODO add merge
                     warn!("both source and target was modified, merge needed");
                     if !overwrite {
-                        continue; // TODO error
+                        return Err(Error::new(ErrorKind::InvalidData, "target and source have conflicting modifications"));
                     }
                 },
                 CompareByTimestamp::NonModified => {
@@ -650,7 +649,7 @@ fn apply_command(config: &Config, args: &Args) -> Result<(), Error> {
                 CompareByTimestamp::TargetModified => {
                     warn!("target was modified, applying source will overwrite those changes");
                     if !overwrite {
-                        continue; // TODO error
+                        return Err(Error::new(ErrorKind::InvalidData, "target was modified"));
                     }
                 },
                 CompareByTimestamp::SourceModified => {
@@ -978,7 +977,8 @@ fn forget_command(config: &Config, args: &Args) -> Result<(), Error> {
                     continue;
                 }
 
-                // TODO check if remove_file follows links then it must not be used
+                // fs::remove_file does not follow links, it deletes the specified file
+                // even it is a symlink
                 if let Err(e) = fs::remove_file(&source_file) {
                     error!("failed to remove file {:?}: {}", source_file, e);
                     return Err(e);

@@ -279,7 +279,6 @@ pub fn list_directory(paths: &[PathBuf]) -> Result<ListDirectories, Error> {
                     .into_iter()
             }
         })
-        // TODO filter duplicates
         .collect::<Vec<PathBuf>>();
 
     traversed_paths.dedup();
@@ -325,7 +324,6 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_pa
     let target_file_modified = target_file_meta.modified().unwrap();
     let source_file_modified = source_file_meta.modified().unwrap();
 
-    // TODO if verbose
     debug!("current state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
              target_file_modified, source_file_created, source_file_modified);
 
@@ -355,7 +353,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_pa
         return Ok(CompareByTimestamp::NonModified);
     }
 
-    if only_target_modified { // TODO if verbose
+    if only_target_modified {
         return Ok(CompareByTimestamp::TargetModified);
     }
 
