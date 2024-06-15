@@ -8,6 +8,7 @@ use std::time::SystemTime;
 
 use log::trace;
 use log::error;
+use microxdg::Xdg;
 use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
@@ -16,6 +17,34 @@ use walkdir::WalkDir;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct StateObject {
     pub syncs: HashMap<String, SystemTime>,
+}
+
+static STATE_FILE_NAME_IN_XDG_STATE: &str = "./dfm/state.toml";
+
+impl StateObject {
+    pub fn new() -> Self {
+       StateObject {
+           syncs: HashMap::new()
+       }
+    }
+}
+
+pub fn calc_state_file_path() -> Result<PathBuf, Error> {
+    let xdg = match Xdg::new() {
+        Ok(v) => v,
+        Err(e) => {
+            error!("failed to obtain $XDG_CONFIG_PATH value: {}", e);
+            return Err(Error::other(e));
+        }
+    };
+    let path_to_state_file = match xdg.state_file(&STATE_FILE_NAME_IN_XDG_STATE) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("failed to find state file: {}", e);
+            return Err(Error::other(e));
+        }
+    };
+    Ok(path_to_state_file)
 }
 
 pub fn read_state(path_to_state_file: &PathBuf) -> Option<StateObject> {
@@ -97,6 +126,93 @@ pub struct Config {
 pub struct Hook {
     pub when: String,
     pub execute: String,
+}
+
+static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
+static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./dfm/config.toml";
+
+impl ConfigFile {
+    pub fn new() -> Self {
+        ConfigFile {
+            source_dir: "".to_string(),
+            target_dir: None,
+            dot_prefix: None,
+            symlink_postfix: None,
+            manage_symlinks: None,
+            hooks: None,
+            dotfiles_only: None,
+        }
+    }
+}
+
+pub fn write_config(path: &PathBuf, config: &ConfigFile) -> Result<(), Error> {
+    let content = match toml::to_string_pretty(config) {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(Error::other(e));
+        }
+    };
+    fs::write(path, content)
+}
+
+pub fn insert_config(config_file: &mut ConfigFile, config: &Config) {
+    if config_file.target_dir.is_none() {
+        config_file.target_dir = Some(config.target_dir.clone());
+    }
+    if config_file.dot_prefix.is_none() {
+        config_file.dot_prefix = Some(config.dot_prefix.clone());
+    }
+    if config_file.symlink_postfix.is_none() {
+        config_file.symlink_postfix = Some(config.symlink_postfix.clone());
+    }
+    if config_file.manage_symlinks.is_none() {
+        config_file.manage_symlinks = Some(config.manage_symlinks.clone());
+    }
+    if config_file.hooks.is_none() {
+        let mut file_hooks = vec![];
+        for hook in config.hooks.iter() {
+            let hook_file = HookFile { when: hook.when.clone(), execute: hook.execute.clone() };
+            file_hooks.push(hook_file);
+        }
+        config_file.hooks = Some(file_hooks);
+    }
+    if config_file.dotfiles_only.is_none() {
+        config_file.dotfiles_only = Some(config.dotfiles_only);
+    }
+}
+
+pub fn calc_config_file_path() -> Result<PathBuf, Error>{
+    let xdg = match Xdg::new() {
+        Ok(v) => v,
+        Err(e) => {
+            error!("failed to obtain $XDG_CONFIG_PATH value: {}", e);
+            return Err(Error::other(e));
+        }
+    };
+
+    if !envmnt::exists("HOME") {
+        return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"));
+    }
+    let home_path = envmnt::get_or_panic("HOME");
+    let config_in_home = PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_HOME]);
+
+    let path_to_config_file = match xdg.config() {
+        Ok(path_to_config_dir) => {
+            let config_path = PathBuf::from_iter(vec![path_to_config_dir.to_str().unwrap(), &CONFIG_FILE_NAME_IN_XDG_CONFIG]);
+            if config_path.exists() {
+                config_path
+            } else {
+                trace!("config file was not found {:?}", config_path);
+                config_in_home
+            }
+        },
+        Err(e) => {
+            trace!("xdg config path is absent: {}", e);
+            config_in_home
+        }
+    };
+
+    return Ok(path_to_config_file);
 }
 
 pub fn create_default_config() -> Config {
@@ -344,6 +460,7 @@ pub enum CompareByTimestamp {
     SourceModified,
     BothModified,
     NonModified,
+    NeverSynchronized,
 }
 
 pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &PathBuf, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, Error> {
@@ -366,10 +483,9 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
     let source_file_synced = match sync_time_opt {
         Some(t) => *t,
         None => {
-            // TODO what user should do to fix this issue?
-            error!("synchronization time is no available for target {:?}\n\tand source {:?}",
+            trace!("synchronization time is no available for target {:?}\n\tand source {:?}",
                 target_abs_path, source_abs_path);
-            return Err(Error::new(ErrorKind::NotFound, "synchronization time is no available"));
+            return Ok(CompareByTimestamp::NeverSynchronized);
         }
     };
     let target_file_modified = target_file_meta.modified().unwrap();

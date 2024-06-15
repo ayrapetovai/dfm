@@ -65,13 +65,13 @@ Creating a new repo for dotfiles:
 - user executes `$ dfm init path/to/that/new/dir`.
 - user executes `$ dfm add` to add all dotfiles under the management.
 
-The given path considered to be the source directory path.
+The given path expected to be the source directory path.
 - If the given path does not exist then exit with error.
-- If this path contains a file .dfm-root, then the program reads the file content,
+- If this path contains a file `.dfm_root`, then the program reads the file content,
 the content is a path to the source root.
 - If the path from the `.dfm_root` does not exist then exit with error.
-Recursively search for the source directory, by the way.
-- Having source directory, search a config file of the program inside of it,
+Recursively search for the source directory, by this way.
+- Having source directory, search the config file of the program inside of it,
 apply the `apply` subcommand to the found config file.
 - If the config file does not exist in source directory then create the config
 file in the `$XDG_CONFIG_PATH` (or `$HOME`?) directory and fill with default
