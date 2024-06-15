@@ -1,15 +1,52 @@
+use std::collections::HashMap;
 use std::fs;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::ops::Add;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::SystemTime;
 
-use log::{debug, trace};
+use log::trace;
 use log::error;
 use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
 use walkdir::WalkDir;
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StateObject {
+    pub syncs: HashMap<String, SystemTime>,
+}
+
+pub fn read_state(path_to_state_file: &PathBuf) -> Option<StateObject> {
+    trace!("state file path {:?}", path_to_state_file);
+
+    let state_file_content = match fs::read_to_string(path_to_state_file) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("failed to read state file {:?}: {}", path_to_state_file, e);
+            return None;
+        }
+    };
+
+    return match toml::from_str(&state_file_content) {
+        Err(e) => {
+            error!("failed to deserialize state file: {}", e);
+            return None;
+        },
+        Ok(s) => Some(s)
+    };
+}
+
+pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<(), Error> {
+    let state_content = match toml::to_string_pretty(state) {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(Error::new(ErrorKind::InvalidData, e));
+        }
+    };
+    return fs::write(path_to_state_file, state_content);
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ConfigFile {
@@ -82,12 +119,15 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Option<ConfigFile> {
         Ok(s) => s,
         Err(e) => {
             error!("failed to read config file {:?}: {}", path_to_config_file, e);
-            return None
+            return None;
         }
     };
 
     return match toml::from_str(&config_file_content) {
-        Err(_) => None,
+        Err(e) => {
+            error!("failed to deserialize state file: {}", e);
+            return None;
+        },
         Ok(c) => Some(c)
     };
 }
@@ -138,7 +178,8 @@ pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &Pat
     }
 
     if target_file_rel_to_target_dir_path_opt.is_some() {
-        target_file_rel_to_target_dir_path_opt.unwrap()
+        let ret = target_file_rel_to_target_dir_path_opt.unwrap();
+        return if ret.to_str().unwrap().is_empty() { PathBuf::from(".") } else { ret };
     } else {
         let mut target_file_rel_to_target_dir_path_with_backs = String::from(file_abs_path.to_str().unwrap());
         for _ in 0..path_components.len() {
@@ -180,6 +221,7 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, s
     return remove_dots_from_path(&ret);
 }
 
+// TODO this is a shame, refactor this function with repentance
 pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
     if path.to_str().unwrap() == "/" {
         return PathBuf::from(path);
@@ -189,7 +231,8 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
     let mut ret = String::new();
     for ancestor in path.iter().rev() {
         let name= ancestor.to_str().unwrap();
-        if name == "." && ret.chars().nth(0).unwrap() == '/' {
+        let first_symbol_opt = ret.chars().nth(0);
+        if name == "." && first_symbol_opt.is_some() && first_symbol_opt.unwrap() == '/' {
             ret.remove(0);
         } else if name == ".." {
             go_back_counter += 1;
@@ -202,11 +245,17 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
             }
         }
     }
+    if !path.to_str().unwrap().starts_with("/") && ret.starts_with("/"){
+        ret.remove(0);
+    }
     if go_back_counter > 0 {
         ret.remove(0);
     }
     for _ in 0..go_back_counter {
         ret.insert_str(0, "../");
+    }
+    if ret == "" {
+        ret.push('.');
     }
     return PathBuf::from(ret);
 }
@@ -224,7 +273,7 @@ pub fn calc_working_dir_paths(config: &Config) -> Result<(PathBuf, PathBuf), Err
 
     let target_dir_abs_path = match PathBuf::from_str(target_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
-        Err(e) => panic!("target directory path is bad {}", e)
+        Err(e) => return Err(Error::other(e))
     };
 
     trace!("using source directory from config (original) {:?}", config.source_dir);
@@ -297,7 +346,7 @@ pub enum CompareByTimestamp {
     NonModified,
 }
 
-pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_path: &PathBuf) -> Result<CompareByTimestamp, Error> {
+pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &PathBuf, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, Error> {
     let target_file_meta = match target_abs_path.metadata() {
         Ok(m) => m,
         Err(e) => {
@@ -306,35 +355,37 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_pa
         }
     };
 
-    let source_file_meta = match source_file_abs_path.metadata() {
+    let source_file_meta = match source_abs_path.metadata() {
         Ok(m) => m,
         Err(e) => {
-            error!("failed to read source {:?} metadata, {}", source_file_abs_path, e);
+            error!("failed to read source {:?} metadata, {}", source_abs_path, e);
             return Err(e);
         }
     };
 
-    let source_file_created = match source_file_meta.created() {
-        Ok(t) => t,
-        Err(e) => {
-            error!("this filesystem does not support creation time for files (try to recompile the program): {}", e);
-            return Err(e);
+    let source_file_synced = match sync_time_opt {
+        Some(t) => *t,
+        None => {
+            // TODO what user should do to fix this issue?
+            error!("synchronization time is no available for target {:?}\n\tand source {:?}",
+                target_abs_path, source_abs_path);
+            return Err(Error::new(ErrorKind::NotFound, "synchronization time is no available"));
         }
     };
     let target_file_modified = target_file_meta.modified().unwrap();
     let source_file_modified = source_file_meta.modified().unwrap();
 
-    debug!("current state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
-             target_file_modified, source_file_created, source_file_modified);
+    trace!("current state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+             target_file_modified, source_file_synced, source_file_modified);
 
-    let both_not_modified = target_file_modified == source_file_created &&
-        source_file_created == source_file_modified;
-    let only_source_modified = target_file_modified == source_file_created &&
-        source_file_created < source_file_modified || target_file_modified < source_file_modified;
-    let only_target_modified = target_file_modified > source_file_created &&
-        source_file_created == source_file_modified || target_file_modified > source_file_modified;
-    let both_modified = target_file_modified > source_file_created &&
-        source_file_created < source_file_modified;
+    let both_not_modified = target_file_modified == source_file_synced &&
+        source_file_synced == source_file_modified;
+    let only_source_modified = target_file_modified == source_file_synced &&
+        source_file_synced < source_file_modified || target_file_modified < source_file_modified;
+    let only_target_modified = target_file_modified > source_file_synced &&
+        source_file_synced == source_file_modified || target_file_modified > source_file_modified;
+    let both_modified = target_file_modified > source_file_synced &&
+        source_file_synced < source_file_modified;
 
     // TODO if source file does not required to be changed still
     //  need to check its permissions, and copy them if needed.
@@ -361,6 +412,13 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_file_abs_pa
 }
 
 #[test]
+fn test_file_path_relative_to() {
+    assert_eq!(file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c")), PathBuf::from("d"));
+    assert_eq!(file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c/")), PathBuf::from("d"));
+    assert_eq!(file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c/d")), PathBuf::from("."));
+}
+
+#[test]
 fn test_remove_dots_from_path() {
     assert_eq!(remove_dots_from_path(&PathBuf::from("/")), PathBuf::from("/"));
     assert_eq!(remove_dots_from_path(&PathBuf::from("/a")), PathBuf::from("/a"));
@@ -372,4 +430,9 @@ fn test_remove_dots_from_path() {
     assert_eq!(remove_dots_from_path(&PathBuf::from("/../../d/e")), PathBuf::from("../../d/e"));
     assert_eq!(remove_dots_from_path(&PathBuf::from("/a/b/e/./f/g")), PathBuf::from("/a/b/e/f/g"));
     assert_eq!(remove_dots_from_path(&PathBuf::from("./f/g")), PathBuf::from("f/g"));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("f/g")), PathBuf::from("f/g"));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("f/../g")), PathBuf::from("g"));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("f/../")), PathBuf::from("."));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("./")), PathBuf::from("."));
+    assert_eq!(remove_dots_from_path(&PathBuf::from(".")), PathBuf::from("."));
 }

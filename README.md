@@ -2,10 +2,6 @@
 This program is designed to maintain copies of configuration files from the home directory
 using a separate directory under a version control system.
 
-## System Requirements
-Linux kernel starting from 4.11 for the file creation time to be available.  
-Filesystem one of: ufs2, zfs, ext4, btrfs, jfs.
-
 ## How Dotfile Managing is Performed
 
 ### Terminology
@@ -17,7 +13,6 @@ target file (TF) - a managed file in the target directory.
 source file (SF) - the backing up file in source directory.  
 managed file/directory/symlink - the filesystem object for which will be created a corresponding object
 in the source directory.
-btime - time when file was created. Set only when creation performed.
 mtime - time when the last modification of a file was performed.  
 btime - time then file was read the last time, is not used in the dotfile manager.  
 exists - true/false, if file or directory present in filesystem.  
@@ -83,6 +78,8 @@ file in the `$XDG_CONFIG_PATH` (or `$HOME`?) directory and fill with default
 config parameters from the call of `default_config` function.
 - In the config file in the target directory, we must set the `source_dir` variable
 to the path of the source directory.
+- Create the empty `$XDG_STATE_PATH/dfm/state.toml` file if it does not exist or
+clean the file if exists.
 - Create a file `.dfm_root` with content "." if not exists in the source directory.
 
 ### Add
