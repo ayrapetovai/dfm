@@ -60,7 +60,7 @@ enum Command {
         #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
         dry_run: bool,
     },
-   
+
     /// Remove state file.
     Purge,
 
@@ -95,12 +95,11 @@ enum Command {
         dry_run: bool,
     },
 
-    // TODO rename to `pull`?
     /// Copy changes from the source directory to the target directory.
     #[command(arg_required_else_help = false)]
-    Apply {
+    Pull {
         /// Files to be updated from source directory to target.
-        /// If omitted - apply all files in the source directory.
+        /// If omitted - pull all files in the source directory.
         #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
 
@@ -144,9 +143,9 @@ enum Command {
         #[arg(long, short = 'M', num_args = 0, default_value_t = false)]
         unmanaged: bool,
 
-        /// Source files that was not applied.
+        /// Source files that was not pulled.
         #[arg(long, short, num_args = 0, default_value_t = false)]
-        never_applied: bool,
+        never_pulled: bool,
 
         /// List ignored files.
         #[arg(long, short = 'i', num_args = 0, default_value_t = false)]
@@ -159,6 +158,18 @@ enum Command {
         /// List unused ignore patterns.
         #[arg(long, short = 'P', num_args = 0, default_value_t = false)]
         useless_patterns: bool,
+    },
+
+    // TODO implement like https://man7.org/linux/man-pages/man1/git-mergetool.1.html
+    /// Perform 2-way merge on conflicting files.
+    Merge {
+        /// Files to merge, if omitted - all conflicting files.
+        #[arg(value_name = "PATH")]
+        paths: Option<Vec<PathBuf>>,
+
+        /// Use specified merge command
+        #[arg(long, short = 't', num_args = 1, value_name = "COMMAND")]
+        tool: Option<String>,
     },
 
     // must check conflicts
@@ -222,7 +233,7 @@ fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
         return Err(Error::new(ErrorKind::NotFound, format!("directory {:?} was not found", path_to_source)));
     }
 
-    // TODO search for the config file in source directory and apply it
+    // TODO search for the config file in source directory and pull it
     //  to the config file in the ~/.config/dfm or ~/.dfm.toml,
     //  but do not replace `source_dir` and `target_dir`.
     //  Maybe create a separate config file for them? The unaplyable file,
@@ -389,7 +400,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
     debug!("::check state procedure begins");
 
     for target_path in traversed_paths.iter() {
-        info!("checking {:?}", target_path);
+        debug!("checking {:?}", target_path);
 
         let target_path = if target_path.is_symlink() {
             debug!("target {:?} is a symlink", target_path);
@@ -570,20 +581,20 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
     Ok(())
 }
 
-fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<(), Error> {
-    let Command::Apply {
+fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<(), Error> {
+    let Command::Pull {
         paths,
         merge,
         overwrite,
         dry_run,
         ..
     } = &args.command else {
-        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `apply`", args.command)));
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `pull`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };
 
-    debug!("apply paths {:?}, merge {}, overwrite {}, dry-run {}", paths, merge, overwrite, dry_run);
+    debug!("pull paths {:?}, merge {}, overwrite {}, dry-run {}", paths, merge, overwrite, dry_run);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
 
@@ -606,15 +617,15 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
         ));
     }
 
-    enum ApplyTask {
+    enum PullTask {
         Copy(PathBuf, PathBuf),
         CreateOrUpdateSymlink(PathBuf, String),
     }
 
-    let mut tasks: Vec<ApplyTask> = vec![];
+    let mut tasks: Vec<PullTask> = vec![];
 
     for target_path in traversed_paths.iter() {
-        info!("checking {:?}", target_path);
+        debug!("checking {:?}", target_path);
 
         let target_abs_path = PathBuf::from_iter(vec!(&target_dir_abs_path, &target_path));
         let target_abs_path = remove_dots_from_path(&target_abs_path);
@@ -640,11 +651,11 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
                 if source_file_abs_path.to_str().unwrap().ends_with(&config.symlink_postfix) {
                     let source_file_content = fs::read_to_string(&source_file_abs_path)?;
                     debug!("source is a symlink file, pointing to {}", source_file_content);
-                    tasks.push(ApplyTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
+                    tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
                     continue; // success
                 } else {
                     debug!("regular file creating task");
-                    tasks.push(ApplyTask::Copy(target_file_abs_path, source_file_abs_path));
+                    tasks.push(PullTask::Copy(target_file_abs_path, source_file_abs_path));
                     continue; // success
                 }
             } else if target_file_abs_path.is_symlink() && source_file_abs_path.exists() {
@@ -652,12 +663,11 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
                 let source_file_content: String = fs::read_to_string(&source_file_abs_path)?.trim().to_string();
                 if !source_file_content.eq(target_symlink_pointee.to_str().unwrap()) {
                     info!("target symlink {:?} points to {:?},\n\tmust point to {:?}", target_file_abs_path, target_symlink_pointee, source_file_content);
-                    tasks.push(ApplyTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
+                    tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
                     continue; // success
                 }
             }
-            // TODO check if the pointee of the symlink also is under management and needs to be
-            //  applied.
+            // TODO check if the pointee of the symlink also is under management and needs to be pulled.
             target_file_abs_path
         } else {
             target_abs_path
@@ -682,7 +692,7 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
                         continue; // success
                     } else {
                         info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
-                        tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
+                        tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
                         continue; // success
                     }
                 } else {
@@ -695,7 +705,7 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
 
                 // also the case is handled when the symlink pints inside the source directory but
                 // to the wrong file
-                tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_string()));
+                tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_string()));
                 continue;
             }
 
@@ -725,7 +735,7 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
                     continue; // success
                 },
                 CompareByTimestamp::TargetModified => {
-                    warn!("target was modified, applying source will overwrite those changes");
+                    warn!("target was modified, pulling source will overwrite those changes");
                     if !overwrite {
                         return Err(Error::new(ErrorKind::InvalidData, "target was modified"));
                     }
@@ -741,7 +751,7 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
                     }
                 },
             }
-            tasks.push(ApplyTask::Copy(target_abs_path.clone(), source_abs_path));
+            tasks.push(PullTask::Copy(target_abs_path.clone(), source_abs_path));
         } else {
             // target file does not exist
             debug!("target {:?} does not exist", target_abs_path);
@@ -749,14 +759,14 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
             let source_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if source_file_abs_path.exists() {
                 info!("source {:?} will be copied\n\tto the target {:?}", source_file_abs_path, target_abs_path);
-                tasks.push(ApplyTask::Copy(target_abs_path.clone(), source_file_abs_path));
+                tasks.push(PullTask::Copy(target_abs_path.clone(), source_file_abs_path));
                 continue; // success
             } else {
                 let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(&config.symlink_postfix));
                 if source_symlink_file_abs_path.exists() {
                     info!("source symlink file {:?} will be used to crate a target symlink", source_symlink_file_abs_path);
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
-                    tasks.push(ApplyTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
+                    tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
                     continue; // success
                 } else {
                     warn!("for target {:?} no corresponding source file found", target_abs_path);
@@ -778,7 +788,7 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
 
     for task in tasks.iter() {
         match task {
-            ApplyTask::Copy(target_file, source_file) => {
+            PullTask::Copy(target_file, source_file) => {
                 info!("copy source {:?}\n\tto target {:?}", source_file, target_file);
                 if dry_run {
                     continue;
@@ -812,7 +822,7 @@ fn apply_command(config: &Config, args: &Args, state: &mut StateObject) -> Resul
                          target_file_modified, sync_creation, source_file_modified);
                 }
             },
-            ApplyTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
+            PullTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
                 info!("create symlink {:?} pointing\n\tto {:?}", target_symlink_file_path, points_to);
                 if dry_run {
                     continue;
@@ -890,7 +900,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
     debug!("::check state procedure begins");
 
     for target_path in traversed_paths.iter() {
-        info!("checking {:?}", target_path);
+        debug!("checking {:?}", target_path);
 
         if target_path.is_symlink() {
             let target_abs_path = PathBuf::from_iter(vec![&target_dir_abs_path, &target_path]);
@@ -1076,7 +1086,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
 // TODO add an interactive mode, the application should ask user before each modification in
 //  filesystem it wants to make.
 
-// TODO the apply subcommand must not overwrite the value of the source_dir variable of
+// TODO the pull subcommand must not overwrite the value of the source_dir variable of
 //  the programs config file. Actually the source_dir value must not be managed somehow.
 
 fn main() -> Result<(), Error> {
@@ -1094,10 +1104,10 @@ fn main() -> Result<(), Error> {
     let path_to_config_file = calc_config_file_path()?;
     let config_from_file = read_config(&path_to_config_file);
     let config =  merge_configs(&default_config, &config_from_file);
-    
+
     let path_to_state_file = calc_state_file_path()?;
     let state_opt = read_state(&path_to_state_file);
-    
+
     return match args.command {
         Command::Init { .. } => {
             init_command(&config, &args)
@@ -1110,12 +1120,12 @@ fn main() -> Result<(), Error> {
             if let Err(e) = add_command(&config, &args, &mut state) { return Err(e) }
             write_state(&path_to_state_file, &state)
         },
-        Command::Apply { .. } => {
+        Command::Pull { .. } => {
             if state_opt.is_none() {
                 return Err(Error::new(ErrorKind::NotFound, format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            if let Err(e) = apply_command(&config, &args, &mut state) { return Err(e) }
+            if let Err(e) = pull_command(&config, &args, &mut state) { return Err(e) }
             write_state(&path_to_state_file, &state)
         },
         Command::Forget { .. } => {

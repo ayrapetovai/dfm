@@ -1,6 +1,12 @@
 # Dotfile Manager
 This program is designed to maintain copies of configuration files from the home directory
 using a separate directory under a version control system.
+- ignore specified files
+- call mergetool on conflicts (two-way merge)
+- backup files before overwriting
+- tracking symlinks
+- encrypt files
+- hooks
 
 ## How Dotfile Managing is Performed
 
@@ -18,7 +24,7 @@ btime - time then file was read the last time, is not used in the dotfile manage
 exists - true/false, if file or directory present in filesystem.  
 - Successful `add` subcommand modifies the creation and modification time of the source file to be equal to
 the modification time of the target file and to each other.
-- Successful `apply` subcommand modifies times the same way as `add` subcommand.
+- Successful `pull` subcommand modifies times the same way as `add` subcommand.
 
 Regular run (non init subcommand):
 1. try to read ~/.config/dfm/config.toml,
@@ -29,36 +35,35 @@ Regular run (non init subcommand):
 The source directory is ignored by default, yet the directory that contains it is not ignored.
 All files and subdirectories of the containing source directory can be added under the management.
 
-### Add and Apply Conflict Detection
-Subcommand `add` copy files from target directory to source directory, subcommand `apply` copy from
+### Add and Pull Conflict Detection
+Subcommand `add` copy files from target directory to source directory, subcommand `pull` copy from
 source directory to target directory respectively.
 Before perform any coping the check any modification conflict present.  
 The check algorithm allows to figure out the fact that target file was edited by user or owning program, and the fact
 that target file was edited by user or by `git`.
-1. if !TF.exists && SF.exists then, `add` aborts with error, `apply` copies SF to TF.
-2. if TF.exists && !TF.symlink && !SF.exists then `add` will copy TF to SF, `apply` will fail.
-3. if TF.exists && TF.symlink && !SF.exists then `add` will fail and `apply` will fail.
-4. if !TF.exists && !SF.exists then, `add` will fail, `apply` will fail.
-5. if TF.exists && TF.symlink && SF.exists then, `add` do nothing and `apply` do nothing.
+1. if !TF.exists && SF.exists then, `add` aborts with error, `pull` copies SF to TF.
+2. if TF.exists && !TF.symlink && !SF.exists then `add` will copy TF to SF, `pull` will fail.
+3. if TF.exists && TF.symlink && !SF.exists then `add` will fail and `pull` will fail.
+4. if !TF.exists && !SF.exists then, `add` will fail, `pull` will fail.
+5. if TF.exists && TF.symlink && SF.exists then, `add` do nothing and `pull` do nothing.
 6. if TF.exists && !TF.symlink && SF.exists then, checks performed:
-    1. if TF.mtime == SF.ctime && SF.ctime == SF.mtime then, no file was modified, `add` and `apply` will do nothing.
+    1. if TF.mtime == SF.ctime && SF.ctime == SF.mtime then, no file was modified, `add` and `pull` will do nothing.
     2. if TF.mtime == SF.ctime && SF.ctime < SF.mtime, source file was modified, target file was not,
-    `add` subcommand will overwrite changes in source file (conflict), `apply` subcommand will copy new version
+    `add` subcommand will overwrite changes in source file (conflict), `pull` subcommand will copy new version
     of source file to the target file (no conflict).
     3. if TF.mtime > SF.ctime && SF.ctime == SF.mtime then, target file was modified, source file was not,
-    `add` subcommand will copy new version of the target file to the source file (no conflict), `apply` subcommand
+    `add` subcommand will copy new version of the target file to the source file (no conflict), `pull` subcommand
     will overwrite new changes in the target file (conflict).
     4. if TF.mtime > SF.ctime && SF.ctime < SF.mtime then, both files was modified independently, both `add` and
-   `apply` subcommands will overwrite new modifications (conflict).
+   `pull` subcommands will overwrite new modifications (conflict).
 
 ### Init
 The supposed workflow is this:
-
 Setting up an existing repo with dotfiles:
 - user downloads the repository, with the source directory locating at the root of
 the repository, or a one of its subdirectories.
 - user executes `$ dfm init path/to/repo/` or with path directly to the source directory.
-- user executes `$ dfm apply` to copy all the dotfiles to the home directory.
+- user executes `$ dfm pull` to copy all the dotfiles to the home directory.
 
 Creating a new repo for dotfiles:
 - user crates a directory somewhere in filesystem to make it a source directory.
@@ -72,7 +77,7 @@ the content is a path to the source root.
 - If the path from the `.dfm_root` does not exist then exit with error.
 Recursively search for the source directory, by this way.
 - Having source directory, search the config file of the program inside of it,
-apply the `apply` subcommand to the found config file.
+apply the `pull` subcommand to the found config file.
 - If the config file does not exist in source directory then create the config
 file in the `$XDG_CONFIG_PATH` (or `$HOME`?) directory and fill with default
 config parameters from the call of `default_config` function.
@@ -108,9 +113,9 @@ Subcommand traverses in depth all given path to locate the files, each file can 
 - a non-existing file, that has a corresponding file in the source directory
     - error "file not found"
 
-### Apply
+### Pull
 The subcommand takes the names of a files from target directory.
-If the specified filename does not exist in target directory, then `apply` will calculate the corresponding names
+If the specified filename does not exist in target directory, then `pull` will calculate the corresponding names
 in the source directory. If there is no such a file in source directory - error.
 For existing target files: replacement, for non-existing files: creation (does not require special conditions).
 Replacement checks if there is no conflict.
@@ -135,7 +140,7 @@ each file in the target directory could be:
 - a non-existing file, that has a corresponding file in the source directory
     - copy the source file to the path of a target file
 
-The `apply` subcommand is able to take a path from the source directory,
+The `pull` subcommand is able to take a path from the source directory,
 to make is easier to copy just cloned files, that don't yet exist in the home directory.
 Each file in the source directory could be:
 - an existing file, that has no corresponding file in the target directory
