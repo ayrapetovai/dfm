@@ -140,7 +140,7 @@ enum Command {
         managed: bool,
 
         /// List unmanaged files.
-        #[arg(long, short = 'M', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'u', num_args = 0, default_value_t = false)]
         unmanaged: bool,
 
         /// Source files that was not pulled.
@@ -199,20 +199,21 @@ enum Command {
         patterns: Option<Vec<String>>,
     },
 
-    /// Get or set config properties.
-    Config {
-        /// Print the specified config property.
-        #[arg(long, short, num_args = 1, required = false, required_unless_present_any = ["set", "list"], value_name = "NAME")]
-        get: Option<String>,
-
-        /// Set config property to a specified value.
-        #[arg(long, short, num_args = 2, required = false, required_unless_present_any = ["get", "list"], value_names = ["NAME", "VALUE"])]
-        set: Option<Vec<String>>,
-
-        /// List all config properties.
-        #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
-        list: bool,
-    },
+    // TODO remove?
+    // /// Get or set config properties.
+    // Config {
+    //     /// Print the specified config property.
+    //     #[arg(long, short, num_args = 1, required = false, required_unless_present_any = ["set", "list"], value_name = "NAME")]
+    //     get: Option<String>,
+    // 
+    //     /// Set config property to a specified value.
+    //     #[arg(long, short, num_args = 2, required = false, required_unless_present_any = ["get", "list"], value_names = ["NAME", "VALUE"])]
+    //     set: Option<Vec<String>>,
+    // 
+    //     /// List all config properties.
+    //     #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
+    //     list: bool,
+    // },
 }
 
 fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
@@ -862,7 +863,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
         dry_run,
         ..
     } = &args.command else {
-        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `add`", args.command)));
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `forget`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };
