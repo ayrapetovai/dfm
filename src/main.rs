@@ -205,11 +205,11 @@ enum Command {
     //     /// Print the specified config property.
     //     #[arg(long, short, num_args = 1, required = false, required_unless_present_any = ["set", "list"], value_name = "NAME")]
     //     get: Option<String>,
-    // 
+    //
     //     /// Set config property to a specified value.
     //     #[arg(long, short, num_args = 2, required = false, required_unless_present_any = ["get", "list"], value_names = ["NAME", "VALUE"])]
     //     set: Option<Vec<String>>,
-    // 
+    //
     //     /// List all config properties.
     //     #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
     //     list: bool,
@@ -235,11 +235,15 @@ fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
     }
 
     // TODO search for the config file in source directory and pull it
-    //  to the config file in the ~/.config/dfm or ~/.dfm.toml,
+    //  to the config file in the ~/.config/dfm/config.toml or ~/.dfm.toml,
     //  but do not replace `source_dir` and `target_dir`.
     //  Maybe create a separate config file for them? The unaplyable file,
     //  those paths should not be overwritten with a config file source and target
-    //  from the other machine.
+    //  from the other machine. And the `init` subcommand should initialize only the
+    //  path-config file. Also this file should be ignored by default, because it contains
+    //  the machine-specific info, that is not needed at the other machine.
+    //  ~/.dfm_local.toml
+    //  ~/.config/dfm/config_local.toml
     enum InitTask {
         CreateSourceRootFile(PathBuf),
         UpdateConfigFile(PathBuf, Option<PathBuf>, PathBuf),
@@ -266,6 +270,25 @@ fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
 
     debug!("using source directory {:?}", source_dir_path);
 
+    let state_file_path = calc_state_file_path()?;
+    tasks.push(InitTask::CreateStateFile(state_file_path.clone()));
+
+    let home_dir = envmnt::get_or_panic("HOME");
+
+    let source_dir_abs_path = fs::canonicalize(&source_dir_path)?;
+    let source_dir_rel_to_home = file_path_relative_to(&source_dir_abs_path, &PathBuf::from(&home_dir));
+    let mut source_dir_abs_path_with_home = String::from("$HOME/");
+    source_dir_abs_path_with_home.push_str(source_dir_rel_to_home.to_str().unwrap());
+
+    if let Some(path_to_target) = path_to_target_opt {
+        let target_dir_abs_path = fs::canonicalize(path_to_target)?;
+        let target_dir_rel_path = file_path_relative_to(&target_dir_abs_path, &PathBuf::from(&home_dir));
+        let target_dir_rel_path = PathBuf::from_iter(vec!["$HOME/", target_dir_rel_path.to_str().unwrap()]);
+        tasks.push(InitTask::UpdateConfigFile(calc_config_file_path().unwrap(), Some(target_dir_rel_path), PathBuf::from(source_dir_abs_path_with_home)));
+    } else {
+        tasks.push(InitTask::UpdateConfigFile(calc_config_file_path().unwrap(), None, PathBuf::from(source_dir_abs_path_with_home)));
+    }
+
     if dry_run {
         info!("dry run specified, no changes will be made");
     }
@@ -276,25 +299,6 @@ fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
     }
 
     debug!("::init procedure begins, {} tasks", tasks.len());
-
-    let state_file_path = calc_state_file_path()?;
-    tasks.push(InitTask::CreateStateFile(state_file_path.clone()));
-
-    let home_dir = envmnt::get_or_panic("HOME");
-
-    let source_dir_abs_path = fs::canonicalize(&source_dir_path)?;
-    let source_dir_rel_to_home = file_path_relative_to(&source_dir_abs_path, &PathBuf::from(&home_dir));
-    let mut source_dir_ags_path_with_home = String::from("$HOME/");
-    source_dir_ags_path_with_home.push_str(source_dir_rel_to_home.to_str().unwrap());
-
-    if let Some(path_to_target) = path_to_target_opt {
-        let target_dir_abs_path = fs::canonicalize(path_to_target)?;
-        let target_dir_rel_path = file_path_relative_to(&target_dir_abs_path, &PathBuf::from(&home_dir));
-        let target_dir_rel_path = PathBuf::from_iter(vec!["$HOME/", target_dir_rel_path.to_str().unwrap()]);
-        tasks.push(InitTask::UpdateConfigFile(calc_config_file_path().unwrap(), Some(target_dir_rel_path), PathBuf::from(source_dir_ags_path_with_home)));
-    } else {
-        tasks.push(InitTask::UpdateConfigFile(calc_config_file_path().unwrap(), None, PathBuf::from(source_dir_ags_path_with_home)));
-    }
 
     for task in tasks {
         match task {

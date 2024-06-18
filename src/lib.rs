@@ -199,7 +199,8 @@ pub fn calc_config_file_path() -> Result<PathBuf, Error>{
     let path_to_config_file = match xdg.config() {
         Ok(path_to_config_dir) => {
             let config_path = PathBuf::from_iter(vec![path_to_config_dir.to_str().unwrap(), &CONFIG_FILE_NAME_IN_XDG_CONFIG]);
-            if config_path.exists() {
+            if config_path.exists() || !config_in_home.exists() {
+                trace!("config file path is taken from XDG variable {:?}", config_path);
                 config_path
             } else {
                 trace!("config file was not found {:?}", config_path);
