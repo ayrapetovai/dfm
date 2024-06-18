@@ -189,6 +189,7 @@ enum Command {
 
     // .dfm_ignored_paths
     // .dfm_ignored_patterns
+    // TODO use regex::regex::string::Regex, crate regex:1.10.4, transitively imported already.
     /// Ignore a file when processing other subcommands.
     #[command(arg_required_else_help = true)]
     Ignore {

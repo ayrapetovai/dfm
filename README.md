@@ -12,6 +12,7 @@ using a separate directory under a version control system.
 
 ### Terminology
 config file - the file in filesystem that contains parameters for the program.  
+state file - file in which the synchronization time, target and source directory paths are stored.  
 target directory - is set to be root for all files/directories to managed by dfm. There
 can be only target directory for the whole filesystem.
 source directory - used to store the information and copies of the managed objects.  
@@ -196,3 +197,26 @@ Each file in the source directory could be:
     - otherwise ask for the flag --overwrite to remove it
 - a non-existing file
     - error "file does not exist"
+
+### Ignore
+The program supports an ignore list for files in target and source directories. If
+a file contained in the ignore list, it is not processed by other subcommands until
+the file was removed from the ignore list.  
+Ignore list consist of lines, each line is a comment (`#`), a filepath or a regular
+expression. Everything after `#` is ignored. `#` can be escaped `\#`, then it ia a part
+of the filepath or the regular expression.
+- Blank lines ignored.
+- A regular expression `abc#foo` will be read as `abc`, whereas `abc\#foo` will be read
+as `abc#foo`.
+- for each file in target directory the relative filepath is calculated. For file
+`/home/user/.config/prg/config.yaml` the relative path will be `.config/prg/config.yaml`.
+- if the regular expression starts with a slash `/`, then it must match to the beginning
+of that relative path to count file as ignored. Example: the regex `/\.conf` will match to the
+beginning of the relative path and the file and all content of the `.config` directory will be ignored.
+- if the regular expression does not start with a slash `/`, then it mast match the filename
+from start to the end. If regex was `co.*ml` it will match `config.yaml`, it the
+regex was `g\.yml` it will be not match the whole filename and file will not be considered
+as ignored.
+
+If regular expression matched to the path, the directory containing a file, then this
+directory is not traversed - all files in it considered to be ignored.
