@@ -216,7 +216,7 @@ enum Command {
     // },
 }
 
-fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
+fn init_command(args: &Args) -> Result<(), Error> {
     let Command::Init {
         path_to_source,
         path_to_target: path_to_target_opt,
@@ -228,26 +228,16 @@ fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
 
     let dry_run = if !dry_run { args.dry_run } else { true };
 
-    debug!("init with path {:?}", path_to_source);
+    debug!("init with source path {:?}", path_to_source);
+    debug!("init with target path {:?}", path_to_target_opt);
 
     if !path_to_source.exists() {
         return Err(Error::new(ErrorKind::NotFound, format!("directory {:?} was not found", path_to_source)));
     }
 
-    // TODO search for the config file in source directory and pull it
-    //  to the config file in the ~/.config/dfm/config.toml or ~/.dfm.toml,
-    //  but do not replace `source_dir` and `target_dir`.
-    //  Maybe create a separate config file for them? The unaplyable file,
-    //  those paths should not be overwritten with a config file source and target
-    //  from the other machine. And the `init` subcommand should initialize only the
-    //  path-config file. Also this file should be ignored by default, because it contains
-    //  the machine-specific info, that is not needed at the other machine.
-    //  ~/.dfm_local.toml
-    //  ~/.config/dfm/config_local.toml
     enum InitTask {
         CreateSourceRootFile(PathBuf),
-        UpdateConfigFile(PathBuf, Option<PathBuf>, PathBuf),
-        CreateStateFile(PathBuf),
+        CreateStateFile(PathBuf, PathBuf, PathBuf),
     }
 
     let mut tasks = vec![];
@@ -262,32 +252,26 @@ fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
                 source_directory_pointer = PathBuf::from_iter(vec![source_directory_pointer.to_str().unwrap(), &pointer_content]);
             }
         }
-        source_directory_pointer
+        fs::canonicalize(source_directory_pointer.parent().unwrap())?
     } else {
         tasks.push(InitTask::CreateSourceRootFile(PathBuf::from_iter(vec![path_to_source.to_str().unwrap(), ".dfm_root"])));
-        path_to_source.clone()
+        fs::canonicalize(&path_to_source)?
     };
 
     debug!("using source directory {:?}", source_dir_path);
 
-    let state_file_path = calc_state_file_path()?;
-    tasks.push(InitTask::CreateStateFile(state_file_path.clone()));
-
     let home_dir = envmnt::get_or_panic("HOME");
+    let home_dir_path = PathBuf::from(&home_dir);
 
-    let source_dir_abs_path = fs::canonicalize(&source_dir_path)?;
-    let source_dir_rel_to_home = file_path_relative_to(&source_dir_abs_path, &PathBuf::from(&home_dir));
-    let mut source_dir_abs_path_with_home = String::from("$HOME/");
-    source_dir_abs_path_with_home.push_str(source_dir_rel_to_home.to_str().unwrap());
-
-    if let Some(path_to_target) = path_to_target_opt {
-        let target_dir_abs_path = fs::canonicalize(path_to_target)?;
-        let target_dir_rel_path = file_path_relative_to(&target_dir_abs_path, &PathBuf::from(&home_dir));
-        let target_dir_rel_path = PathBuf::from_iter(vec!["$HOME/", target_dir_rel_path.to_str().unwrap()]);
-        tasks.push(InitTask::UpdateConfigFile(calc_config_file_path().unwrap(), Some(target_dir_rel_path), PathBuf::from(source_dir_abs_path_with_home)));
+    let target_abs_path = if let Some(path_to_target) = path_to_target_opt {
+        fs::canonicalize(path_to_target)?
     } else {
-        tasks.push(InitTask::UpdateConfigFile(calc_config_file_path().unwrap(), None, PathBuf::from(source_dir_abs_path_with_home)));
-    }
+        home_dir_path
+    };
+
+    debug!("using target directory {:?}", target_abs_path);
+    let state_file_path = calc_state_file_path()?;
+    tasks.push(InitTask::CreateStateFile(state_file_path.clone(), target_abs_path, source_dir_path));
 
     if dry_run {
         info!("dry run specified, no changes will be made");
@@ -310,45 +294,13 @@ fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
                 fs::create_dir_all(path.parent().unwrap())?;
                 fs::write(&path, ".")?;
             },
-            InitTask::UpdateConfigFile(config_file_path, target_dir_path_opt, source_dir_path) => {
-                info!("update config file {:?}", config_file_path);
-                info!("\twith target directory {:?}", target_dir_path_opt);
-                info!("\twith source directory {:?}", source_dir_path);
-                if dry_run {
-                    continue;
-                }
-
-                let status_message;
-                let mut config_file = if config_file_path.exists() {
-                    let config = read_config(&config_file_path);
-                    if config.is_some() {
-                        status_message = "updated";
-                        config.unwrap()
-                    } else {
-                        status_message = "created";
-                        ConfigFile::new()
-                    }
-                } else {
-                    status_message = "created";
-                    ConfigFile::new()
-                };
-
-                insert_config(&mut config_file, config);
-
-                config_file.source_dir = source_dir_path.to_str().unwrap().to_string();
-                if let Some(target_dir_path) = target_dir_path_opt {
-                    config_file.target_dir = Some(target_dir_path.to_str().unwrap().to_string());
-                }
-                write_config(&config_file_path, &config_file)?;
-                info!("config file {:?} {}", config_file_path, status_message);
-            },
-            InitTask::CreateStateFile(path) => {
+            InitTask::CreateStateFile(path, target_dir, source_dir) => {
                 info!("create state file {:?}", path);
                 if dry_run {
                     continue;
                 }
 
-                let empty_state = StateObject::new();
+                let empty_state = StateObject::new(target_dir, source_dir);
                 write_state(&path, &empty_state)?;
             },
         }
@@ -1094,6 +1046,9 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
 // TODO the pull subcommand must not overwrite the value of the source_dir variable of
 //  the programs config file. Actually the source_dir value must not be managed somehow.
 
+// TODO create a config param "ignore dotfiles in source directory", use it to ignore:
+//  .ignore_source, .ignore_target, .dfm_root
+
 fn main() -> Result<(), Error> {
     let args = Args::parse();
 
@@ -1105,17 +1060,17 @@ fn main() -> Result<(), Error> {
         return Err(Error::other(e));
     }
 
-    let default_config = create_default_config();
-    let path_to_config_file = calc_config_file_path()?;
-    let config_from_file = read_config(&path_to_config_file);
-    let config =  merge_configs(&default_config, &config_from_file);
-
     let path_to_state_file = calc_state_file_path()?;
     let state_opt = read_state(&path_to_state_file);
 
+    let default_config = create_default_config();
+    let path_to_config_file = calc_config_file_path()?;
+    let config_from_file = read_config(&path_to_config_file);
+    let config =  merge_configs(&default_config, &config_from_file, &state_opt);
+
     return match args.command {
         Command::Init { .. } => {
-            init_command(&config, &args)
+            init_command(&args)
         },
         Command::Add { .. } => {
             if state_opt.is_none() {

@@ -16,14 +16,19 @@ use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct StateObject {
+    // TODO immediately, create new cool names for "source" and "target"!!!
+    pub source_directory: PathBuf,
+    pub target_directory: PathBuf,
     pub syncs: HashMap<String, SystemTime>,
 }
 
 static STATE_FILE_NAME_IN_XDG_STATE: &str = "./dfm/state.toml";
 
 impl StateObject {
-    pub fn new() -> Self {
+    pub fn new(target_directory: PathBuf, source_directory: PathBuf) -> Self {
        StateObject {
+           source_directory,
+           target_directory,
            syncs: HashMap::new()
        }
     }
@@ -79,8 +84,6 @@ pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ConfigFile {
-    pub source_dir: String,
-    pub target_dir: Option<String>,
     pub dot_prefix: Option<String>,
     pub symlink_postfix: Option<String>,
     pub manage_symlinks: Option<bool>,
@@ -134,8 +137,6 @@ static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./dfm/config.toml";
 impl ConfigFile {
     pub fn new() -> Self {
         ConfigFile {
-            source_dir: "".to_string(),
-            target_dir: None,
             dot_prefix: None,
             symlink_postfix: None,
             manage_symlinks: None,
@@ -153,32 +154,6 @@ pub fn write_config(path: &PathBuf, config: &ConfigFile) -> Result<(), Error> {
         }
     };
     fs::write(path, content)
-}
-
-pub fn insert_config(config_file: &mut ConfigFile, config: &Config) {
-    if config_file.target_dir.is_none() {
-        config_file.target_dir = Some(config.target_dir.clone());
-    }
-    if config_file.dot_prefix.is_none() {
-        config_file.dot_prefix = Some(config.dot_prefix.clone());
-    }
-    if config_file.symlink_postfix.is_none() {
-        config_file.symlink_postfix = Some(config.symlink_postfix.clone());
-    }
-    if config_file.manage_symlinks.is_none() {
-        config_file.manage_symlinks = Some(config.manage_symlinks.clone());
-    }
-    if config_file.hooks.is_none() {
-        let mut file_hooks = vec![];
-        for hook in config.hooks.iter() {
-            let hook_file = HookFile { when: hook.when.clone(), execute: hook.execute.clone() };
-            file_hooks.push(hook_file);
-        }
-        config_file.hooks = Some(file_hooks);
-    }
-    if config_file.dotfiles_only.is_none() {
-        config_file.dotfiles_only = Some(config.dotfiles_only);
-    }
 }
 
 pub fn calc_config_file_path() -> Result<PathBuf, Error>{
@@ -249,15 +224,18 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Option<ConfigFile> {
     };
 }
 
-pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>) -> Config {
+pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>, state_object: &Option<StateObject>) -> Config {
     match custom_opt {
         Some(custom) =>
             Config {
                 config_file_found: true,
-                source_dir: custom.source_dir.to_owned(),
-                target_dir: match custom.target_dir.to_owned() {
-                    Some(v) => v.clone(),
-                    None => default.target_dir.to_owned()
+                source_dir: match state_object {
+                    Some(state) => state.source_directory.to_str().unwrap().to_string(),
+                    None => "".to_string()
+                },
+                target_dir: match state_object {
+                    Some(state) => state.target_directory.to_str().unwrap().to_string(),
+                    None => "".to_string()
                 },
                 dot_prefix: match &custom.dot_prefix {
                     Some(v) => v.clone(),
