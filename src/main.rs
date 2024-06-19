@@ -18,6 +18,7 @@ use dfm::*;
 // toml https://docs.rs/toml/latest/toml/
 // env https://docs.rs/envmnt/latest/envmnt/
 // xdg https://wiki.archlinux.org/title/XDG_Base_Directory
+// aes https://rust.howtos.io/a-guide-to-symmetric-encryption-in-rust/
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Dotfile Manager", long_about = None)]
@@ -44,8 +45,6 @@ struct Args {
 #[derive(Debug, Subcommand)]
 enum Command {
 
-    // ./config/dfm/config.toml must be crated only with `init` no other command is allowed to do this
-    // because otherwise it will create an empty config file with no source dir and no target dir
     /// Initialize state file and config file with the source directory.
     Init {
         /// Specifies the path to the source directory.
@@ -261,6 +260,7 @@ fn init_command(args: &Args) -> Result<(), Error> {
 
     debug!("using source directory {:?}", source_dir_path);
 
+    // TODO read HOME variable depending on the operation system
     let home_dir = envmnt::get_or_panic("HOME");
     let home_dir_path = PathBuf::from(&home_dir);
 
@@ -776,7 +776,7 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
                     let target_file_modified = target_file_meta.modified()?;
                     let source_file_modified = source_file_meta.modified()?;
 
-                    trace!("final state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+                    trace!("final state:\n target: mtime={:?}\n source: sync={:?},\n         mtime={:?}",
                          target_file_modified, sync_creation, source_file_modified);
                 }
             },
@@ -1041,14 +1041,15 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
 // TODO If verbosity = 1 was specified then write to stdout only one line per each target/source,
 //  no matter if that was an error or a necessity to use flags --overwrite or --merge.
 
-// TODO add an interactive mode, the application should ask user before each modification in
-//  filesystem it wants to make.
-
-// TODO the pull subcommand must not overwrite the value of the source_dir variable of
-//  the programs config file. Actually the source_dir value must not be managed somehow.
+// TODO add an interactive mode, the application should ask user for confirmation before each
+//  modification in filesystem it wants to make. Also asking what to do instead to aborting
+//  subcommand because of a check error appeared. Erase the line with that prompt and print
+//  the user answer and the resulting action.
 
 // TODO create a config param "ignore dotfiles in source directory", use it to ignore:
 //  .ignore_source, .ignore_target, .dfm_root
+
+// TODO consider 3-way merge. This will require to store somewhere the synchronization source.
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();

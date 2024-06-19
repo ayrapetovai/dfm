@@ -105,6 +105,7 @@ pub struct HookFile {
     pub execute: String,
 }
 
+// TODO rename to settings, rename ConfigFile to Config
 #[derive(Debug, Clone)]
 pub struct Config {
     pub config_file_found: bool,
@@ -123,6 +124,9 @@ pub struct Config {
     // if true ignore files and directories in the target directory
     // that don't start with a dot, by default - false
     pub dotfiles_only: bool,
+
+    // ignore `.dfm_root`, `.dfm_source_ignored`, `.dfm_target_ignored` by default
+    // default_ignored: Vec<Regex>,
 }
 
 #[derive(Debug, Clone)]
@@ -133,18 +137,6 @@ pub struct Hook {
 
 static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
 static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./dfm/config.toml";
-
-impl ConfigFile {
-    pub fn new() -> Self {
-        ConfigFile {
-            dot_prefix: None,
-            symlink_postfix: None,
-            manage_symlinks: None,
-            hooks: None,
-            dotfiles_only: None,
-        }
-    }
-}
 
 pub fn write_config(path: &PathBuf, config: &ConfigFile) -> Result<(), Error> {
     let content = match toml::to_string_pretty(config) {
@@ -165,10 +157,10 @@ pub fn calc_config_file_path() -> Result<PathBuf, Error>{
         }
     };
 
-    if !envmnt::exists("HOME") {
+    if !envmnt::exists("HOME") { // TODO read HOME depending on operating system
         return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"));
     }
-    let home_path = envmnt::get_or_panic("HOME");
+    let home_path = envmnt::get_or_panic("HOME"); // TODO read HOME depending on operating system
     let config_in_home = PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_HOME]);
 
     let path_to_config_file = match xdg.config() {
@@ -195,7 +187,7 @@ pub fn create_default_config() -> Config {
     Config {
         config_file_found: false,
         source_dir: "".to_owned(),
-        target_dir: "$HOME".to_owned(),
+        target_dir: "$HOME".to_owned(), // TODO read HOME depending on operating system
         dot_prefix: "dot_".to_owned(),
         symlink_postfix: ".symlink".to_owned(),
         manage_symlinks: true,
@@ -470,7 +462,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
     let target_file_modified = target_file_meta.modified().unwrap();
     let source_file_modified = source_file_meta.modified().unwrap();
 
-    trace!("current state:\n target: mtime={:?}\n source: btime={:?},\n         mtime={:?}",
+    trace!("current state:\n target: mtime={:?}\n source: sync={:?},\n         mtime={:?}",
              target_file_modified, source_file_synced, source_file_modified);
 
     let both_not_modified = target_file_modified == source_file_synced &&
