@@ -1,12 +1,13 @@
 # Dotfile Manager
 This program is designed to maintain copies of configuration files from the home directory
 using a separate directory under a version control system.
-- ignore specified files
+- show all kinds of statuses
+- ignore specified files in target and source directories
 - call mergetool on conflicts (two-way merge)
 - backup files before overwriting
-- tracking symlinks
-- encrypt files
-- hooks
+- tracking symlinks and files they point to if in source directory
+- encrypt files and directories with AES
+- process hooks on any stage of a subcommand
 
 ## How Dotfile Managing is Performed
 
@@ -23,14 +24,23 @@ in the source directory.
 mtime - time when the last modification of a file was performed.  
 btime - time then file was read the last time, is not used in the dotfile manager.  
 exists - true/false, if file or directory present in filesystem.  
-- Successful `add` subcommand modifies the creation and modification time of the source file to be equal to
+- Successful `add` subcommand modifies the synchronization time in state file and modification time of the source file to be equal to
 the modification time of the target file and to each other.
 - Successful `pull` subcommand modifies times the same way as `add` subcommand.
 
 Regular run (non init subcommand):
-1. try to read ~/.config/dfm/config.toml,
-2. if not found then try to read ~/.dfm.toml,
+1. try to read `~/.config/dfm/config.toml`,
+2. if not found then try to read `~/.dfm.toml`,
 3. if not found then raise an error and print help.
+
+### Encryption
+While doing `init`, `add` or `pull` dfm use config specified command to obtain a passphrase.
+The passphrase is used to encrypt/decrypt files.
+For this config file must have set a property - cli command that will provide the passphrase.
+That is why the `init` must pull the config file from the source directory to have the passphrase being ready for
+decryption and encryption. By default, the command is `read -s; echo $REPLY` (no variable expansion).
+The command is run by `$SHELL -c '{}'` (no variable expansion), this also must be configurable.
+Subcommands warns if sensible files are added without encryption: .ssh, ...
 
 ### Ignored Files
 The source directory is ignored by default, yet the directory that contains it is not ignored.
