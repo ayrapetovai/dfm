@@ -103,17 +103,17 @@ The subcommand take the paths of the target directory (does not operate on paths
 the other commands) and creates corresponding files in the source directory.
 Subcommand traverses in depth all given path to locate the files, each file can be:
 - a symlink, that points not into the source directory
-    - if --overwrite then create a symlink file in the source directory,
+    - if --force then create a symlink file in the source directory,
     - otherwise do nothing
 - a symlink, that points into the source directory pointing at the corresponding file
     - do nothing
 - a symlink, that points into the source directory pointing at the non-corresponding file
-    - if --overwrite then create a symlink file in source directory
+    - if --force then create a symlink file in source directory
 - a symlink, that has an associated symlink file in the source directory
     - check if the symlink and the symlink file are pointing to the same file,
     if not, update the symlink file to point to the same file as tye symlink.
 - a symlink, that has no associated symlink file in the source directory
-    - if --overwrite then create a symlink file.
+    - if --force then create a symlink file.
 - an existing file, that has no corresponding file in the source directory
     - create a corresponding file.
 - an existing file, that has a corresponding file in the source directory
@@ -133,19 +133,19 @@ Replacement checks if there is no conflict.
 Traverse all directories in given paths, get the list of files to work on
 each file in the target directory could be:
 - a symlink, that points not into the source directory
-    - exit with error, or remove if --overwrite?
+    - exit with error, or remove if --force?
 - a symlink, that points into the source directory pointing at the corresponding file
     - do nothing
 - a symlink, that points into the source directory pointing at the non-corresponding file
-    - exit with error, if --overwrite then remove the link and create one pointing to the right file
+    - exit with error, if --force then remove the link and create one pointing to the right file
 - a symlink, that has an associated symlink file in the source directory
     - if the link points to the file specified in the source symlink file then do nothing
-    - otherwise error or if --overwrite then recreate  the link.
+    - otherwise error or if --force then recreate  the link.
 - an existing file, that has no corresponding file in the source directory
     - error "target file is not managed"
 - an existing file, that has a corresponding file in the source directory
     - if target file was not modified then overwrite it with the source file,
-    - otherwise error or if --overwrite then overwrite or if --merge call merge tool
+    - otherwise error or if --force then overwrite or if --merge call merge tool
 - a non-existing file, that has no corresponding file in the source directory
     - error "file not found and not managed"
 - a non-existing file, that has a corresponding file in the source directory
@@ -158,9 +158,9 @@ Each file in the source directory could be:
     - copy file from source directory to the path of the target file
 - an existing file, that has a corresponding file in the target directory
     - if target file is not modified then copy source file to the path of the target file
-    - or error or if --overwrite then copy, or is --merge then run merge
+    - or error or if --force then copy, or is --merge then run merge
 - an existing file, that has a corresponding symlink in the target directory
-    - do nothing, but if the symlink pints to the wrong file recreate it if --overwrite
+    - do nothing, but if the symlink pints to the wrong file recreate it if --force
 - a non-existing file
     - error "file does not exist and is not managed"
 
@@ -177,34 +177,34 @@ each file in the target directory could be:
     - remove the symlink only
 - a symlink, has an associated symlink file in the source directory
     - if symlink pointee corresponds to the symlink file then remove symlink file
-    - otherwise ask for the --overwrite flag
+    - otherwise ask for the --force flag
 - a symlink, has no associated symlink file in the source directory
     - do nothing
 - an existing file, that has no corresponding file in the source directory
     - do nothing
 - an existing file, that has a corresponding file in the source directory
     - if the corresponding source file was not modified then remove it
-    - otherwise ask for the --overwrite flag
+    - otherwise ask for the --force flag
 - a non-existing file, that has no corresponding file in the source directory
     - do nothing
 - a non-existing file, that has a corresponding file in the source directory
     - if corresponding file was not modified then remove it
-    - otherwise ask for the flag --overwrite
+    - otherwise ask for the flag --force
 
 The `forget` subcommand is able to take a path from the source directory,
 to make is easier to remove files.
 Each file in the source directory could be:
 - an existing file, that has no corresponding file in the target directory
     - if source file ws not modified then remove it
-    - otherwise ask for the flag --overwrite
+    - otherwise ask for the flag --force
 - an existing file, that has a corresponding file in the target directory
     - if the source file was not modified or both files was not modified then
     remove source file.
-    - or ask for the flag --overwrite to remove the source file.
+    - or ask for the flag --force to remove the source file.
 - an existing file, that has a corresponding symlink in the target directory
     - check if symlink points to the same pointee as the source symlink file then
     remove the source symlink file
-    - otherwise ask for the flag --overwrite to remove it
+    - otherwise ask for the flag --force to remove it
 - a non-existing file
     - error "file does not exist"
 

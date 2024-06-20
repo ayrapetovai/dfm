@@ -81,9 +81,8 @@ enum Command {
         allow_foreign: bool,
 
         /// Overwrite source file on conflict and add symlinks.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
-        // TODO rename to `force`?
-        overwrite: bool,
+        #[arg(long, short = 'f', num_args = 0, default_value_t = false)]
+        force: bool,
 
         /// Move file to the source directory, create a symlink on place of it.
         #[arg(long, short, num_args = 0, default_value_t = false)]
@@ -112,8 +111,7 @@ enum Command {
 
         /// Overwrite target file on conflict.
         #[arg(long, short, num_args = 0, default_value_t = false)]
-        // TODO rename to force
-        overwrite: bool,
+        force: bool,
 
         /// Create a symlink instead of file.
         #[arg(long, short = 's', num_args = 0, default_value_t = false)]
@@ -139,11 +137,15 @@ enum Command {
         managed: bool,
 
         /// List unmanaged files.
-        #[arg(long, short = 'u', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'M', num_args = 0, default_value_t = false)]
         unmanaged: bool,
 
+        /// Source files that was pulled.
+        #[arg(long, short = 'p', num_args = 0, default_value_t = false)]
+        pulled: bool,
+
         /// Source files that was not pulled.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'P', num_args = 0, default_value_t = false)]
         never_pulled: bool,
 
         /// List ignored files.
@@ -178,8 +180,7 @@ enum Command {
 
         /// Delete source file on conflict.
         #[arg(long, short, num_args = 0, default_value_t = false)]
-        // TODO rename to force?
-        overwrite: bool,
+        force: bool,
 
         /// Run only checks, no changes will be made to filesystem.
         #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
@@ -314,7 +315,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
         paths,
         merge,
         allow_foreign: foreign,
-        overwrite,
+        force,
         symlink,
         dry_run,
         ..
@@ -324,7 +325,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 
     let dry_run = if !dry_run { args.dry_run } else { true };
 
-    debug!("add paths {:?}, merge {}, foreign {}, overwrite {}, symlink {}", paths, merge, foreign, overwrite, symlink);
+    debug!("add paths {:?}, merge {}, foreign {}, force {}, symlink {}", paths, merge, foreign, force, symlink);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
 
@@ -390,7 +391,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
             } else {
                 false
             };
-            if *overwrite || source_symlink_file_exists && !source_symlink_file_points_to_right_target {
+            if *force || source_symlink_file_exists && !source_symlink_file_points_to_right_target {
                 if !source_symlink_file_points_to_right_target {
                     debug!("source symlink file points to the wrong file, must be {:?}", &target_symlink_pointee_rel_path);
                 }
@@ -435,20 +436,20 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
                 CompareByTimestamp::BothModified => {
                     info!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
                         target_abs_path, source_abs_path);
-                    if !overwrite {
+                    if !force {
                         continue;
                     }
                 },
                 CompareByTimestamp::SourceModified => {
                     info!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
                               source_abs_path, target_abs_path);
-                    if !overwrite {
+                    if !force {
                         continue;
                     }
                 },
                 CompareByTimestamp::NonModified => {
                     info!("neither target nor source were modified");
-                    if !overwrite {
+                    if !force {
                         continue;
                     }
                 },
@@ -456,9 +457,9 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
                     info!("only target {:?} was modified, no conflicts", target_abs_path);
                 },
                 CompareByTimestamp::NeverSynchronized => {
-                    if !overwrite {
+                    if !force {
                         warn!("target {:?}\n\tand source {:?}\n\twere not synchronized.", target_abs_path, source_abs_path);
-                        warn!("Use --overwrite to replace source with target");
+                        warn!("Use --force to replace source with target");
                         continue; // TODO error?
                     }
                 },
@@ -543,7 +544,7 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
     let Command::Pull {
         paths,
         merge,
-        overwrite,
+        force,
         dry_run,
         ..
     } = &args.command else {
@@ -552,7 +553,7 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
 
     let dry_run = if !dry_run { args.dry_run } else { true };
 
-    debug!("pull paths {:?}, merge {}, overwrite {}, dry-run {}", paths, merge, overwrite, dry_run);
+    debug!("pull paths {:?}, merge {}, force {}, dry-run {}", paths, merge, force, dry_run);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
 
@@ -684,7 +685,7 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
                 CompareByTimestamp::BothModified => {
                     // TODO add merge
                     warn!("both source and target was modified, merge needed");
-                    if !overwrite {
+                    if !force {
                         return Err(Error::new(ErrorKind::InvalidData, "target and source have conflicting modifications"));
                     }
                 },
@@ -694,7 +695,7 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
                 },
                 CompareByTimestamp::TargetModified => {
                     warn!("target was modified, pulling source will overwrite those changes");
-                    if !overwrite {
+                    if !force {
                         return Err(Error::new(ErrorKind::InvalidData, "target was modified"));
                     }
                 },
@@ -702,9 +703,9 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
                     info!("only the source was modified")
                 },
                 CompareByTimestamp::NeverSynchronized => {
-                    if !overwrite {
+                    if !force {
                         warn!("target {:?}\n\tand source {:?}\n\twere not synchronized.", target_abs_path, source_abs_path);
-                        warn!("Use --overwrite to replace target with source");
+                        warn!("Use --force to replace target with source");
                         continue; // TODO error?
                     }
                 },
@@ -816,7 +817,7 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
 fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<(), Error> {
     let Command::Forget {
         paths,
-        overwrite,
+        force,
         dry_run,
         ..
     } = &args.command else {
@@ -825,7 +826,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
 
     let dry_run = if !dry_run { args.dry_run } else { true };
 
-    debug!("add paths {:?}, overwrite {}, dry-run {}", paths, overwrite, dry_run);
+    debug!("add paths {:?}, force {}, dry-run {}", paths, force, dry_run);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
 
@@ -883,10 +884,10 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
                     continue;
                 } else {
                     info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
-                    if *overwrite {
+                    if *force {
                         tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
                     } else {
-                        info!("specify --overwrite to delete source {:?}", source_symlink_file_abs_path);
+                        info!("specify --force to delete source {:?}", source_symlink_file_abs_path);
                     }
                     continue; // success
                 }
@@ -939,10 +940,10 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
                             continue; // success
                         } else {
                             info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_symlink_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
-                            if *overwrite {
+                            if *force {
                                 tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
                             } else {
-                                info!("specify --overwrite to delete source {:?}", source_symlink_file_abs_path);
+                                info!("specify --force to delete source {:?}", source_symlink_file_abs_path);
                             }
                             continue; // success
                         }
@@ -963,8 +964,8 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
                     let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt)?;
                     if CompareByTimestamp::SourceModified == cmp || CompareByTimestamp::BothModified == cmp {
                         // source was modified and if we remove it then we will lose the modifications
-                        warn!("source {:?}, was modified, run with --overwrite", source_abs_path);
-                        if !overwrite {
+                        warn!("source {:?}, was modified, run with --force", source_abs_path);
+                        if !force {
                             continue; // error
                         }
                     }
@@ -1039,7 +1040,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
 //  directory with some other username. Substitute that path with $HOME?
 
 // TODO If verbosity = 1 was specified then write to stdout only one line per each target/source,
-//  no matter if that was an error or a necessity to use flags --overwrite or --merge.
+//  no matter if that was an error or a necessity to use flags --force or --merge.
 
 // TODO add an interactive mode, the application should ask user for confirmation before each
 //  modification in filesystem it wants to make. Also asking what to do instead to aborting
