@@ -198,7 +198,22 @@ enum Command {
 
         #[arg(long, short, num_args = 0.., value_name = "REGEXP")]
         patterns: Option<Vec<String>>,
+
+        /// Ignore all files that was not added or pulled.
+        #[arg(long, short, num_args = 0)]
+        unmanaged: Option<bool>,
     },
+
+    // let set = RegexSet::new(&[
+    //     r"\w+",
+    //     r"\d+",
+    //     r"\pL+",
+    //     r"foo",
+    //     r"bar",
+    //     r"barfoo",
+    //     r"foobar",
+    // ]).unwrap();
+    // let matches: Vec<_> = set.matches("foobar")
 
     // TODO remove?
     // /// Get or set config properties.
@@ -1033,7 +1048,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
 }
 
 // TODO add option "backup target file before overwrite", all backups must be stored in the specified
-//  directory, maybe not in the source directory.
+//  directory, maybe not in the source directory. The restoring operation should look like 2-way merge.
 
 // TODO Implement management of foreign files. Must check if their paths contain the home path
 //  and ask for --force if so. Because at the other machine those files could be located in a
@@ -1048,7 +1063,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
 //  the user answer and the resulting action.
 
 // TODO create a config param "ignore dotfiles in source directory", use it to ignore:
-//  .ignore_source, .ignore_target, .dfm_root
+//  .dfm_ignore_source, .dfm_ignore_target, .dfm_root
 
 // TODO consider 3-way merge. This will require to store somewhere the synchronization source.
 

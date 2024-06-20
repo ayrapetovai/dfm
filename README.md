@@ -42,6 +42,10 @@ decryption and encryption. By default, the command is `read -s; echo $REPLY` (no
 The command is run by `$SHELL -c '{}'` (no variable expansion), this also must be configurable.
 Subcommands warns if sensible files are added without encryption: .ssh, ...
 
+### Backups
+Target and source files can be copied to the `~/.local/state/dfm/**` and gzipped before being
+overwritten by commands `add`, `pull` or `merge`.
+
 ### Ignored Files
 The source directory is ignored by default, yet the directory that contains it is not ignored.
 All files and subdirectories of the containing source directory can be added under the management.
@@ -209,24 +213,22 @@ Each file in the source directory could be:
     - error "file does not exist"
 
 ### Ignore
-The program supports an ignore list for files in target and source directories. If
-a file contained in the ignore list, it is not processed by other subcommands until
-the file was removed from the ignore list.  
-Ignore list consist of lines, each line is a comment (`#`), a filepath or a regular
-expression. Everything after `#` is ignored. `#` can be escaped `\#`, then it ia a part
+The program supports an ignore list for files in target and source directories.
+Those ignore lists are files `~/.local/state/dfm/ignore_list` containing
+ignored file paths and patterns for target directory and `**/dotfiles/.dfm_ignore_list`
+containing file paths and patterns for the source directory. If a file contained in
+the ignore list, it is not processed by other subcommands until the file was removed
+from the ignore list.  
+Ignore list consists of lines, each line is a comment (`#`) or a filepath or a regular
+expression. Everything after `#` is ignored. `#` can be escaped `\#`, then it is a part
 of the filepath or the regular expression.
 - Blank lines ignored.
 - A regular expression `abc#foo` will be read as `abc`, whereas `abc\#foo` will be read
 as `abc#foo`.
 - for each file in target directory the relative filepath is calculated. For file
 `/home/user/.config/prg/config.yaml` the relative path will be `.config/prg/config.yaml`.
-- if the regular expression starts with a slash `/`, then it must match to the beginning
-of that relative path to count file as ignored. Example: the regex `/\.conf` will match to the
-beginning of the relative path and the file and all content of the `.config` directory will be ignored.
-- if the regular expression does not start with a slash `/`, then it mast match the filename
-from start to the end. If regex was `co.*ml` it will match `config.yaml`, it the
-regex was `g\.yml` it will be not match the whole filename and file will not be considered
-as ignored.
+- the regular expression must match this relative path from the start to the end for
+file to be ignored.
 
 If regular expression matched to the path, the directory containing a file, then this
 directory is not traversed - all files in it considered to be ignored.
