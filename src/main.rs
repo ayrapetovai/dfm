@@ -193,15 +193,15 @@ enum Command {
     /// Ignore a file when processing other subcommands.
     #[command(arg_required_else_help = true)]
     Ignore {
-        #[arg(long, short, num_args = 0.., value_name = "PATH")]
-        files: Option<Vec<PathBuf>>,
+        #[arg(num_args = 0.., value_name = "PATH")]
+        paths: Option<Vec<PathBuf>>,
 
-        #[arg(long, short, num_args = 0.., value_name = "REGEXP")]
+        #[arg(long, short = 'p', num_args = 0.., value_name = "REGEXP")]
         patterns: Option<Vec<String>>,
 
-        /// Ignore all files that was not added or pulled.
-        #[arg(long, short, num_args = 0)]
-        unmanaged: Option<bool>,
+        /// Run only checks, no changes will be made to filesystem.
+        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        dry_run: bool,
     },
 
     // let set = RegexSet::new(&[
@@ -1047,6 +1047,67 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
     Ok(())
 }
 
+fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
+    let Command::Ignore {
+        paths,
+        patterns,
+        dry_run,
+        ..
+    } = &args.command else {
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `ignore`", args.command)));
+    };
+
+    let dry_run = if !dry_run { args.dry_run } else { true };
+
+    debug!("ignore paths {:?}, patterns {:?}, dry-run {}", paths, patterns, dry_run);
+
+    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
+
+    // TODO if path in target dir add it to the state ignore list, if it is in a source 
+    //  directory then ass it to the source ignore list.
+
+    // TODO for path in paths if path is a directory then ignore it, do not traverse it.
+
+    // TODO if path does not exist ask of using --force to add it.
+    
+    // TODO if path does to belong to the target directory or to the source directory then error.
+
+    // TODO try to create a regex instance out of the given pattern, to check if it is valid.
+    //  And try to find a file that will correspond to this pattern, if no such files found
+    //  then print an error, that the pattern does not ignore anything and can be added only
+    //  with --force.
+
+    let traversed_paths = match paths {
+        Some(paths) => {
+            let ListDirectories {
+                found: traversed_paths,
+                errors: error_messages,
+                ..
+            } = list_directory(&paths)?;
+
+            if !error_messages.is_empty() {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    format!("failed to process some subdirectories or files in targets {:?}", error_messages)
+                ));
+            }
+
+            traversed_paths
+        },
+        None if patterns.is_none() => {
+            // TODO this is wrong
+            vec![target_dir_abs_path.clone()]
+        },
+        None => {
+            vec![]
+        }
+    };
+
+    debug!("traversing result is {:?}", traversed_paths);
+
+    Ok(())
+}
+
 // TODO add option "backup target file before overwrite", all backups must be stored in the specified
 //  directory, maybe not in the source directory. The restoring operation should look like 2-way merge.
 
@@ -1066,6 +1127,9 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
 //  .dfm_ignore_source, .dfm_ignore_target, .dfm_root
 
 // TODO consider 3-way merge. This will require to store somewhere the synchronization source.
+
+// TODO make error and success messages parsable by the third-party program. They must be formatted
+//  and contains the sign of error or success, a filename and a sign of necessity of using --force.
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();
@@ -1113,6 +1177,9 @@ fn main() -> Result<(), Error> {
             let mut state = state_opt.unwrap();
             if let Err(e) = forget_command(&config, &args, &mut state) { return Err(e) }
             write_state(&path_to_state_file, &state)
+        },
+        Command::Ignore { .. } => {
+            ignore_command(&config, &args)
         },
         _ => {
             Err(Error::new(ErrorKind::Unsupported, format!("subcommand {:?} is not implemented yet", args)))

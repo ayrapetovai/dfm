@@ -1,11 +1,12 @@
 # Dotfile Manager
 This program is designed to maintain copies of configuration files from the home directory
 using a separate directory under a version control system.
+- safe copy from target to source and vise versa
 - show all kinds of statuses
 - ignore specified files in target and source directories
 - call mergetool on conflicts (two-way merge)
 - backup files before overwriting
-- tracking symlinks and files they point to if in source directory
+- tracking symlinks and files they point to, if in source directory
 - encrypt files and directories with AES
 - process hooks on any stage of a subcommand
 
