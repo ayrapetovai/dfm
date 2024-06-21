@@ -1,3 +1,5 @@
+mod crypt;
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Error, ErrorKind};
