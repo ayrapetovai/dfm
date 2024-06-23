@@ -1131,6 +1131,10 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
 // TODO make error and success messages parsable by the third-party program. They must be formatted
 //  and contains the sign of error or success, a filename and a sign of necessity of using --force.
 
+// TODO add option to save the password's hash to the local file in ~/.local/state/dfm/password
+//  with permission of readonly by owner only. The `init` subcommand must prompt for that? `purge`
+//  subcommand must delete that file.
+
 fn main() -> Result<(), Error> {
     let args = Args::parse();
 

@@ -42,36 +42,33 @@ fn decrypt(key_str: &[u8], encrypted_data: &Vec<u8>) -> String {
     let plaintext = cipher.decrypt(nonce, ciphered_data)
         .expect("failed to decrypt data");
 
+    // TODO rewrite to crate the string from raw bytes
     String::from_utf8(plaintext)
         .expect("failed to convert vector of bytes to string")
 }
 
+#[allow(unused)]
+fn calc_password_hash(password: &str) -> [u8; 32] {
+    let mut sha256hasher = Sha256Hasher::default();
+    sha256hasher.write(password.as_bytes());
+
+    let bytes_result = HasherContext::finish(&mut sha256hasher);
+    return bytes_result.into();
+}
+
 #[test]
 fn test_encryption() {
-    let plaintext = "backendengineer.io".to_string();
-    // let password = "Hello, encryptor! This password is really big and long".to_string();
-    let password = "Hello".to_string();
+    let plaintext = "backendengineer.io";
+    // let password = rpassword::read_password().unwrap();
+    // let password = rpassword::prompt_password("password: ").unwrap();
+    // let password = "Hello, encryptor! This password is really big and long";
+    let password = "Hello";
 
-    let encrypted_data;
-    {
-        let mut sha256hasher = Sha256Hasher::default();
-        sha256hasher.write(password.as_bytes());
+    let key1 = calc_password_hash(&password);
+    let encrypted_data = encrypt(&key1, plaintext);
 
-        let bytes_result = HasherContext::finish(&mut sha256hasher);
-        let key = bytes_result.as_ref();
-
-        encrypted_data = encrypt(&key, &plaintext);
-    }
-
-    let decrypted_data;
-    {
-        let mut sha256hasher = Sha256Hasher::default();
-        sha256hasher.write(password.as_bytes());
-
-        let bytes_result = HasherContext::finish(&mut sha256hasher);
-        let key = bytes_result.as_ref();
-        decrypted_data = decrypt(&key, &encrypted_data);
-    }
+    let key2 = calc_password_hash(&password);
+    let decrypted_data = decrypt(&key2, &encrypted_data);
 
     println!("plain: {}", plaintext);
     println!("encrypted.size = {}", encrypted_data.len());
