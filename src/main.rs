@@ -247,6 +247,7 @@ fn init_command(args: &Args) -> Result<(), Error> {
     debug!("init with source path {:?}", path_to_source);
     debug!("init with target path {:?}", path_to_target_opt);
 
+    // TODO should this subcommand create the source directory if it does not exists?
     if !path_to_source.exists() {
         return Err(Error::new(ErrorKind::NotFound, format!("directory {:?} was not found", path_to_source)));
     }
@@ -322,6 +323,8 @@ fn init_command(args: &Args) -> Result<(), Error> {
             },
         }
     }
+
+    // TODO pull the config file
     Ok(())
 }
 
@@ -1064,13 +1067,16 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
 
     // TODO if path in target dir add it to the state ignore list, if it is in a source 
-    //  directory then ass it to the source ignore list.
+    //  directory then add it to the source ignore list.
 
     // TODO for path in paths if path is a directory then ignore it, do not traverse it.
 
     // TODO if path does not exist ask of using --force to add it.
-    
+
     // TODO if path does to belong to the target directory or to the source directory then error.
+
+    // TODO if path in target directory is `add`ed then error, suggest to `forget` it.
+    // TODO if path in source directory is `pull`ed then error, suggest to remove corresponding target file.
 
     // TODO try to create a regex instance out of the given pattern, to check if it is valid.
     //  And try to find a file that will correspond to this pattern, if no such files found
