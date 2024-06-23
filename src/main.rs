@@ -1163,7 +1163,7 @@ fn main() -> Result<(), Error> {
                 return Err(Error::new(ErrorKind::NotFound, format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            if let Err(e) = add_command(&config, &args, &mut state) { return Err(e) }
+            add_command(&config, &args, &mut state)?;
             write_state(&path_to_state_file, &state)
         },
         Command::Pull { .. } => {
@@ -1171,7 +1171,7 @@ fn main() -> Result<(), Error> {
                 return Err(Error::new(ErrorKind::NotFound, format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            if let Err(e) = pull_command(&config, &args, &mut state) { return Err(e) }
+            pull_command(&config, &args, &mut state)?;
             write_state(&path_to_state_file, &state)
         },
         Command::Forget { .. } => {
@@ -1179,7 +1179,7 @@ fn main() -> Result<(), Error> {
                 return Err(Error::new(ErrorKind::NotFound, format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            if let Err(e) = forget_command(&config, &args, &mut state) { return Err(e) }
+            forget_command(&config, &args, &mut state)?;
             write_state(&path_to_state_file, &state)
         },
         Command::Ignore { .. } => {
