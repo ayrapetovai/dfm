@@ -356,7 +356,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
         found: traversed_paths,
         errors: error_messages,
         ..
-    } = list_directory(&paths)?;
+    } = list_directory(&paths, None)?;
     debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
@@ -584,7 +584,7 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
         found: traversed_paths,
         errors: error_messages,
         ..
-    } = list_directory(&paths).unwrap();
+    } = list_directory(&paths, None)?;
     debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
@@ -857,7 +857,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
         found: traversed_paths,
         errors: error_messages,
         ..
-    } = list_directory(&paths)?;
+    } = list_directory(&paths, None)?;
     debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
@@ -1066,30 +1066,26 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
 
-    // TODO if path in target dir add it to the state ignore list, if it is in a source 
+    // TODO if path in target dir add it to the state ignore list, if it is in a source
     //  directory then add it to the source ignore list.
-
     // TODO for path in paths if path is a directory then ignore it, do not traverse it.
-
     // TODO if path does not exist ask of using --force to add it.
-
     // TODO if path does to belong to the target directory or to the source directory then error.
-
     // TODO if path in target directory is `add`ed then error, suggest to `forget` it.
     // TODO if path in source directory is `pull`ed then error, suggest to remove corresponding target file.
-
     // TODO try to create a regex instance out of the given pattern, to check if it is valid.
     //  And try to find a file that will correspond to this pattern, if no such files found
     //  then print an error, that the pattern does not ignore anything and can be added only
     //  with --force.
 
     let traversed_paths = match paths {
-        Some(paths) => {
+        Some(p) => p,
+        None if patterns.is_none() => {
             let ListDirectories {
                 found: traversed_paths,
                 errors: error_messages,
                 ..
-            } = list_directory(&paths)?;
+            } = list_directory(&vec![target_dir_abs_path], None)?;
 
             if !error_messages.is_empty() {
                 return Err(Error::new(
@@ -1098,15 +1094,9 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
                 ));
             }
 
-            traversed_paths
+            &traversed_paths.clone()
         },
-        None if patterns.is_none() => {
-            // TODO this is wrong
-            vec![target_dir_abs_path.clone()]
-        },
-        None => {
-            vec![]
-        }
+        None => &vec![]
     };
 
     debug!("traversing result is {:?}", traversed_paths);

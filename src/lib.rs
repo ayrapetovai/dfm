@@ -14,7 +14,7 @@ use microxdg::Xdg;
 use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct StateObject {
@@ -387,35 +387,46 @@ pub struct ListDirectories {
     pub errors: Vec<String>,
 }
 
-pub fn list_directory(paths: &[PathBuf]) -> Result<ListDirectories, Error> {
+pub fn list_directory(paths: &[PathBuf], filter_regexp: Option<&Regex>) -> Result<ListDirectories, Error> {
+    trace!("list directories with filter {:?}", filter_regexp);
+
+    let ignore_filter = 
+        |dir_entry: &DirEntry| -> bool {
+            return match dir_entry.path().to_str() {
+                Some(p) => if let Some(regex) = filter_regexp {
+                    let matched = regex.is_match(p);
+                    trace!("{} {}", p, if matched { "❌" } else { "✔️" });
+                    !matched
+                } else {
+                    true
+                },
+                None => true
+            };
+        };
+
     let mut error_messages = Vec::new();
     let mut traversed_paths = paths.iter()
         .flat_map(|path| {
-            if path.is_dir() {
-                WalkDir::new(path)
-                    .follow_links(false)
-                    .into_iter()
-                    .map(|r| {
-                        match r {
-                            Ok(d) if !d.file_type().is_dir() => Some(d.path().to_path_buf()),
-                            Err(e) => {
-                                error_messages.push(format!("error: {}", e));
-                                None
-                            }
-                            // we don't manage directories in source directory
-                            _ => None
+            WalkDir::new(path)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(ignore_filter)
+                .map(|r| {
+                    match r {
+                        Ok(d) if !d.file_type().is_dir() => Some(d.path().to_path_buf()),
+                        Err(e) => {
+                            error_messages.push(format!("error: {}", e));
+                            None
                         }
-                    })
-                    .filter(|o| o.is_some())
-                    .map(|o| o.unwrap())
-                    // FIXME do not create an array
-                    .collect::<Vec<_>>()
-                    .into_iter()
-            } else {
+                        // we don't manage directories in source directory
+                        _ => None
+                    }
+                })
+                .filter(|o| o.is_some())
+                .map(|o| o.unwrap())
                 // FIXME do not create an array
-                vec![path.clone()]
-                    .into_iter()
-            }
+                .collect::<Vec<_>>()
+                .into_iter()
         })
         .collect::<Vec<PathBuf>>();
 
