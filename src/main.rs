@@ -242,6 +242,7 @@ fn init_command(args: &Args) -> Result<(), Error> {
 
     enum InitTask {
         CreateSourceRootFile(PathBuf),
+        CreateSourceIgnoreFile(),
         CreateStateFile(PathBuf, PathBuf, PathBuf),
     }
 
@@ -250,12 +251,13 @@ fn init_command(args: &Args) -> Result<(), Error> {
     let mut source_directory_pointer = PathBuf::from_iter(vec![path_to_source.to_str().unwrap(), ".dfm_root"]);
     let source_dir_path = if source_directory_pointer.exists() {
         loop {
-            let pointer_content = fs::read_to_string(&source_directory_pointer)?;
+            let pointer_content = fs::read_to_string(&source_directory_pointer)?.trim().to_owned();
             if pointer_content == "." {
                 break;
             } else {
                 source_directory_pointer = PathBuf::from_iter(vec![source_directory_pointer.to_str().unwrap(), &pointer_content]);
             }
+            trace!("searching .dfm_root in {:?}", source_directory_pointer);
         }
         fs::canonicalize(source_directory_pointer.parent().unwrap())?
     } else {
@@ -264,6 +266,14 @@ fn init_command(args: &Args) -> Result<(), Error> {
     };
 
     debug!("using source directory {:?}", source_dir_path);
+
+    let source_ignore_file_path = calc_source_ignore_file(&source_dir_path)?;
+    let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
+
+    if !source_ignore_regex.matches(".dfm_root").matched_any() {
+        debug!("source ignore file with be extended with \\.dfm_root");
+        tasks.push(InitTask::CreateSourceIgnoreFile());
+    }
 
     // TODO read HOME variable depending on the operation system
     let home_dir = envmnt::get_or_panic("HOME");
@@ -277,7 +287,7 @@ fn init_command(args: &Args) -> Result<(), Error> {
 
     debug!("using target directory {:?}", target_abs_path);
     let state_file_path = calc_state_file_path()?;
-    tasks.push(InitTask::CreateStateFile(state_file_path.clone(), target_abs_path, source_dir_path));
+    tasks.push(InitTask::CreateStateFile(state_file_path.clone(), target_abs_path, source_dir_path.clone()));
 
     if dry_run {
         info!("dry run specified, no changes will be made");
@@ -299,6 +309,21 @@ fn init_command(args: &Args) -> Result<(), Error> {
                 }
                 fs::create_dir_all(path.parent().unwrap())?;
                 fs::write(&path, ".")?;
+            },
+            InitTask::CreateSourceIgnoreFile() => {
+                info!("add .dfm_root to source ignore file {:?}", source_ignore_file_path);
+                if dry_run {
+                    continue;
+                }
+
+                fs::create_dir_all(source_ignore_file_path.parent().unwrap())?;
+                let mut source_ignore_file = open_or_create_source_ignore_file(&source_ignore_file_path);
+                let escaped_path_str = regex::escape(".dfm_root");
+
+                if let Err(e) = writeln!(source_ignore_file, "{}", escaped_path_str) {
+                    error!("failed write path to file: {}", e);
+                    return Err(e);
+                }
             },
             InitTask::CreateStateFile(path, target_dir, source_dir) => {
                 info!("create state file {:?}", path);
