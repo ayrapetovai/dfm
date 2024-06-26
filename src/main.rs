@@ -11,6 +11,8 @@ use filetime_creation::set_file_mtime;
 use filetime_creation::FileTime;
 use log::{debug, error, info, log_enabled, trace, warn};
 use log::Level::Trace;
+use once_cell::unsync::Lazy;
+use regex::Regex;
 
 use dfm::*;
 
@@ -187,9 +189,6 @@ enum Command {
         dry_run: bool,
     },
 
-    // .dfm_ignored_paths
-    // .dfm_ignored_patterns
-    // TODO use regex::regex::string::Regex, crate regex:1.10.4, transitively imported already.
     /// Ignore a file when processing other subcommands.
     #[command(arg_required_else_help = true)]
     Ignore {
@@ -203,17 +202,6 @@ enum Command {
         #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
         dry_run: bool,
     },
-
-    // let set = RegexSet::new(&[
-    //     r"\w+",
-    //     r"\d+",
-    //     r"\pL+",
-    //     r"foo",
-    //     r"bar",
-    //     r"barfoo",
-    //     r"foobar",
-    // ]).unwrap();
-    // let matches: Vec<_> = set.matches("foobar")
 
     // TODO remove?
     // /// Get or set config properties.
@@ -1065,6 +1053,12 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
     debug!("ignore paths {:?}, patterns {:?}, dry-run {}", paths, patterns, dry_run);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
+    // TODO make load of the files lazy
+    let target_ignore_file_path = calc_local_ignore_file().unwrap();
+    let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
+
+    let source_ignore_file_path = calc_source_ignore_file(&source_dir_abs_path)?;
+    let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
     // TODO if path in target dir add it to the state ignore list, if it is in a source
     //  directory then add it to the source ignore list.
@@ -1085,7 +1079,7 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
                 found: traversed_paths,
                 errors: error_messages,
                 ..
-            } = list_directory(&vec![target_dir_abs_path], None)?;
+            } = list_directory(&vec![target_dir_abs_path.clone()], Some(&target_ignore_regex))?;
 
             if !error_messages.is_empty() {
                 return Err(Error::new(
@@ -1100,6 +1094,115 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
     };
 
     debug!("traversing result is {:?}", traversed_paths);
+
+    let mut target_ignore_paths = vec![];
+    let mut source_ignore_paths = vec![];
+
+    for path in traversed_paths {
+        debug!("check path {:?}", path);
+        let abs_path = fs::canonicalize(path)?;
+
+        if abs_path.starts_with(&source_dir_abs_path) {
+            let rel_path = file_path_relative_to(&abs_path, &source_ignore_file_path);
+            if source_ignore_regex.matches(rel_path.to_str().unwrap()).matched_any() {
+                info!("source path {:?} is ignored already", path);
+                continue;
+            } else {
+                debug!("adding path {:?} to source ignore file {:?}", path, source_ignore_file_path);
+                source_ignore_paths.push(path);
+                continue;
+            }
+        }
+
+        if abs_path.starts_with(&target_dir_abs_path) {
+            let rel_path = file_path_relative_to(&abs_path, &target_ignore_file_path);
+            if target_ignore_regex.matches(rel_path.to_str().unwrap()).matched_any() {
+                info!("target path {:?} is ignored already", path);
+                continue;
+            } else {
+                debug!("adding path {:?} to target ignore file {:?}", path, target_ignore_file_path);
+                target_ignore_paths.push(path);
+                continue;
+            }
+        }
+
+        debug!("path {:?} was not processed", path);
+    }
+
+    let mut target_ignore_regexps = vec![];
+
+    if let Some(patterns_args) = patterns  {
+        for pattern in patterns_args {
+            if let Err(e) = Regex::new(pattern) {
+                error!("argument is invalid, {}", e);
+                return Err(Error::other(e));
+            }
+
+            debug!("adding regex /{}/", pattern);
+            target_ignore_regexps.push(pattern);
+        }
+    }
+
+    if target_ignore_paths.is_empty() &&
+        source_ignore_paths.is_empty() &&
+        target_ignore_regexps.is_empty()
+    {
+        info!("nothing to do");
+        return Ok(());
+    }
+
+    if dry_run {
+        info!("dry run specified, no changes will be made");
+    }
+
+    debug!("::ignore procedure begins");
+
+    let mut target_ignore_file : Lazy<File> = Lazy::new(open_or_create_target_ignore_file);
+
+    if !target_ignore_paths.is_empty() {
+        for ignore_path in target_ignore_paths {
+            info!("add path {:?} to {:?}", ignore_path, target_ignore_file_path);
+            if dry_run {
+                continue;
+            }
+
+            let escaped_path_str = regex::escape(ignore_path.to_str().unwrap());
+            if let Err(e) = writeln!(target_ignore_file, "{}", escaped_path_str) {
+                error!("failed write path to file: {}", e);
+                return Err(e);
+            }
+        }
+    }
+
+    if !target_ignore_regexps.is_empty() {
+        for pattern in target_ignore_regexps {
+            info!("add regex /{}/ to {:?}", pattern, target_ignore_file_path);
+            if dry_run {
+                continue;
+            }
+
+            if let Err(e) = writeln!(target_ignore_file, "{}", pattern) {
+                error!("failed write regex to file: {}", e);
+                return Err(e);
+            }
+        }
+    }
+
+    if !source_ignore_paths.is_empty() {
+        let mut source_ignore_file = open_or_create_source_ignore_file(&source_ignore_file_path);
+        for ignore_path in source_ignore_paths {
+            info!("add path {:?} to {:?}", ignore_path, source_ignore_file_path);
+            if dry_run {
+                continue;
+            }
+
+            let escaped_path_str = regex::escape(ignore_path.to_str().unwrap());
+            if let Err(e) = writeln!(source_ignore_file, "{}", escaped_path_str) {
+                error!("failed write path to file: {}", e);
+                return Err(e);
+            }
+        }
+    }
 
     Ok(())
 }

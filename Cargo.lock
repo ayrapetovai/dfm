@@ -286,6 +286,7 @@ dependencies = [
  "filetime_creation",
  "log",
  "microxdg",
+ "once_cell",
  "regex",
  "rpassword",
  "rs_sha256",

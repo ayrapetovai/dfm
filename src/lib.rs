@@ -2,7 +2,8 @@ mod crypt;
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Error, ErrorKind};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Error, ErrorKind};
 use std::ops::Add;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -11,10 +12,11 @@ use std::time::SystemTime;
 use log::trace;
 use log::error;
 use microxdg::Xdg;
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use serde::Deserialize;
 use serde::Serialize;
 use walkdir::{DirEntry, WalkDir};
+use once_cell::sync::Lazy;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct StateObject {
@@ -36,22 +38,95 @@ impl StateObject {
     }
 }
 
-pub fn calc_state_file_path() -> Result<PathBuf, Error> {
-    let xdg = match Xdg::new() {
-        Ok(v) => v,
+static XDG : Lazy<Xdg> = Lazy::new(|| Xdg::new().unwrap());
+
+static IGNORE_FILE_NAME_IN_XDG_STATE : &str = "./dfm/ignore_file";
+
+static IGNORE_FILE_NAME_IN_SOURCE_DIR: &str = "./.dfm_ignore_file";
+
+pub fn calc_local_ignore_file() -> Result<PathBuf, Error> {
+     return match XDG.state_file(&IGNORE_FILE_NAME_IN_XDG_STATE) {
+        Ok(p) => Ok(p),
         Err(e) => {
-            error!("failed to obtain $XDG_CONFIG_PATH value: {}", e);
+            error!("failed to find local ignore file: {}", e);
             return Err(Error::other(e));
         }
     };
-    let path_to_state_file = match xdg.state_file(&STATE_FILE_NAME_IN_XDG_STATE) {
-        Ok(p) => p,
+}
+
+pub fn open_or_create_target_ignore_file() -> File {
+    return match XDG.state_file(&IGNORE_FILE_NAME_IN_XDG_STATE) {
+        Ok(p) => OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true)
+            .open(&p)
+            .unwrap(),
+        Err(e) => {
+            panic!("failed to find local ignore file: {}", e);
+        }
+    };
+}
+
+pub fn open_or_create_source_ignore_file(source_ignore_path: &PathBuf) -> File {
+    OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(&source_ignore_path)
+        .unwrap()
+}
+
+// TODO refactor, make less code
+pub fn calc_source_ignore_file(source_dir_abs_path: &PathBuf) -> Result<PathBuf, Error> {
+    let source_ignore_file_path = PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), &IGNORE_FILE_NAME_IN_SOURCE_DIR]);
+    Ok(source_ignore_file_path)
+}
+
+pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, Error> {
+    if !ignore_file_path.exists() {
+        return Ok(RegexSet::empty());
+    }
+
+    let file = File::open(ignore_file_path)?;
+    let reader = BufReader::new(file);
+    let mut patterns = vec![];
+
+    for (_, line) in reader.lines().enumerate() {
+        let line = line?;
+        let mut prev = ' ';
+        let mut end = line.len();
+        for (i, c) in line.char_indices() {
+            if c == '#' && prev != '\\' {
+                end = i;
+                break;
+            }
+            prev = c;
+        }
+        let line = line[0..end].to_owned();
+        if !line.is_empty() {
+            patterns.push(line)
+        }
+    }
+
+    return if patterns.is_empty() {
+        Ok(RegexSet::empty())
+    } else {
+        match RegexSet::new(patterns) {
+            Ok(r) => Ok(r),
+            Err(e) => Err(Error::other(e))
+        }
+    }
+}
+
+pub fn calc_state_file_path() -> Result<PathBuf, Error> {
+     return match XDG.state_file(&STATE_FILE_NAME_IN_XDG_STATE) {
+        Ok(p) => Ok(p),
         Err(e) => {
             error!("failed to find state file: {}", e);
             return Err(Error::other(e));
         }
     };
-    Ok(path_to_state_file)
 }
 
 pub fn read_state(path_to_state_file: &PathBuf) -> Option<StateObject> {
@@ -151,21 +226,13 @@ pub fn write_config(path: &PathBuf, config: &ConfigFile) -> Result<(), Error> {
 }
 
 pub fn calc_config_file_path() -> Result<PathBuf, Error>{
-    let xdg = match Xdg::new() {
-        Ok(v) => v,
-        Err(e) => {
-            error!("failed to obtain $XDG_CONFIG_PATH value: {}", e);
-            return Err(Error::other(e));
-        }
-    };
-
     if !envmnt::exists("HOME") { // TODO read HOME depending on operating system
         return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"));
     }
     let home_path = envmnt::get_or_panic("HOME"); // TODO read HOME depending on operating system
     let config_in_home = PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_HOME]);
 
-    let path_to_config_file = match xdg.config() {
+    let path_to_config_file = match XDG.config() {
         Ok(path_to_config_dir) => {
             let config_path = PathBuf::from_iter(vec![path_to_config_dir.to_str().unwrap(), &CONFIG_FILE_NAME_IN_XDG_CONFIG]);
             if config_path.exists() || !config_in_home.exists() {
@@ -387,10 +454,10 @@ pub struct ListDirectories {
     pub errors: Vec<String>,
 }
 
-pub fn list_directory(paths: &[PathBuf], filter_regexp: Option<&Regex>) -> Result<ListDirectories, Error> {
+pub fn list_directory(paths: &[PathBuf], filter_regexp: Option<&RegexSet>) -> Result<ListDirectories, Error> {
     trace!("list directories with filter {:?}", filter_regexp);
 
-    let ignore_filter = 
+    let ignore_filter =
         |dir_entry: &DirEntry| -> bool {
             return match dir_entry.path().to_str() {
                 Some(p) => if let Some(regex) = filter_regexp {
