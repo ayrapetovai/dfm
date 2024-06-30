@@ -119,6 +119,20 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, Error>
     }
 }
 
+pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<String> {
+    let haystack = haystack.to_str().unwrap();
+    if regex.matches(haystack).matched_any() {
+        let target_ignore_patterns = regex.patterns();
+        for pattern in target_ignore_patterns {
+            let regex = Regex::new(pattern).unwrap();
+            if regex.is_match(haystack) {
+                return Some(pattern.to_owned());
+            }
+        }
+    }
+    return None;
+}
+
 pub fn calc_state_file_path() -> Result<PathBuf, Error> {
      return match XDG.state_file(&STATE_FILE_NAME_IN_XDG_STATE) {
         Ok(p) => Ok(p),
@@ -163,6 +177,7 @@ pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<
 pub struct ConfigFile {
     pub dot_prefix: Option<String>,
     pub symlink_postfix: Option<String>,
+    pub encrypted_postfix: Option<String>,
     pub manage_symlinks: Option<bool>,
     // pub compare_content: Option<bool>, compare files by content
 
@@ -190,6 +205,7 @@ pub struct Config {
     pub target_dir: String,
     pub dot_prefix: String,
     pub symlink_postfix: String,
+    pub encrypted_postfix: String,
     pub manage_symlinks: bool,
     // pub compare_content: Option<bool>, compare files by content
 
@@ -259,6 +275,7 @@ pub fn create_default_config() -> Config {
         target_dir: "$HOME".to_owned(), // TODO read HOME depending on operating system
         dot_prefix: "dot_".to_owned(),
         symlink_postfix: ".symlink".to_owned(),
+        encrypted_postfix: ".encrypted".to_owned(),
         manage_symlinks: true,
         hooks: vec![],
         dotfiles_only: false,
@@ -305,6 +322,10 @@ pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>, state_ob
                 symlink_postfix: match &custom.symlink_postfix {
                     Some(v) => v.clone(),
                     None => default.symlink_postfix.to_string()
+                },
+                encrypted_postfix: match &custom.encrypted_postfix {
+                    Some(v) => v.clone(),
+                    None => default.encrypted_postfix.to_string()
                 },
                 manage_symlinks: match custom.manage_symlinks {
                     Some(v) => v,
@@ -476,6 +497,7 @@ pub fn list_directory(paths: &[PathBuf], filter_regexp: Option<&RegexSet>) -> Re
         .flat_map(|path| {
             WalkDir::new(path)
                 .follow_links(false)
+                .follow_root_links(false) // do not traverse symlinks pointing to dirs
                 .into_iter()
                 .filter_entry(ignore_filter)
                 .map(|r| {

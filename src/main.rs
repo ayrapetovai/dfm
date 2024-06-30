@@ -270,6 +270,7 @@ fn init_command(args: &Args) -> Result<(), Error> {
     let source_ignore_file_path = calc_source_ignore_file(&source_dir_path)?;
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
+    // TODO add `.dfm_ignore_file` to ignore file
     if !source_ignore_regex.matches(".dfm_root").matched_any() {
         debug!("source ignore file with be extended with \\.dfm_root");
         tasks.push(InitTask::CreateSourceIgnoreFile());
@@ -379,6 +380,9 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
         ));
     }
 
+    let target_ignore_file_path = calc_local_ignore_file()?;
+    let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
+
     #[derive(Debug)]
     enum AddTask {
         Copy(PathBuf, PathBuf),
@@ -401,6 +405,11 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
             let mut target_symlink_abs_path = fs::canonicalize(target_symlink_abs_path_raw.parent().get_or_insert(&root))?;
             target_symlink_abs_path.push(target_symlink_abs_path_raw.file_name().unwrap());
             let target_symlink_abs_path = target_symlink_abs_path;
+
+            if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_symlink_abs_path) {
+                info!("target symlink {:?} is ignored by regex /{}/ in file {:?}", target_symlink_abs_path, pattern, target_ignore_file_path);
+                continue;
+            }
 
             let target_symlink_pointee_rel_path = fs::read_link(&target_symlink_abs_path)?;
             let target_symlink_pointee_abs_path = fs::canonicalize(&target_symlink_pointee_rel_path)?;
@@ -449,6 +458,11 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 
         if !target_abs_path.starts_with(&target_dir_abs_path) {
             info!("target {:?} does not reside in target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
+            continue;
+        }
+
+        if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_abs_path) {
+            info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
             continue;
         }
 
@@ -612,12 +626,15 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
         CreateOrUpdateSymlink(PathBuf, String),
     }
 
+    let target_ignore_file_path = calc_local_ignore_file()?;
+    let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
+
     let mut tasks: Vec<PullTask> = vec![];
 
-    for target_path in traversed_paths.iter() {
-        debug!("checking {:?}", target_path);
+    for path in traversed_paths.iter() {
+        debug!("checking {:?}", path);
 
-        let target_abs_path = PathBuf::from_iter(vec!(&target_dir_abs_path, &target_path));
+        let target_abs_path = PathBuf::from_iter(vec!(&target_dir_abs_path, &path));
         let target_abs_path = remove_dots_from_path(&target_abs_path);
         debug!("target absolute path {:?}", target_abs_path);
 
@@ -662,6 +679,11 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
         } else {
             target_abs_path
         };
+
+        if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_abs_path) {
+            info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
+            continue; // ok
+        }
 
         if target_abs_path.exists() {
             if target_abs_path.is_symlink() {
@@ -1085,18 +1107,6 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
     let source_ignore_file_path = calc_source_ignore_file(&source_dir_abs_path)?;
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
-    // TODO if path in target dir add it to the state ignore list, if it is in a source
-    //  directory then add it to the source ignore list.
-    // TODO for path in paths if path is a directory then ignore it, do not traverse it.
-    // TODO if path does not exist ask of using --force to add it.
-    // TODO if path does to belong to the target directory or to the source directory then error.
-    // TODO if path in target directory is `add`ed then error, suggest to `forget` it.
-    // TODO if path in source directory is `pull`ed then error, suggest to remove corresponding target file.
-    // TODO try to create a regex instance out of the given pattern, to check if it is valid.
-    //  And try to find a file that will correspond to this pattern, if no such files found
-    //  then print an error, that the pattern does not ignore anything and can be added only
-    //  with --force.
-
     let traversed_paths = match paths {
         Some(p) => p,
         None if patterns.is_none() => {
@@ -1126,6 +1136,9 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
     for path in traversed_paths {
         debug!("check path {:?}", path);
         let abs_path = fs::canonicalize(path)?;
+
+        // TODO check if file to be ignored is already added to source then
+        //  report error, ignore is failed.
 
         if abs_path.starts_with(&source_dir_abs_path) {
             let rel_path = file_path_relative_to(&abs_path, &source_ignore_file_path);

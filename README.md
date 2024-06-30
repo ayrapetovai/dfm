@@ -233,3 +233,14 @@ file to be ignored.
 
 If regular expression matched to the path, the directory containing a file, then this
 directory is not traversed - all files in it considered to be ignored.
+- if path in target dir add it to the state ignore list, if it is in a source
+directory then add it to the source ignore list.
+- for path in paths if path is a directory then ignore it, do not traverse it.
+- if path does not exist ask of using --force to add it.
+- if path does to belong to the target directory or to the source directory then error.
+- if path in target directory is `add`ed then error, suggest to `forget` it.
+- if path in source directory is `pull`ed then error, suggest to remove corresponding target file.
+- try to create a regex instance out of the given pattern, to check if it is valid.
+And try to find a file that will correspond to this pattern, if no such files found
+then print an error, that the pattern does not ignore anything and can be added only
+with --force.
