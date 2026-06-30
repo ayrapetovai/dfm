@@ -1,6 +1,6 @@
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Nonce, Key
+    aead::{Aead, Generate, Key, KeyInit},
+    Aes256Gcm, Nonce, // Or `Aes128Gcm`
 };
 
 #[allow(unused_imports)]
@@ -14,10 +14,10 @@ use rs_sha256::{HasherContext, Sha256Hasher};
 
 #[allow(unused)]
 fn encrypt(key_str: &[u8], plaintext: &str) -> Vec<u8> {
-    let key = Key::<Aes256Gcm>::from_slice(key_str);
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let key = Key::<Aes256Gcm>::try_from(key_str).unwrap();
+    let nonce = Nonce::generate();
 
-    let cipher = Aes256Gcm::new(key);
+    let cipher = Aes256Gcm::new(&key);
 
     let ciphered_data = cipher.encrypt(&nonce, plaintext.as_bytes())
         .expect("failed to encrypt");
@@ -32,14 +32,14 @@ fn encrypt(key_str: &[u8], plaintext: &str) -> Vec<u8> {
 
 #[allow(unused)]
 fn decrypt(key_str: &[u8], encrypted_data: &Vec<u8>) -> String {
-    let key = Key::<Aes256Gcm>::from_slice(key_str);
+    let key = Key::<Aes256Gcm>::try_from(key_str).unwrap();
 
     let (nonce_arr, ciphered_data) = encrypted_data.split_at(12);
-    let nonce = Nonce::from_slice(nonce_arr);
+    let nonce = Nonce::try_from(nonce_arr).unwrap();
 
-    let cipher = Aes256Gcm::new(key);
+    let cipher = Aes256Gcm::new(&key);
 
-    let plaintext = cipher.decrypt(nonce, ciphered_data)
+    let plaintext = cipher.decrypt(&nonce, ciphered_data)
         .expect("failed to decrypt data");
 
     // TODO rewrite to crate the string from raw bytes
