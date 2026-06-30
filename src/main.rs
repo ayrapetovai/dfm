@@ -22,8 +22,12 @@ use dfm::*;
 // xdg https://wiki.archlinux.org/title/XDG_Base_Directory
 // aes https://rust.howtos.io/a-guide-to-symmetric-encryption-in-rust/
 
+static LONG_ABOUT: &'static str = 
+r#"This program is designed to manage dotfiles wich are usualy
+configuration files in user's home directory."#;
+
 #[derive(Parser, Debug)]
-#[command(version, about = "Dotfile Manager", long_about = None)]
+#[command(version, about = "Dotfile Manager", long_about = LONG_ABOUT)]
 struct Args {
 
     #[command(subcommand)]
