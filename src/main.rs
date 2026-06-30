@@ -155,11 +155,11 @@ enum Command {
         ignored: bool,
 
         /// List pattern used to ignore files.
-        #[arg(long, short = 'p', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'l', num_args = 0, default_value_t = false)]
         ignored_patterns: bool,
 
         /// List unused ignore patterns.
-        #[arg(long, short = 'P', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'u', num_args = 0, default_value_t = false)]
         useless_patterns: bool,
     },
 
