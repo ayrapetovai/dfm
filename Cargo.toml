@@ -8,20 +8,20 @@ edition = "2021"
 microxdg = "0.2.0"
 clap = { version = "4.6.1", features = ["cargo", "derive"] }
 clap_mangen = "0.3.0"
-serde = { version = "1.0.203", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 envmnt = "0.10.4"
 filetime_creation = "0.2.0"
 walkdir = "2.5.0"
-regex = "1.10.4"
+regex = "1.12.4"
 symlink = "0.1.0"
-log = "0.4.21"
+log = "0.4.33"
 stderrlog = "0.6.0"
-rpassword = "7.3.1"
+rpassword = "7.5.4"
 rs_sha256 = "0.1.3"
 aes-gcm = "0.11.0"
-aead = "0.6.0-pre.0"
-once_cell = "1.19.0"
+aead = "0.6.1"
+once_cell = "1.21.4"
 
 [profile.release]
 panic = "abort"
