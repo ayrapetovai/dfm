@@ -560,8 +560,8 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 
                 let sync_creation = FileTime::from_system_time(sync_creation);
 
-                set_file_mtime(target_file.clone(), sync_creation)?;
-                set_file_mtime(source_file.clone(), sync_creation)?;
+                set_file_mtime(&target_file, sync_creation)?;
+                set_file_mtime(&source_file, sync_creation)?;
 
                 if log_enabled!(Trace) {
                     let source_file_meta = source_file.metadata().unwrap();
