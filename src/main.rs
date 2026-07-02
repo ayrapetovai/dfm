@@ -239,9 +239,12 @@ fn init_command(args: &Args) -> Result<(), Error> {
     debug!("init with source path {:?}", path_to_source);
     debug!("init with target path {:?}", path_to_target_opt);
 
-    // TODO should this subcommand create the source directory if it does not exists?
     if !path_to_source.exists() {
-        return Err(Error::new(ErrorKind::NotFound, format!("directory {:?} was not found", path_to_source)));
+        if dry_run {
+            info!("source dir {:?} does not exist, creating", path_to_source);
+        } else {
+            fs::create_dir_all(path_to_source)?;
+        }
     }
 
     enum InitTask {
@@ -276,7 +279,7 @@ fn init_command(args: &Args) -> Result<(), Error> {
 
     // TODO add `.dfm_ignore_file` to ignore file
     if !source_ignore_regex.matches(".dfm_root").matched_any() {
-        debug!("source ignore file with be extended with \\.dfm_root");
+        debug!("source ignore file will be extended with \\.dfm_root");
         tasks.push(InitTask::CreateSourceIgnoreFile());
     }
 
@@ -292,7 +295,11 @@ fn init_command(args: &Args) -> Result<(), Error> {
 
     debug!("using target directory {:?}", target_abs_path);
     let state_file_path = calc_state_file_path()?;
-    tasks.push(InitTask::CreateStateFile(state_file_path.clone(), target_abs_path, source_dir_path.clone()));
+    if state_file_path.exists() {
+        debug!("state file already exists, no need to create");
+    } else {
+        tasks.push(InitTask::CreateStateFile(state_file_path.clone(), target_abs_path, source_dir_path.clone()));
+    }
 
     if dry_run {
         info!("dry run specified, no changes will be made");
@@ -335,6 +342,8 @@ fn init_command(args: &Args) -> Result<(), Error> {
                 if dry_run {
                     continue;
                 }
+
+                fs::create_dir_all(path.parent().unwrap())?;
 
                 let empty_state = StateObject::new(target_dir, source_dir);
                 write_state(&path, &empty_state)?;
@@ -1275,6 +1284,9 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
 // TODO add option to save the password's hash to the local file in ~/.local/state/dfm/password
 //  with permission of readonly by owner only. The `init` subcommand must prompt for that? `purge`
 //  subcommand must delete that file.
+
+// TODO when add or pulling or adding files with leading dot '.' in the source directory
+//  ignore them. e. g. ignore `.git` in source directory, do not traverse it.
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();
