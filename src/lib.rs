@@ -1,7 +1,7 @@
 mod crypt;
 
 use std::collections::HashMap;
-use std::fs;
+use std::{fs, io};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Error, ErrorKind};
 use std::ops::Add;
@@ -503,10 +503,13 @@ pub fn list_directory(paths: &[PathBuf], filter_regexp: Option<&RegexSet>) -> Re
                 .map(|r| {
                     match r {
                         Ok(d) if !d.file_type().is_dir() => Some(d.path().to_path_buf()),
-                        Err(e) => {
+                        Err(ref e) if e.io_error()?.kind() == io::ErrorKind::NotFound => {
+                            Some(path.into())
+                        },
+                        Err(ref e) => {
                             error_messages.push(format!("error: {}", e));
                             None
-                        }
+                        },
                         // we don't manage directories in source directory
                         _ => None
                     }
