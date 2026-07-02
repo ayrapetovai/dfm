@@ -1,6 +1,6 @@
 # Dotfile Manager
-This program is designed to maintain copies of configuration files from the home directory
-using a separate directory under a version control system.
+This program is designed to maintain copies of configuration files from the home directory (target)
+using a separate directory under a version control system (source).
 - safe copy from target to source and vise versa
 - show all kinds of statuses
 - ignore specified files in target and source directories
@@ -13,26 +13,29 @@ using a separate directory under a version control system.
 ## How Dotfile Managing is Performed
 
 ### Terminology
-config file - the file in filesystem that contains parameters for the program.  
-state file - file in which the synchronization time, target and source directory paths are stored.  
-target directory - is set to be root for all files/directories to managed by dfm. There
-can be only target directory for the whole filesystem.
-source directory - used to store the information and copies of the managed objects.  
-target file (TF) - a managed file in the target directory.  
-source file (SF) - the backing up file in source directory.  
-managed file/directory/symlink - the filesystem object for which will be created a corresponding object
-in the source directory.
-mtime - time when the last modification of a file was performed.  
-btime - time then file was read the last time, is not used in the dotfile manager.  
-exists - true/false, if file or directory present in filesystem.  
-- Successful `add` subcommand modifies the synchronization time in state file and modification time of the source file to be equal to
-the modification time of the target file and to each other.
-- Successful `pull` subcommand modifies times the same way as `add` subcommand.
+1. `config file` - the file in filesystem that contains parameters of the program.  
+2. `state file` - file in which the synchronization time, `target directory` and `source directory` paths are stored.  
+3. `target directory` - is set to be root for all files/directories to managed by the dotfime manager. There
+    can be only one `target directory` for the whole filesystem.
+4. `source directory` - used to store the information and copies of the `managed files`.  
+5. `target file` (TF) - a managed file in the `target directory`.  
+6. `source file` (SF) - the backing up file in `source directory`.  
+7. `managed file/directory/symlink` - the filesystem object for which will be created a corresponding object
+    in the source directory.
+8. `synchronization time` (mtime) - time when the last write of `target file` to the `source direcory` was made.  
+9. `modification time` (mtime) - time when the last modification of a file was performed.  
+10. btime - time when file was read the last time, it is not used in the dotfile manager.  
+11. exists - true/false, if file or directory present in filesystem.  
+
+Successful `add` subcommand modifies the `synchronization time` in `state file` and `modification time` of the `source file` to be equal to
+the `modification time` of the `target file` and to each other.
+
+Successful `pull` subcommand modifies times the same way as `add` subcommand.
 
 Regular run (non init subcommand):
 1. try to read `~/.config/dfm/config.toml`,
 2. if not found then try to read `~/.dfm.toml`,
-3. if not found then raise an error and print help.
+3. if not found then raises an error and prints help.
 
 ### Encryption
 While doing `init`, `add` or `pull` dfm use config specified command to obtain a passphrase.
@@ -44,19 +47,19 @@ The command is run by `$SHELL -c '{}'` (no variable expansion), this also must b
 Subcommands warns if sensible files are added without encryption: .ssh, ...
 
 ### Backups
-Target and source files can be copied to the `~/.local/state/dfm/**` and gzipped before being
+`Target files` and `source files` can be copied to the `~/.local/state/dfm/**` and gzipped before being
 overwritten by commands `add`, `pull` or `merge`.
 
 ### Ignored Files
-The source directory is ignored by default, yet the directory that contains it is not ignored.
-All files and subdirectories of the containing source directory can be added under the management.
+The `source directory` is ignored by default, yet the directory that contains it is not ignored.
+All files and subdirectories of the `source directory` can be added under the management.
 
 ### Add and Pull Conflict Detection
-Subcommand `add` copy files from target directory to source directory, subcommand `pull` copy from
-source directory to target directory respectively.
-Before perform any coping the check any modification conflict present.  
-The check algorithm allows to figure out the fact that target file was edited by user or owning program, and the fact
-that target file was edited by user or by `git`.
+Subcommand `add` copy files from `target directory` to `source directory`, subcommand `pull` copy from
+`source directory` to `target directory` respectively.
+Before perform any coping the check for modification conflict is performed.  
+The check algorithm allows to figure out the fact that `target file` was edited by user or owning program, and the fact
+that `source file` was edited by user or by `git`.
 1. if !TF.exists && SF.exists then, `add` aborts with error, `pull` copies SF to TF.
 2. if TF.exists && !TF.symlink && !SF.exists then `add` will copy TF to SF, `pull` will fail.
 3. if TF.exists && TF.symlink && !SF.exists then `add` will fail and `pull` will fail.
@@ -64,44 +67,50 @@ that target file was edited by user or by `git`.
 5. if TF.exists && TF.symlink && SF.exists then, `add` do nothing and `pull` do nothing.
 6. if TF.exists && !TF.symlink && SF.exists then, checks performed:
     1. if TF.mtime == SF.ctime && SF.ctime == SF.mtime then, no file was modified, `add` and `pull` will do nothing.
-    2. if TF.mtime == SF.ctime && SF.ctime < SF.mtime, source file was modified, target file was not,
-    `add` subcommand will overwrite changes in source file (conflict), `pull` subcommand will copy new version
-    of source file to the target file (no conflict).
-    3. if TF.mtime > SF.ctime && SF.ctime == SF.mtime then, target file was modified, source file was not,
-    `add` subcommand will copy new version of the target file to the source file (no conflict), `pull` subcommand
-    will overwrite new changes in the target file (conflict).
+    2. if TF.mtime == SF.ctime && SF.ctime < SF.mtime, `source file` was modified, `target file` was not,
+    `add` subcommand will overwrite changes in `source file` (conflict), `pull` subcommand will copy new version
+    of `source file` to the `target file` (no conflict).
+    3. if TF.mtime > SF.ctime && SF.ctime == SF.mtime then, `target file` was modified, `source file` was not,
+    `add` subcommand will copy new version of the `target file` to the `source file` (no conflict), `pull` subcommand
+    will overwrite new changes in the `target file` (conflict).
     4. if TF.mtime > SF.ctime && SF.ctime < SF.mtime then, both files was modified independently, both `add` and
    `pull` subcommands will overwrite new modifications (conflict).
+
+### Paths
+Pthe `paths` command prints paths and descriptions for them:
+- `target directory`, when dfm is initialized and before initialization.
+- `source directory` to be used.
+- `config file` path before or after initialization.
+- `state file` path before or after initialization.
 
 ### Init
 The supposed workflow is this:
 Setting up an existing repo with dotfiles:
-- user downloads the repository, with the source directory locating at the root of
-the repository, or a one of its subdirectories.
-- user executes `$ dfm init path/to/repo/` or with path directly to the source directory.
-- user executes `$ dfm pull` to copy all the dotfiles to the home directory.
+- user downloads the repository, with the `source directory` locating in the root of
+the repository, or in the one of subdirectories.
+- user executes `$ dfm init path/to/repo/` or with path directly to the `source directory`.
+- user executes `$ dfm pull` to copy all the dotfiles to the `target directory` (home).
 
 Creating a new repo for dotfiles:
-- user crates a directory somewhere in filesystem to make it a source directory.
+- user crates a directory somewhere in filesystem to make it a `source directory`.
 - user executes `$ dfm init path/to/that/new/dir`.
 - user executes `$ dfm add` to add all dotfiles under the management.
 
-The given path expected to be the source directory path.
-- If the given path does not exist then exit with error.
+The given path expected to be the `source directory` path.
+- If the given path does not exist then -exit with error- create one and creates a `.dfm_root` in it.
 - If this path contains a file `.dfm_root`, then the program reads the file content,
-the content is a path to the source root.
+the content is a path to the `source directory`, if it is created by `dfm`, the path is ".".
 - If the path from the `.dfm_root` does not exist then exit with error.
 Recursively search for the source directory, by this way.
-- Having source directory, search the config file of the program inside of it,
-apply the `pull` subcommand to the found config file.
+- Having `source directory`, search for the `config file` inside,
+apply the `pull` subcommand to the found `config file`.
 - If the config file does not exist in source directory then create the config
-file in the `$XDG_CONFIG_PATH` (or `$HOME`?) directory and fill with default
+file in the `$XDG_CONFIG_PATH` (or `$HOME`?) directory and fill it with default
 config parameters from the call of `default_config` function.
-- In the config file in the target directory, we must set the `source_dir` variable
-to the path of the source directory.
+- In the `config file` in the `target directory`, we must set the `source_dir` variable
+to the path of the `source directory`.
 - Create the empty `$XDG_STATE_PATH/dfm/state.toml` file if it does not exist or
 clean the file if exists.
-- Create a file `.dfm_root` with content "." if not exists in the source directory.
 
 ### Add
 The subcommand take the paths of the target directory (does not operate on paths in the source directory, unlike
@@ -116,8 +125,8 @@ Subcommand traverses in depth all given path to locate the files, each file can 
     - if --force then create a symlink file in source directory
 - a symlink, that has an associated symlink file in the source directory
     - check if the symlink and the symlink file are pointing to the same file,
-    if not, update the symlink file to point to the same file as tye symlink.
-- a symlink, that has no associated symlink file in the source directory
+    if not, update the symlink file to point to the same file as the symlink.
+- a symlink, that has no associated `symlink file` in the source directory
     - if --force then create a symlink file.
 - an existing file, that has no corresponding file in the source directory
     - create a corresponding file.
@@ -157,14 +166,14 @@ each file in the target directory could be:
     - copy the source file to the path of a target file
 
 The `pull` subcommand is able to take a path from the source directory,
-to make is easier to copy just cloned files, that don't yet exist in the home directory.
+to make is easier to copy just managed files, that don't yet exist in the home directory.
 Each file in the source directory could be:
 - an existing file, that has no corresponding file in the target directory
     - copy file from source directory to the path of the target file
 - an existing file, that has a corresponding file in the target directory
     - if target file is not modified then copy source file to the path of the target file
     - or error or if --force then copy, or is --merge then run merge
-- an existing file, that has a corresponding symlink in the target directory
+- an existing symlink file, that has a corresponding symlink in the target directory
     - do nothing, but if the symlink pints to the wrong file recreate it if --force
 - a non-existing file
     - error "file does not exist and is not managed"
