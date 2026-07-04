@@ -66,8 +66,21 @@ enum Command {
         dry_run: bool,
     },
 
-    /// Remove state file.
-    Purge,
+    /// Remove state of the program. Does not remove source directory.
+    #[command(arg_required_else_help = false)]
+    Purge {
+        /// Run only checks, no changes will be made to filesystem.
+        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        dry_run: bool,
+
+        /// Remove the source directory additionaly to removing state.
+        #[arg(long, short, num_args = 0, default_value_t = false)]
+        all: bool,
+
+        /// Remove the source directory even if it contains changes.
+        #[arg(long, short = 'f', num_args = 0, default_value_t = false)]
+        force: bool,
+    },
 
     // TODO rename to `push`?
     /// Add file under management, or copy changes to the source directory.
@@ -323,6 +336,12 @@ fn init_command(args: &Args) -> Result<(), Error> {
                 fs::write(&path, ".")?;
             },
             InitTask::CreateSourceIgnoreFile() => {
+                let mut ignore_file_records = vec![];
+                ignore_file_records.push(".dfm_root");
+                ignore_file_records.push(".git");
+                ignore_file_records.push(".dfm_ignore_source");
+                ignore_file_records.push(".dfm_ignore_target");
+
                 info!("add .dfm_root to source ignore file {:?}", source_ignore_file_path);
                 if dry_run {
                     continue;
@@ -330,11 +349,14 @@ fn init_command(args: &Args) -> Result<(), Error> {
 
                 fs::create_dir_all(source_ignore_file_path.parent().unwrap())?;
                 let mut source_ignore_file = open_or_create_source_ignore_file(&source_ignore_file_path);
-                let escaped_path_str = regex::escape(".dfm_root");
 
-                if let Err(e) = writeln!(source_ignore_file, "{}", escaped_path_str) {
-                    error!("failed write path to file: {}", e);
-                    return Err(e);
+                for ignore_file_record in ignore_file_records {
+                    if let Err(e) = writeln!(source_ignore_file, "{}", regex::escape(ignore_file_record)) {
+                        error!("failed write path to file: {}", e);
+                        return Err(e);
+                    } else {
+                        debug!("source ignore file: added record {}", ignore_file_record);
+                    }
                 }
             },
             InitTask::CreateStateFile(path, target_dir, source_dir) => {
@@ -1273,20 +1295,14 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
 //  subcommand because of a check error appeared. Erase the line with that prompt and print
 //  the user answer and the resulting action.
 
-// TODO create a config param "ignore dotfiles in source directory", use it to ignore:
-//  .dfm_ignore_source, .dfm_ignore_target, .dfm_root
-
 // TODO consider 3-way merge. This will require to store somewhere the synchronization source.
 
 // TODO make error and success messages parsable by the third-party program. They must be formatted
-//  and contains the sign of error or success, a filename and a sign of necessity of using --force.
+//  and contain the sign of error or success, a filename and a sign of necessity of using --force.
 
 // TODO add option to save the password's hash to the local file in ~/.local/state/dfm/password
 //  with permission of readonly by owner only. The `init` subcommand must prompt for that? `purge`
 //  subcommand must delete that file.
-
-// TODO when add or pulling or adding files with leading dot '.' in the source directory
-//  ignore them. e. g. ignore `.git` in source directory, do not traverse it.
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();
