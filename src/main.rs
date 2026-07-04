@@ -239,6 +239,10 @@ enum Command {
     //     #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
     //     list: bool,
     // },
+
+    /// Print paths
+    #[command(arg_required_else_help = false)]
+    Paths
 }
 
 fn init_command(args: &Args, config: &Config) -> Result<(), Error> {
@@ -1364,6 +1368,17 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
     Ok(())
 }
 
+
+fn paths_command(config: &Config, path_to_config_file: &PathBuf, path_to_state_file: &PathBuf) -> Result<(), Error> {
+    println!("config {:?}", path_to_config_file);
+    println!("state  {:?}", path_to_state_file);
+
+    let (target_dir_abs_apth, ref source_dir_abs_path) = calc_working_dir_paths(&config)?;
+    println!("source {:?}", source_dir_abs_path);
+    println!("target {:?}", target_dir_abs_apth);
+    Ok(())
+}
+
 // TODO add option "backup target file before overwrite", all backups must be stored in the specified
 //  directory, maybe not in the source directory. The restoring operation should look like 2-way merge.
 
@@ -1446,6 +1461,9 @@ fn main() -> Result<(), Error> {
         },
         Command::Ignore { .. } => {
             ignore_command(&config, &args)
+        },
+        Command::Paths => {
+            paths_command(&config, &path_to_config_file, &path_to_state_file)
         },
         _ => {
             Err(Error::new(ErrorKind::Unsupported, format!("subcommand {:?} is not implemented yet", args)))
