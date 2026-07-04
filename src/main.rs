@@ -241,7 +241,7 @@ enum Command {
     // },
 }
 
-fn init_command(args: &Args) -> Result<(), Error> {
+fn init_command(args: &Args, config: &Config) -> Result<(), Error> {
     let Command::Init {
         path_to_source,
         path_to_target: path_to_target_opt,
@@ -256,24 +256,26 @@ fn init_command(args: &Args) -> Result<(), Error> {
     debug!("init with source path {:?}", path_to_source);
     debug!("init with target path {:?}", path_to_target_opt);
 
-    if !path_to_source.exists() {
-        if dry_run {
-            info!("source dir {:?} does not exist, creating", path_to_source);
-        } else {
-            fs::create_dir_all(path_to_source)?;
-        }
-    }
-
     enum InitTask {
         CreateSourceRootFile(PathBuf),
         CreateSourceIgnoreFile(),
         CreateStateFile(PathBuf, PathBuf, PathBuf),
-        // TODO CreatConfigFile with defaults, or pull it from source
-        // dot_prefix = "dot_"
-        // dotfiles_only = false
-        // hooks = []
-        // manage_symlinks = false
-        // symlink_postfix = ".symlink"
+        CreateDefaultConfigFile(PathBuf)
+    }
+
+    if !path_to_source.exists() {
+        info!("source dir {:?} does not exist, creating", path_to_source);
+        if dry_run {
+            warn!("dry run specified but it will not prevent from creating source directory {:?}", path_to_source)
+        }
+
+        let actual_path = if path_to_source.is_absolute() {
+            path_to_source.clone()
+        } else {
+            let current_dir = env::current_dir().unwrap();
+            PathBuf::from_iter(vec![current_dir, path_to_source.clone()])
+        };
+        fs::create_dir_all(actual_path)?;
     }
 
     let mut tasks = vec![];
@@ -292,7 +294,7 @@ fn init_command(args: &Args) -> Result<(), Error> {
         fs::canonicalize(source_directory_pointer.parent().unwrap())?
     } else {
         tasks.push(InitTask::CreateSourceRootFile(PathBuf::from_iter(vec![path_to_source.to_str().unwrap(), ".dfm_root"])));
-        fs::canonicalize(&path_to_source)?
+        fs::canonicalize(path_to_source)?
     };
 
     debug!("using source directory {:?}", source_dir_path);
@@ -305,11 +307,10 @@ fn init_command(args: &Args) -> Result<(), Error> {
         tasks.push(InitTask::CreateSourceIgnoreFile());
     }
 
-    // TODO read HOME variable depending on the operation system
-    // [dependencies]
-    // env_home = "0.1"
-    let home_dir = envmnt::get_or_panic("HOME");
-    let home_dir_path = PathBuf::from(&home_dir);
+    let home_dir_path = match get_home_path() {
+        Some(p) => p,
+        None => return Err(Error::new(ErrorKind::InvalidData, "failed to define home directory"))
+    };
 
     let target_abs_path = if let Some(path_to_target) = path_to_target_opt {
         fs::canonicalize(path_to_target)?
@@ -323,6 +324,13 @@ fn init_command(args: &Args) -> Result<(), Error> {
         debug!("state file already exists, no need to create");
     } else {
         tasks.push(InitTask::CreateStateFile(state_file_path.clone(), target_abs_path, source_dir_path.clone()));
+    }
+
+    let target_config_file_path = calc_config_file_path();
+    if let Ok(config_file) = target_config_file_path {
+        if !config_file.exists() {
+            tasks.push(InitTask::CreateDefaultConfigFile(config_file));
+        }
     }
 
     if dry_run {
@@ -353,13 +361,13 @@ fn init_command(args: &Args) -> Result<(), Error> {
                 ignore_file_records.push(".dfm_ignore_source");
                 ignore_file_records.push(".dfm_ignore_target");
 
-                info!("add .dfm_root to source ignore file {:?}", source_ignore_file_path);
+                info!("add file names to source ignore file {:?}", source_ignore_file_path);
                 if dry_run {
                     continue;
                 }
 
                 fs::create_dir_all(source_ignore_file_path.parent().unwrap())?;
-                let mut source_ignore_file = open_or_create_source_ignore_file(&source_ignore_file_path);
+                let mut source_ignore_file = open_or_create_file(&source_ignore_file_path);
 
                 for ignore_file_record in ignore_file_records {
                     if let Err(e) = writeln!(source_ignore_file, "{}", regex::escape(ignore_file_record)) {
@@ -381,6 +389,15 @@ fn init_command(args: &Args) -> Result<(), Error> {
                 let empty_state = StateObject::new(target_dir, source_dir);
                 write_state(&path, &empty_state)?;
             },
+            InitTask::CreateDefaultConfigFile(path) => {
+                info!("create config file {:?}", path);
+                if dry_run {
+                    continue;
+                }
+
+                let config_file = ConfigFile::from_config(config);
+                write_config(&path, &config_file)?;
+            }
         }
     }
 
@@ -1329,7 +1346,7 @@ fn ignore_command(config: &Config, args: &Args) -> Result<(), Error> {
     }
 
     if !source_ignore_paths.is_empty() {
-        let mut source_ignore_file = open_or_create_source_ignore_file(&source_ignore_file_path);
+        let mut source_ignore_file = open_or_create_file(&source_ignore_file_path);
         for ignore_path in source_ignore_paths {
             info!("add path {:?} to {:?}", ignore_path, source_ignore_file_path);
             if dry_run {
@@ -1398,7 +1415,7 @@ fn main() -> Result<(), Error> {
 
     return match args.command {
         Command::Init { .. } => {
-            init_command(&args)
+            init_command(&args, &config)
         },
         Command::Purge { .. } => {
             purge_command(&config, &args, &path_to_config_file)

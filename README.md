@@ -102,6 +102,8 @@ The given path expected to be the `source directory` path.
 the content is a path to the `source directory`, if it is created by `dfm`, the path is ".".
 - If the path from the `.dfm_root` does not exist then exit with error.
 Recursively search for the source directory, by this way.
+- Having `source directory`, reads the `source ignore file` and creates if not exists.
+- Add records ".dfm_root", ".git", ".dfm_ignore_source", ".dfm_ignore_target" ot the `source ignore file` if the file was created.
 - Having `source directory`, search for the `config file` inside,
 apply the `pull` subcommand to the found `config file`.
 - If the config file does not exist in source directory then create the config

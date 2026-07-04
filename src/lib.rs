@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::SystemTime;
 
+use envmnt::ExpandOptions;
 use log::trace;
 use log::error;
 use microxdg::Xdg;
@@ -74,12 +75,12 @@ pub fn open_or_create_target_ignore_file() -> File {
 }
 
 // TODO return Result<File, Error> and check the error at the caller side
-pub fn open_or_create_source_ignore_file(source_ignore_path: &PathBuf) -> File {
+pub fn open_or_create_file(path_to_file: &PathBuf) -> File {
     OpenOptions::new()
         .write(true)
         .append(true)
         .create(true)
-        .open(&source_ignore_path)
+        .open(&path_to_file)
         .unwrap()
 }
 
@@ -205,6 +206,22 @@ pub struct ConfigFile {
     pub dotfiles_only: Option<bool>,
 }
 
+impl ConfigFile {
+    pub fn from_config(config: &Config) -> Self {
+        ConfigFile {
+            dot_prefix: Some(config.dot_prefix.clone()),
+            symlink_postfix: Some(config.symlink_postfix.clone()),
+            encrypted_postfix: Some(config.encrypted_postfix.clone()),
+            manage_symlinks: Some(config.manage_symlinks),
+            hooks: Some(config.hooks.clone().into_iter().map(|h| HookFile {
+                when: h.when,
+                execute: h.execute
+            }).collect()),
+            dotfiles_only: Some(config.dotfiles_only)
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct HookFile {
     pub when: String,
@@ -242,22 +259,44 @@ pub struct Hook {
     pub execute: String,
 }
 
-pub fn write_config(path: &PathBuf, config: &ConfigFile) -> Result<(), Error> {
+pub fn write_config(path_to_config_file: &PathBuf, config: &ConfigFile) -> Result<(), Error> {
     let content = match toml::to_string_pretty(config) {
         Ok(c) => c,
         Err(e) => {
             return Err(Error::other(e));
         }
     };
-    fs::write(path, content)
+    if let Some(config_parent_directory) = path_to_config_file.parent() {
+        if !config_parent_directory.exists() {
+            fs::create_dir_all(config_parent_directory)?;
+        }
+    }
+    fs::write(path_to_config_file, content)
+}
+
+// TODO read HOME variable depending on the operation system
+// [dependencies]
+// env_home = "0.1"
+pub fn get_home_path() -> Option<PathBuf> {
+    if !envmnt::exists("HOME") {
+        return None;
+    }
+    let mut expand_options = ExpandOptions::new();
+    expand_options.default_to_empty = true;
+    let home_path = envmnt::expand("HOME", Some(expand_options));
+    return if home_path.len() > 0 {
+        Some(PathBuf::from(home_path))
+    } else {
+        None
+    }
 }
 
 pub fn calc_config_file_path() -> Result<PathBuf, Error>{
-    if !envmnt::exists("HOME") { // TODO read HOME depending on operating system
-        return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"));
-    }
-    let home_path = envmnt::get_or_panic("HOME"); // TODO read HOME depending on operating system
-    let config_in_home = PathBuf::from_iter(vec![home_path.as_str(), &CONFIG_FILE_NAME_IN_HOME]);
+    let home_path = match get_home_path() {
+        Some(p) => p,
+        None => return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"))
+    };
+    let config_in_home = PathBuf::from_iter(vec![home_path, PathBuf::from(CONFIG_FILE_NAME_IN_HOME)]);
 
     let path_to_config_file = match XDG.config() {
         Ok(path_to_config_dir) => {
