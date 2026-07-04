@@ -66,16 +66,20 @@ enum Command {
         dry_run: bool,
     },
 
-    /// Remove state of the program. Does not remove source directory.
+    /// Remove state of the program and the source directory.
     #[command(arg_required_else_help = false)]
     Purge {
         /// Run only checks, no changes will be made to filesystem.
         #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
         dry_run: bool,
 
-        /// Remove the source directory additionaly to removing state.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
-        all: bool,
+        /// Do not remove source directory.
+        #[arg(long, short = 's', num_args = 0, default_value_t = false)]
+        keep_source: bool,
+
+        /// Do not remove config file.
+        #[arg(long, short = 'c', num_args = 0, default_value_t = false)]
+        keep_config_file: bool,
 
         /// Remove the source directory even if it contains changes.
         #[arg(long, short = 'f', num_args = 0, default_value_t = false)]
@@ -264,6 +268,12 @@ fn init_command(args: &Args) -> Result<(), Error> {
         CreateSourceRootFile(PathBuf),
         CreateSourceIgnoreFile(),
         CreateStateFile(PathBuf, PathBuf, PathBuf),
+        // TODO CreatConfigFile with defaults, or pull it from source
+        // dot_prefix = "dot_"
+        // dotfiles_only = false
+        // hooks = []
+        // manage_symlinks = false
+        // symlink_postfix = ".symlink"
     }
 
     let mut tasks = vec![];
@@ -290,13 +300,14 @@ fn init_command(args: &Args) -> Result<(), Error> {
     let source_ignore_file_path = calc_source_ignore_file(&source_dir_path)?;
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
-    // TODO add `.dfm_ignore_file` to ignore file
     if !source_ignore_regex.matches(".dfm_root").matched_any() {
         debug!("source ignore file will be extended with \\.dfm_root");
         tasks.push(InitTask::CreateSourceIgnoreFile());
     }
 
     // TODO read HOME variable depending on the operation system
+    // [dependencies]
+    // env_home = "0.1"
     let home_dir = envmnt::get_or_panic("HOME");
     let home_dir_path = PathBuf::from(&home_dir);
 
@@ -373,7 +384,63 @@ fn init_command(args: &Args) -> Result<(), Error> {
         }
     }
 
-    // TODO pull the config file
+    Ok(())
+}
+
+fn purge_command(config: &Config, args: &Args, path_to_config_file: &PathBuf) -> Result<(), Error> {
+    let Command::Purge {
+        dry_run,
+        keep_source,
+        keep_config_file,
+        force
+    } = &args.command else {
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `purge`", args.command)));
+    };
+
+    let dry_run = if !dry_run { args.dry_run } else { true };
+
+    let ref state_directory_path = match calc_state_directory_path() {
+        Ok(path) => path,
+        Err(e) => return Err(e)
+    };
+    let (_, ref source_dir_abs_path) = calc_working_dir_paths(&config)?;
+    debug!("purge path to config {:?}, state {:?}, source {:?} keep_source {}, keep_config_file {}, force {}",
+        path_to_config_file, state_directory_path, source_dir_abs_path, keep_source, keep_config_file, force);
+
+    if dry_run {
+        info!("dry run specified, no changes will be made");
+    }
+
+    if !keep_config_file {
+        if !path_to_config_file.exists() {
+            info!("config file does not exist");
+        } else {
+            if !dry_run {
+                fs::remove_file(path_to_config_file)?;
+            }
+            info!("config removed {:?}", path_to_config_file);
+        }
+    }
+
+    if !keep_source {
+        if !source_dir_abs_path.exists() {
+            info!("source does not exits");
+        } else {
+            if !dry_run {
+                fs::remove_dir_all(source_dir_abs_path.clone())?;
+            }
+            info!("source removed {:?}", source_dir_abs_path);
+        }
+    }
+
+    if !state_directory_path.exists() {
+        info!("state directory does not exist");
+    } else {
+        if !dry_run {
+            fs::remove_dir_all(state_directory_path)?;
+        }
+        info!("state removed {:?}", state_directory_path);
+    }
     Ok(())
 }
 
@@ -1316,16 +1383,25 @@ fn main() -> Result<(), Error> {
     }
 
     let path_to_state_file = calc_state_file_path()?;
-    let state_opt = read_state(&path_to_state_file);
+    let state_opt = match read_state(&path_to_state_file) {
+        Ok(s) => Some(s),
+        Err(_) => None
+    };
 
     let default_config = create_default_config();
     let path_to_config_file = calc_config_file_path()?;
-    let config_from_file = read_config(&path_to_config_file);
+    let config_from_file = match read_config(&path_to_config_file) {
+        Ok(c) => Some(c),
+        Err(_) => None
+    };
     let config =  merge_configs(&default_config, &config_from_file, &state_opt);
 
     return match args.command {
         Command::Init { .. } => {
             init_command(&args)
+        },
+        Command::Purge { .. } => {
+            purge_command(&config, &args, &path_to_config_file)
         },
         Command::Add { .. } => {
             if state_opt.is_none() {

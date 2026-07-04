@@ -26,7 +26,14 @@ pub struct StateObject {
     pub syncs: HashMap<String, SystemTime>,
 }
 
-static STATE_FILE_NAME_IN_XDG_STATE: &str = "./dfm/state.toml";
+static STATE_DIRECTORY_NAME_IN_XDG_STATE: &str = "./dfm";
+static STATE_FILE_NAME_IN_XDG_STATE: &str = "state.toml";
+
+static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
+static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "config.toml";
+
+static IGNORE_FILE_NAME_IN_XDG_STATE : &str = "ignore_file";
+static IGNORE_FILE_NAME_IN_SOURCE_DIR: &str = "./.dfm_ignore_file";
 
 impl StateObject {
     pub fn new(target_directory: PathBuf, source_directory: PathBuf) -> Self {
@@ -40,12 +47,9 @@ impl StateObject {
 
 static XDG : Lazy<Xdg> = Lazy::new(|| Xdg::new().unwrap());
 
-static IGNORE_FILE_NAME_IN_XDG_STATE : &str = "./dfm/ignore_file";
-
-static IGNORE_FILE_NAME_IN_SOURCE_DIR: &str = "./.dfm_ignore_file";
-
 pub fn calc_local_ignore_file() -> Result<PathBuf, Error> {
-     return match XDG.state_file(&IGNORE_FILE_NAME_IN_XDG_STATE) {
+    let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
+     return match XDG.state_file(&state_file_name) {
         Ok(p) => Ok(p),
         Err(e) => {
             error!("failed to find local ignore file: {}", e);
@@ -55,7 +59,8 @@ pub fn calc_local_ignore_file() -> Result<PathBuf, Error> {
 }
 
 pub fn open_or_create_target_ignore_file() -> File {
-    return match XDG.state_file(&IGNORE_FILE_NAME_IN_XDG_STATE) {
+    let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
+    return match XDG.state_file(&state_file_name) {
         Ok(p) => OpenOptions::new()
             .write(true)
             .append(true)
@@ -68,6 +73,7 @@ pub fn open_or_create_target_ignore_file() -> File {
     };
 }
 
+// TODO return Result<File, Error> and check the error at the caller side
 pub fn open_or_create_source_ignore_file(source_ignore_path: &PathBuf) -> File {
     OpenOptions::new()
         .write(true)
@@ -133,8 +139,18 @@ pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<
     return None;
 }
 
+pub fn calc_state_directory_path() -> Result<PathBuf, Error> {
+    match XDG.state() {
+        Ok(path_to_config) => {
+            Ok(PathBuf::from_iter([&path_to_config, &PathBuf::from(STATE_DIRECTORY_NAME_IN_XDG_STATE)]))
+        },
+        Err(e) => Err(Error::other(e))
+    }
+}
+
 pub fn calc_state_file_path() -> Result<PathBuf, Error> {
-     return match XDG.state_file(&STATE_FILE_NAME_IN_XDG_STATE) {
+    let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, STATE_FILE_NAME_IN_XDG_STATE);
+    return match XDG.state_file(&state_file_name) {
         Ok(p) => Ok(p),
         Err(e) => {
             error!("failed to find state file: {}", e);
@@ -143,23 +159,21 @@ pub fn calc_state_file_path() -> Result<PathBuf, Error> {
     };
 }
 
-pub fn read_state(path_to_state_file: &PathBuf) -> Option<StateObject> {
+pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, Error> {
     trace!("state file path {:?}", path_to_state_file);
 
     let state_file_content = match fs::read_to_string(path_to_state_file) {
         Ok(s) => s,
         Err(e) => {
-            error!("failed to read state file {:?}: {}", path_to_state_file, e);
-            return None;
+            return Err(Error::other(e));
         }
     };
 
     return match toml::from_str(&state_file_content) {
         Err(e) => {
-            error!("failed to deserialize state file: {}", e);
-            return None;
+            return Err(Error::other(e));
         },
-        Ok(s) => Some(s)
+        Ok(s) => Ok(s)
     };
 }
 
@@ -228,9 +242,6 @@ pub struct Hook {
     pub execute: String,
 }
 
-static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
-static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "./dfm/config.toml";
-
 pub fn write_config(path: &PathBuf, config: &ConfigFile) -> Result<(), Error> {
     let content = match toml::to_string_pretty(config) {
         Ok(c) => c,
@@ -250,7 +261,8 @@ pub fn calc_config_file_path() -> Result<PathBuf, Error>{
 
     let path_to_config_file = match XDG.config() {
         Ok(path_to_config_dir) => {
-            let config_path = PathBuf::from_iter(vec![path_to_config_dir.to_str().unwrap(), &CONFIG_FILE_NAME_IN_XDG_CONFIG]);
+            let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, CONFIG_FILE_NAME_IN_XDG_CONFIG);
+            let config_path = PathBuf::from_iter(vec![path_to_config_dir.to_str().unwrap(), &state_file_name]);
             if config_path.exists() || !config_in_home.exists() {
                 trace!("config file path is taken from XDG variable {:?}", config_path);
                 config_path
@@ -282,23 +294,21 @@ pub fn create_default_config() -> Config {
     }
 }
 
-pub fn read_config(path_to_config_file: &PathBuf) -> Option<ConfigFile> {
+pub fn read_config(path_to_config_file: &PathBuf) -> Result<ConfigFile, Error> {
     trace!("config file path {:?}", path_to_config_file);
 
     let config_file_content = match fs::read_to_string(path_to_config_file) {
         Ok(s) => s,
         Err(e) => {
-            error!("failed to read config file {:?}: {}", path_to_config_file, e);
-            return None;
+            return Err(Error::other(e));
         }
     };
 
     return match toml::from_str(&config_file_content) {
         Err(e) => {
-            error!("failed to deserialize state file: {}", e);
-            return None;
+            return Err(Error::other(e));
         },
-        Ok(c) => Some(c)
+        Ok(c) => Ok(c)
     };
 }
 
