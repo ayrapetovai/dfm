@@ -1,3 +1,5 @@
+mod main_tests; 
+
 use std::borrow::ToOwned;
 use std::{env, fs};
 use std::cmp::PartialEq;
