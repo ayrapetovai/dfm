@@ -255,3 +255,27 @@ directory then add it to the source ignore list.
 And try to find a file that will correspond to this pattern, if no such files found
 then print an error, that the pattern does not ignore anything and can be added only
 with --force.
+
+# Debugging
+sudo apt install rust-gdb
+
+- to extract test file's name, cargo will print it
+    cargo test test_extract_failure
+
+like that
+
+```
+❯ cargo test --no-run
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+  Executable unittests src/lib.rs (target/debug/deps/dfm-84f8f22cc401afab)
+  Executable unittests src/main.rs (target/debug/deps/dfm-dec712b5ec2bb297)
+```
+
+target/debug/deps/dfm-dec712b5ec2bb297 --test test_case_function_name
+
+- bugstaker's executable is called 'bs'
+cargo install bugstalker
+
+bs target/debug/deps/dfm-dec712b5ec2bb297
+(bs) break source.rs:line
+(bs) run

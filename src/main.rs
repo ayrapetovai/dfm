@@ -247,7 +247,7 @@ enum Command {
     Paths
 }
 
-fn init_command(args: &Args, config: &Config) -> Result<(), Error> {
+fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
     let Command::Init {
         path_to_source,
         path_to_target: path_to_target_opt,
@@ -1428,11 +1428,11 @@ fn main() -> Result<(), Error> {
         Ok(c) => Some(c),
         Err(_) => None
     };
-    let config =  merge_configs(&default_config, &config_from_file, &state_opt);
+    let config =  merge_configs(&default_config, &config_from_file, state_opt.as_ref());
 
     return match args.command {
         Command::Init { .. } => {
-            init_command(&args, &config)
+            init_command(&config, &args )
         },
         Command::Purge { .. } => {
             purge_command(&config, &args, &path_to_config_file)

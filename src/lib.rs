@@ -351,7 +351,7 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Result<ConfigFile, Error> {
     };
 }
 
-pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>, state_object: &Option<StateObject>) -> Config {
+pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>, state_object: Option<&StateObject>) -> Config {
     match custom_opt {
         Some(custom) =>
             Config {
