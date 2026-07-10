@@ -283,7 +283,7 @@ pub fn get_home_path() -> Option<PathBuf> {
     }
     let mut expand_options = ExpandOptions::new();
     expand_options.default_to_empty = true;
-    let home_path = envmnt::expand("HOME", Some(expand_options));
+    let home_path = envmnt::expand("${HOME}", Some(expand_options));
     return if home_path.len() > 0 {
         Some(PathBuf::from(home_path))
     } else {
