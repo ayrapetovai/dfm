@@ -518,6 +518,8 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 
     debug!("::check state procedure begins");
 
+    let mut conflict_detected = false;
+
     for target_path in traversed_paths.iter() {
         debug!("checking {:?}", target_path);
 
@@ -604,27 +606,31 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
             // conflict cases
             match cmp {
                 CompareByTimestamp::BothModified => {
-                    info!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
+                    println!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
                         target_abs_path, source_abs_path);
+                    conflict_detected = true;
                     if !force {
                         continue;
                     }
                 },
                 CompareByTimestamp::SourceModified => {
-                    info!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
+                    println!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
                               source_abs_path, target_abs_path);
+                    conflict_detected = true;
                     if !force {
                         continue;
                     }
                 },
                 CompareByTimestamp::NonModified => {
-                    info!("neither target nor source were modified");
+                    println!("neither target nor source were modified");
+                    conflict_detected = true;
+                    // TODO check if file content is not different
                     if !force {
                         continue;
                     }
                 },
                 CompareByTimestamp::TargetModified => {
-                    info!("only target {:?} was modified, no conflicts", target_abs_path);
+                    println!("only target {:?} was modified, no conflicts", target_abs_path);
                 },
                 CompareByTimestamp::NeverSynchronized => {
                     if !force {
@@ -645,6 +651,11 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 
     if dry_run {
         info!("dry run specified, no changes will be made");
+    }
+
+    if conflict_detected && !force {
+        warn!("confclits detected, no changes will be made");
+        return Err(Error::new(ErrorKind::Other, "conflicts"))
     }
 
     if tasks.is_empty() {
@@ -1432,7 +1443,7 @@ fn main() -> Result<(), Error> {
 
     return match args.command {
         Command::Init { .. } => {
-            init_command(&config, &args )
+            init_command(&config, &args)
         },
         Command::Purge { .. } => {
             purge_command(&config, &args, &path_to_config_file)
