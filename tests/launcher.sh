@@ -31,14 +31,13 @@ trap 'rm -rf -- "$TMP_HOME"' EXIT
 export HOME="$TMP_HOME"
 cd $HOME
 
-TEST_CASES=$(find "$TESTS_DIR" -type f -name 'test*.sh')
-
-echo "running $(echo $TEST_CASES | wc -l) tests"
+TEST_CASES=$(find "$TESTS_DIR" -type f -name 'test*.sh' -printf "%p\n")
+echo "running $(echo "$TEST_CASES" | wc -l) tests"
 
 SUCCED_COUNTER=0
 FAILED_COUNTER=0
 
-for test_case in "$TEST_CASES" ; do
+for test_case in $TEST_CASES; do
     test_name="$(basename $test_case)"
     if ( set -eEux; source "$test_case" ) ; then
         echo "---- $test_name ✅"
