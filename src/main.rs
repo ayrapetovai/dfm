@@ -14,7 +14,7 @@ use filetime_creation::FileTime;
 use log::{debug, error, info, log_enabled, trace, warn};
 use log::Level::Trace;
 use once_cell::unsync::Lazy;
-use regex::Regex;
+use regex::{Regex, RegexSet};
 
 use dfm::*;
 
@@ -589,7 +589,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
         }
 
         if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_abs_path) {
-            info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
+            println!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
             continue;
         }
 
@@ -724,10 +724,11 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<(), Error> {
     let Command::Pull {
         paths,
+        invert_match,
         merge,
         force,
+        symlink: target_must_be_symlink,
         dry_run,
-        ..
     } = &args.command else {
         return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `pull`", args.command)));
     };
@@ -743,11 +744,12 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
         None => vec![source_dir_abs_path.clone()]
     };
 
+    let regex_no_dot_files = RegexSet::new(vec![r#"^(.+/)?[^.][^/]+$"#]).unwrap();
     let ListDirectories{
         found: traversed_paths,
         errors: error_messages,
         ..
-    } = list_directory(&paths, None)?;
+    } = list_directory(&paths, Some(&regex_no_dot_files))?;
     debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
@@ -797,8 +799,13 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
                     tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
                     continue; // success
                 } else {
-                    debug!("regular file creating task");
-                    tasks.push(PullTask::Copy(target_file_abs_path, source_file_abs_path));
+                    if *target_must_be_symlink {
+                        debug!("symlink creating task");
+                        tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_owned()));
+                    } else {
+                        debug!("regular file creating task");
+                        tasks.push(PullTask::Copy(target_file_abs_path, source_file_abs_path));
+                    }
                     continue; // success
                 }
             } else if target_file_abs_path.is_symlink() && source_file_abs_path.exists() {
@@ -907,7 +914,11 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
             let source_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if source_file_abs_path.exists() {
                 info!("source {:?} will be copied\n\tto the target {:?}", source_file_abs_path, target_abs_path);
-                tasks.push(PullTask::Copy(target_abs_path.clone(), source_file_abs_path));
+                if *target_must_be_symlink {
+                    tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_owned()));
+                } else {
+                    tasks.push(PullTask::Copy(target_abs_path.clone(), source_file_abs_path));
+                }
                 continue; // success
             } else {
                 let source_symlink_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(&config.symlink_postfix));

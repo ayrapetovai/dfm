@@ -524,16 +524,16 @@ pub struct ListDirectories {
     pub errors: Vec<String>,
 }
 
-pub fn list_directory(paths: &[PathBuf], filter_regexp: Option<&RegexSet>) -> Result<ListDirectories, Error> {
-    trace!("list directories with filter {:?}", filter_regexp);
+pub fn list_directory(paths: &[PathBuf], filter_regexp_opt: Option<&RegexSet>) -> Result<ListDirectories, Error> {
+    trace!("list directories with filter {:?}", filter_regexp_opt);
 
     let ignore_filter =
         |dir_entry: &DirEntry| -> bool {
             return match dir_entry.path().to_str() {
-                Some(p) => if let Some(regex) = filter_regexp {
+                Some(p) => if let Some(regex) = filter_regexp_opt {
                     let matched = regex.is_match(p);
-                    trace!("{} {}", p, if matched { "❌" } else { "✔️" });
-                    !matched
+                    trace!("{} {}", p, if !matched { "❌" } else { "✔️" });
+                    matched
                 } else {
                     true
                 },
