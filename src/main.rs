@@ -655,7 +655,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 
     if conflict_detected && !force {
         warn!("confclits detected, no changes will be made");
-        return Err(Error::new(ErrorKind::Other, "conflicts"))
+        return Err(Error::other("conflicts"))
     }
 
     if tasks.is_empty() {

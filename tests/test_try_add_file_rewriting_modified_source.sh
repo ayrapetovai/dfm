@@ -1,7 +1,16 @@
+ORIGINAL_CONTENT="original"
+NEW_CONTENT="new content"
+
 dfm init dotfiles
-echo "content1" > file.txt
+write "$ORIGINAL_CONTENT" file.txt
 dfm add file.txt
-echo "content2" > ./dotfiles/file.txt
-dfm add file.txt && exit 1
-test "content2" = "$(cat ./dotfiles/file.txt)" || exit 1
-test "content1" = "$(cat file.txt)" || exit 1
+
+# modifed by some VCS
+write "$NEW_CONTENT" ./dotfiles/file.txt
+assert_fail dfm add file.txt
+
+assert "$NEW_CONTENT" = "$(cat ./dotfiles/file.txt)"
+assert "$ORIGINAL_CONTENT" = "$(cat file.txt)"
+
+dfm add -f file.txt
+assert "$ORIGINAL_CONTENT" = "$(cat ./dotfiles/file.txt)"

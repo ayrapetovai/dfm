@@ -10,7 +10,7 @@ use std::str::FromStr;
 use std::time::SystemTime;
 
 use envmnt::ExpandOptions;
-use log::trace;
+use log::{debug, trace};
 use log::error;
 use microxdg::Xdg;
 use regex::{Regex, RegexSet};
@@ -608,7 +608,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
     let source_file_synced = match sync_time_opt {
         Some(t) => *t,
         None => {
-            trace!("synchronization time is no available for target {:?}\n\tand source {:?}",
+            debug!("synchronization time is no available for target {:?}\n\tand source {:?}",
                 target_abs_path, source_abs_path);
             return Ok(CompareByTimestamp::NeverSynchronized);
         }
@@ -616,7 +616,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
     let target_file_modified = target_file_meta.modified().unwrap();
     let source_file_modified = source_file_meta.modified().unwrap();
 
-    trace!("current state:\n target: mtime={:?}\n source: sync={:?},\n         mtime={:?}",
+    debug!("current state:\n target: mtime={:?}\n source: sync={:?},\n         mtime={:?}",
              target_file_modified, source_file_synced, source_file_modified);
 
     let both_not_modified = target_file_modified == source_file_synced &&
