@@ -768,6 +768,7 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
     let mut tasks: Vec<PullTask> = vec![];
+    let mut error_list = vec![];
 
     for path in traversed_paths.iter() {
         debug!("checking {:?}", path);
@@ -834,7 +835,8 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
 
                 let source_file_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
                 if target_symlink_followed_abs_path == source_file_abs_path {
-                    info!("target symlink {:?}\t\npoints to the source file {:?}, skipping...", target_abs_path, source_file_abs_path);
+                    println!("target symlink {:?}\t\npoints to the source file {:?}, skipping...", target_abs_path, source_file_abs_path);
+                    error_list.push(format!("target {:?} is a valid symlink", target_abs_path));
                     continue; // success
                 }
 
@@ -932,6 +934,13 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
                 }
             }
         }
+    }
+
+    if !error_list.is_empty() && !force {
+        for error_string in error_list {
+            warn!("error: {:?}", error_string);
+        }
+        return Err(Error::other("inproper operation"));
     }
 
     if tasks.is_empty() {
