@@ -1064,6 +1064,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
     }
 
     let mut tasks: Vec<ForgetTask> = Vec::new();
+    let mut error_messages = vec![];
 
     debug!("::check state procedure begins");
 
@@ -1171,12 +1172,24 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
                     let sync_time_opt = state.syncs.get(source_file_rel_path.to_str().unwrap());
 
                     let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt)?;
-                    if CompareByTimestamp::SourceModified == cmp || CompareByTimestamp::BothModified == cmp {
+                    if CompareByTimestamp::SourceModified == cmp {
                         // source was modified and if we remove it then we will lose the modifications
                         warn!("source {:?}, was modified, run with --force", source_abs_path);
-                        if !force {
-                            continue; // error
-                        }
+                        error_messages.push("source was modified");
+                        continue; // error
+                    }
+
+                    if CompareByTimestamp::BothModified == cmp {
+                        // source was modified and if we remove it then we will lose the modifications
+                        warn!("source {:?} and target {:?}, both were modified, run with --force", source_abs_path, target_abs_path);
+                        error_messages.push("source and target were modified");
+                        continue; // error
+                    }
+                    if CompareByTimestamp::TargetModified == cmp {
+                        // source was modified and if we remove it then we will lose the modifications
+                        warn!("target {:?}, was modified, run with --force", target_abs_path);
+                        error_messages.push("target was modified");
+                        continue; // error
                     }
                     info!("source {:?} will be removed", source_abs_path);
                     tasks.push(ForgetTask::Delete(source_abs_path));
@@ -1190,6 +1203,13 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
                 continue;
             }
         }
+    }
+
+    if !error_messages.is_empty() && !force {
+        for error_message in error_messages {
+            error!("{}", error_message);
+        }
+        return Err(Error::other("forget failed"));
     }
 
     if tasks.is_empty() {
