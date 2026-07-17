@@ -126,10 +126,6 @@ enum Command {
         #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
 
-        /// Invert pattern matching.
-        #[arg(long, short = 'v', num_args = 0, default_value_t = false)]
-        invert_match: bool,
-
         /// Run merge tool on conflicts.
         #[arg(long, short, num_args = 0, default_value_t = false)]
         merge: bool,
@@ -724,7 +720,6 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<(), Error> {
     let Command::Pull {
         paths,
-        invert_match,
         merge,
         force,
         symlink: target_must_be_symlink,
