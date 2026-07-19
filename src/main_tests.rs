@@ -87,6 +87,7 @@ mod main_tests {
             hooks: vec![],
             dotfiles_only: false,
             force_encryption_for: vec![],
+            obtain_password_shell_command: Some("".to_owned())
         }
     }
 

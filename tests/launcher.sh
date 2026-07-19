@@ -2,6 +2,10 @@
 
 set -euP
 
+if ! whatis 7z; then
+    echo ERROR 7z archiver is not available on PATH
+fi
+
 PROGRAMM_NAME_IN_SHELL="dfm"
 EXECUTABLE_NAME="dfm"
 
