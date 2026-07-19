@@ -227,21 +227,20 @@ enum Command {
         dry_run: bool,
     },
 
-    // TODO remove?
-    // /// Get or set config properties.
-    // Config {
-    //     /// Print the specified config property.
-    //     #[arg(long, short, num_args = 1, required = false, required_unless_present_any = ["set", "list"], value_name = "NAME")]
-    //     get: Option<String>,
-    //
-    //     /// Set config property to a specified value.
-    //     #[arg(long, short, num_args = 2, required = false, required_unless_present_any = ["get", "list"], value_names = ["NAME", "VALUE"])]
-    //     set: Option<Vec<String>>,
-    //
-    //     /// List all config properties.
-    //     #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
-    //     list: bool,
-    // },
+    /// Get or set config properties.
+    Config {
+        /// Print the specified config property.
+        #[arg(long, short, num_args = 1, required = false, required_unless_present_any = ["set", "list"], value_name = "NAME")]
+        get: Option<String>,
+
+        /// Set config property to a specified value.
+        #[arg(long, short, num_args = 2, required = false, required_unless_present_any = ["get", "list"], value_names = ["NAME", "VALUE"])]
+        set: Option<Vec<String>>,
+
+        /// List all config properties.
+        #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
+        list: bool,
+    },
 
     /// Print paths
     #[command(arg_required_else_help = false)]
@@ -405,6 +404,62 @@ fn init_command(config: &Config, args: &Args) -> Result<(), Error> {
                 let config_file = ConfigFile::from_config(config);
                 write_config(&path, &config_file)?;
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn config_command(args: &Args, path_to_config_file: &PathBuf) -> Result<(), Error> {
+    let Command::Config {
+        get,
+        set,
+        list
+    } = &args.command else {
+        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `config`", args.command)));
+    };
+
+    match get {
+        Some(param_name ) => {
+            if let Ok(value_opt) = read_property_from_config(&path_to_config_file, param_name) {
+                match value_opt {
+                    Some(v) => {
+                        println!("{}", v);
+                    },
+                    None => {
+                        error!("parameter {} is not found", param_name);
+                    }
+                }
+            } else {
+                return Err(Error::other("config files does not exists"));
+            };
+        },
+        None => {},
+    }
+
+    match set {
+        Some(params) => {
+            let param_name = params[0].clone();
+            let param_new_vlue = params[1].clone();
+            if args.dry_run {
+                debug!("dry-run specified, nothing will be changed");
+            } else if let Err(e) = write_property_to_config(&path_to_config_file, &param_name, &param_new_vlue) {
+                return Err(Error::other(format!("faield to save config parameter value {:?}", e)));
+            }
+        },
+        None => {}
+    }
+
+    if *list {
+        match read_properties_from_config(&path_to_config_file) {
+            Ok(props) => {
+                for line in props {
+                    println!("{}", line)
+                }
+            },
+            Err(e) => {
+                return Err(Error::other(format!("faield to read config {:?}", e)));
+            },
         }
     }
 
@@ -1551,6 +1606,9 @@ fn main() -> Result<(), Error> {
     return match args.command {
         Command::Init { .. } => {
             init_command(&config, &args)
+        },
+        Command::Config { .. } => {
+            config_command(&args, &path_to_config_file)
         },
         Command::Purge { .. } => {
             purge_command(&config, &args, &path_to_config_file)

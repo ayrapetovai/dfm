@@ -16,6 +16,7 @@ use microxdg::Xdg;
 use regex::{Regex, RegexSet};
 use serde::Deserialize;
 use serde::Serialize;
+use toml::{Table, Value};
 use walkdir::{DirEntry, WalkDir};
 use once_cell::sync::Lazy;
 use lazy_static::lazy_static;
@@ -675,6 +676,36 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
     }
 
     Err(Error::other("the timestamps of the files under comparison are in inconsistent state"))
+}
+
+pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str) -> Result<Option<String>, Error> {
+    let config_file_content = fs::read_to_string(path_to_config_file).unwrap();
+    let config: Table = toml::from_str(&config_file_content).unwrap();
+    return match config.get(param_name) {
+        Some(v) => {
+            Ok(Some(v.to_string()))
+        },
+        None => Ok(None)
+    };
+}
+
+pub fn write_property_to_config(path_to_config_file: &PathBuf, param_name: &str, param_new_value: &str) -> Result<(), Error> {
+    let config_file_content = fs::read_to_string(path_to_config_file).unwrap();
+    let mut config: Table = toml::from_str(&config_file_content).unwrap();
+    config.insert(param_name.to_owned(), Value::String(param_new_value.to_owned()));
+    let new_content = toml::to_string_pretty(&config).unwrap();
+    fs::write(path_to_config_file, new_content)?;
+    Ok(())
+}
+
+pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<String>, Error> {
+    let config_file_content = fs::read_to_string(path_to_config_file).unwrap();
+    let config: Table = toml::from_str(&config_file_content).unwrap();
+    let mut params = vec![];
+    for (_, (name, value)) in config.iter().enumerate() {
+        params.push(format!("{} = {}", name, value));
+    }
+    Ok(params)
 }
 
 #[test]
