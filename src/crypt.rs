@@ -1,78 +1,81 @@
-use aes_gcm::{
-    aead::{Aead, Generate, Key, KeyInit},
-    Aes256Gcm, Nonce, // Or `Aes128Gcm`
-};
+use std::process::{Command, Stdio};
+use std::{fs, io};
+use std::io::{Error, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+use log::debug;
+use zip::write::SimpleFileOptions;
+// #[cfg(all(feature = "aes-crypto", feature = "zstd"))]
+use zip::{AesMode, CompressionMethod::Bzip2};
 
-#[allow(unused_imports)]
-use std::hash::Hasher;
+use crate::{Config, file_path_relative_to};
 
-#[allow(unused_imports)]
-use rs_sha256::{HasherContext, Sha256Hasher};
+pub fn write_zip_file(config: &Config, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), io::Error> {
+    let file = std::fs::File::create(source_file_path.as_path())?;
+    let mut zip = zip::ZipWriter::new(file);
 
-// aes https://docs.rs/aes-gcm/latest/aes_gcm/
-// sha https://lib.rs/crates/rs_sha256
+    let target_file_permissions = fs::metadata(target_file_path).unwrap().permissions();
 
-#[allow(unused)]
-fn encrypt(key_str: &[u8], plaintext: &str) -> Vec<u8> {
-    let key = Key::<Aes256Gcm>::try_from(key_str).unwrap();
-    let nonce = Nonce::generate();
+    let shell_env = "SHELL";
+    let shell_env_value = if envmnt::exists(shell_env) {
+        Some(envmnt::get_any(&vec![shell_env], ""))
+    } else {
+        None
+    };
 
-    let cipher = Aes256Gcm::new(&key);
+    debug!("get password command is set to {:?}", config.obtain_password_shell_command);
+    debug!("shell {:?}", shell_env_value);
 
-    let ciphered_data = cipher.encrypt(&nonce, plaintext.as_bytes())
-        .expect("failed to encrypt");
+    let password = if let Some(get_password_command) = config.obtain_password_shell_command.clone() &&
+            !get_password_command.is_empty() &&
+            let Some(shell) = shell_env_value {
+        debug!("launching get password programm");
 
-    // combining nonce and encrypted data together
-    // for storage purpose
-    let mut encrypted_data: Vec<u8> = nonce.to_vec();
-    encrypted_data.extend_from_slice(&ciphered_data);
+        // FIXME looks very unsecure
+        let child = Command::new(shell)
+            .args(["-c", get_password_command.as_str()])
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
 
-    encrypted_data
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Error::other(format!("Error (return code {}): {}", output.status.code().unwrap_or(-1), stderr)));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.to_string()
+    } else {
+        debug!("using default procedure to get password");
+        default_read_password()
+    };
+
+    let target_dir_path = PathBuf::from(&config.target_dir);
+    let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
+
+    zip.start_file(
+        inner_name.to_str().unwrap(),
+        SimpleFileOptions::default()
+            .compression_method(Bzip2)
+            .with_aes_encryption(AesMode::Aes256, &password)
+            .unix_permissions(target_file_permissions.mode()),
+    ).unwrap();
+
+    let file_content = fs::read_to_string(target_file_path).unwrap();
+    zip.write_all(file_content.as_bytes()).unwrap();
+    zip.finish().unwrap();
+
+    Ok(())
 }
 
-#[allow(unused)]
-fn decrypt(key_str: &[u8], encrypted_data: &Vec<u8>) -> String {
-    let key = Key::<Aes256Gcm>::try_from(key_str).unwrap();
+// TODO make encrypting function for directory
 
-    let (nonce_arr, ciphered_data) = encrypted_data.split_at(12);
-    let nonce = Nonce::try_from(nonce_arr).unwrap();
+fn default_read_password() -> String {
+    let config = rpassword::ConfigBuilder::new()
+         .output_discard()
+         .password_feedback_mask('*')
+         .build();
 
-    let cipher = Aes256Gcm::new(&key);
-
-    let plaintext = cipher.decrypt(&nonce, ciphered_data)
-        .expect("failed to decrypt data");
-
-    // TODO rewrite to crate the string from raw bytes
-    String::from_utf8(plaintext)
-        .expect("failed to convert vector of bytes to string")
-}
-
-#[allow(unused)]
-fn calc_password_hash(password: &str) -> [u8; 32] {
-    let mut sha256hasher = Sha256Hasher::default();
-    sha256hasher.write(password.as_bytes());
-
-    let bytes_result = HasherContext::finish(&mut sha256hasher);
-    return bytes_result.into();
-}
-
-#[test]
-fn test_encryption() {
-    let plaintext = "backendengineer.io";
-    // let password = rpassword::read_password().unwrap();
-    // let password = rpassword::prompt_password("password: ").unwrap();
-    // let password = "Hello, encryptor! This password is really big and long";
-    let password = "Hello";
-
-    let key1 = calc_password_hash(&password);
-    let encrypted_data = encrypt(&key1, plaintext);
-
-    let key2 = calc_password_hash(&password);
-    let decrypted_data = decrypt(&key2, &encrypted_data);
-
-    println!("plain: {}", plaintext);
-    println!("encrypted.size = {}", encrypted_data.len());
-    println!("decry: {}", decrypted_data);
-
-    assert_eq!(plaintext, decrypted_data);
+    rpassword::read_password_with_config(config).unwrap()
 }

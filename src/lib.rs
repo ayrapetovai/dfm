@@ -1,4 +1,4 @@
-mod crypt;
+pub mod crypt;
 
 use std::collections::HashMap;
 use std::{fs, io};
@@ -18,10 +18,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use walkdir::{DirEntry, WalkDir};
 use once_cell::sync::Lazy;
+use lazy_static::lazy_static;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct StateObject {
-    // TODO immediately, create new cool names for "source" and "target"!!!
     pub source_directory: PathBuf,
     pub target_directory: PathBuf,
     pub syncs: HashMap<String, SystemTime>,
@@ -35,6 +35,11 @@ static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "config.toml";
 
 static IGNORE_FILE_NAME_IN_XDG_STATE : &str = "ignore_file";
 static IGNORE_FILE_NAME_IN_SOURCE_DIR: &str = "./.dfm_ignore_file";
+
+lazy_static! {
+    // file name must be relative to target directory
+    static ref BY_DEFAULT_FORCE_ENCRYPTION_FILES: Vec<Regex> = vec![Regex::from_str("\\.ssh").unwrap()];
+}
 
 impl StateObject {
     pub fn new(target_directory: PathBuf, source_directory: PathBuf) -> Self {
@@ -130,6 +135,9 @@ pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<
     let haystack = haystack.to_str().unwrap();
     if regex.matches(haystack).matched_any() {
         let target_ignore_patterns = regex.patterns();
+        // if regex.matches(haystack).matched_any() {
+        //     return Some(format!("{:?}", regex.patterns()));
+        // }
         for pattern in target_ignore_patterns {
             let regex = Regex::new(pattern).unwrap();
             if regex.is_match(haystack) {
@@ -188,6 +196,7 @@ pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<
     return fs::write(path_to_state_file, state_content);
 }
 
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ConfigFile {
     pub dot_prefix: Option<String>,
@@ -204,6 +213,10 @@ pub struct ConfigFile {
     // if true ignore files and directories in the target directory
     // that don't start with a dot, by default - false
     pub dotfiles_only: Option<bool>,
+
+    #[serde(with = "serde_regex")]
+    pub force_encryption_for: Vec<Regex>,
+    pub obtain_password_shell_command: Option<String>,
 }
 
 impl ConfigFile {
@@ -217,7 +230,9 @@ impl ConfigFile {
                 when: h.when,
                 execute: h.execute
             }).collect()),
-            dotfiles_only: Some(config.dotfiles_only)
+            dotfiles_only: Some(config.dotfiles_only),
+            force_encryption_for: config.force_encryption_for.clone(),
+            obtain_password_shell_command: config.obtain_password_shell_command.clone(),
         }
     }
 }
@@ -251,6 +266,9 @@ pub struct Config {
 
     // ignore `.dfm_root`, `.dfm_source_ignored`, `.dfm_target_ignored` by default
     // default_ignored: Vec<Regex>,
+    pub force_encryption_for: Vec<Regex>,
+    pub obtain_password_shell_command: Option<String>,
+
 }
 
 #[derive(Debug, Clone)]
@@ -330,6 +348,8 @@ pub fn create_default_config() -> Config {
         manage_symlinks: true,
         hooks: vec![],
         dotfiles_only: false,
+        force_encryption_for: BY_DEFAULT_FORCE_ENCRYPTION_FILES.to_vec(),
+        obtain_password_shell_command: Some("".to_owned()), // TODO need to make serde to add empy fiels to file
     }
 }
 
@@ -384,7 +404,12 @@ pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>, state_ob
                 dotfiles_only: match custom.dotfiles_only {
                     Some(v) => v,
                     None => default.dotfiles_only.to_owned()
-                }
+                },
+                force_encryption_for: default.force_encryption_for.clone(),
+                obtain_password_shell_command: match &custom.obtain_password_shell_command {
+                    Some(s) => Some(s.clone()),
+                    None => default.obtain_password_shell_command.clone()
+                },
             },
         None => default.clone()
     }

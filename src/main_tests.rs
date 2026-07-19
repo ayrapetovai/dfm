@@ -86,6 +86,7 @@ mod main_tests {
             manage_symlinks: true,
             hooks: vec![],
             dotfiles_only: false,
+            force_encryption_for: vec![],
         }
     }
 
@@ -101,6 +102,7 @@ mod main_tests {
                 allow_foreign: false,
                 force: false,
                 symlink: false,
+                encrypt: false,
                 dry_run: false,
             },
             dry_run: false,

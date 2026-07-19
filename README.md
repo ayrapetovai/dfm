@@ -42,9 +42,14 @@ While doing `init`, `add` or `pull` dfm use config specified command to obtain a
 The passphrase is used to encrypt/decrypt files.
 For this config file must have set a property - cli command that will provide the passphrase.
 That is why the `init` must pull the config file from the source directory to have the passphrase being ready for
-decryption and encryption. By default, the command is `read -s; echo $REPLY` (no variable expansion).
+decryption and encryption. By default, the command is `read -s; echo -n $REPLY` (no variable expansion).
 The command is run by `$SHELL -c '{}'` (no variable expansion), this also must be configurable.
 Subcommands warns if sensible files are added without encryption: .ssh, ...
+Decrypt manualy by command:
+```shell
+# will ask for password
+7z x filename
+```
 
 ### Backups
 `Target files` and `source files` can be copied to the `~/.local/state/dfm/**` and gzipped before being

@@ -110,8 +110,13 @@ enum Command {
         force: bool,
 
         /// Move file to the source directory, create a symlink on place of it.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
+        #[arg(long, short = 's', num_args = 0, default_value_t = false)]
         symlink: bool,
+
+        /// Copy encrypted form of file to the source directory.
+        /// Replace existing unencrypted source file if any exists.
+        #[arg(long, short = 'e', num_args = 0, default_value_t = false)]
+        encrypt: bool,
 
         /// Run only checks, no changes will be made to filesystem.
         #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
@@ -470,15 +475,20 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
         allow_foreign: foreign,
         force,
         symlink,
+        encrypt,
         dry_run,
-        ..
     } = &args.command else {
         return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `add`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };
 
-    debug!("add paths {:?}, merge {}, foreign {}, force {}, symlink {}", paths, merge, foreign, force, symlink);
+    debug!("add paths {:?}, merge {}, foreign {}, force {}, symlink {}, encrypt {}", paths, merge, foreign, force, symlink, encrypt);
+
+    if *symlink && *encrypt {
+        error!("Cannot encrypt source for symlink target");
+        return Err(Error::other("wrong arguments"));
+    }
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&config)?;
 
@@ -507,6 +517,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
     #[derive(Debug)]
     enum AddTask {
         Copy(PathBuf, PathBuf),
+        CopyEncyptedFile(PathBuf, PathBuf),
         CreateSymlinkFilePointer(PathBuf, String),
     }
 
@@ -515,12 +526,20 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
     debug!("::check state procedure begins");
 
     let mut conflict_detected = false;
+    let mut error_messages = vec![];
 
     for target_path in traversed_paths.iter() {
         debug!("checking {:?}", target_path);
 
         let target_path = if target_path.is_symlink() {
             debug!("target {:?} is a symlink", target_path);
+
+            if *encrypt {
+                error!("Cannot encrypt source for symlink target");
+                error_messages.push(format!("Target {:?} is a symlink, encritpion is impossible", target_path));
+                continue; // error
+            }
+
             let current_dir = env::current_dir()?;
 
             let target_symlink_abs_path_raw = PathBuf::from_iter(vec![current_dir, target_path.clone()]);
@@ -572,6 +591,8 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
             target_path.clone()
         };
 
+        // target is not a symlink
+
         let target_abs_path = fs::canonicalize(&target_path)?;
 
         if target_abs_path.starts_with(&source_dir_abs_path) {
@@ -589,7 +610,33 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
             continue;
         }
 
-        let source_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+        let to_be_encrypted_regex_set = RegexSet::new(config.force_encryption_for.iter().map(|r| r.as_str().to_owned())).unwrap();
+        let encrypt = if let Some(pattern) = check_path_matches_regex(&to_be_encrypted_regex_set, &target_abs_path) {
+            debug!("target {:?} is forced to be encrypted by regex /{}/ from config file", target_abs_path, pattern);
+            true
+        } else {
+            *encrypt
+        };
+
+        let encrypted_source_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(&config.encrypted_postfix));
+        let regular_source_abs_path = filepath_in_source_dir(&config.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+
+        let (source_is_encrypted, source_abs_path) = if encrypted_source_abs_path.exists() || encrypt {
+            if regular_source_abs_path.exists() {
+                warn!("target must be encrypted but unencrypted source is present {:?}", source_dir_abs_path);
+                // FIXME check if source is modified
+                // if not modified then remove it, and create and encrypted copy of target instead of it
+                // if only source modified then ???
+                // if both modified then ???
+            }
+            (true, encrypted_source_abs_path)
+        } else {
+            (false, regular_source_abs_path)
+        };
+
+        // FXIME analyse is target is directory, then we must create a zip archive for directory, not for file.
+
+        debug!("analysing source file {:?}", source_abs_path);
 
         // check if a conflict could take a place
         if source_abs_path.exists() {
@@ -619,7 +666,7 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
                 },
                 CompareByTimestamp::NonModified => {
                     println!("neither target nor source were modified");
-                    conflict_detected = true;
+                    // conflict_detected = true;
                     // TODO check if file content is not different
                     if !force {
                         continue;
@@ -642,7 +689,18 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
             info!("source file {:?} does not exist", source_abs_path);
         }
 
-        tasks.push(AddTask::Copy(target_abs_path, source_abs_path));
+        if encrypt || source_is_encrypted {
+            tasks.push(AddTask::CopyEncyptedFile(target_abs_path, source_abs_path));
+        } else {
+            tasks.push(AddTask::Copy(target_abs_path, source_abs_path));
+        }
+    }
+
+    if !error_messages.is_empty() && !force {
+        for error_message in error_messages {
+            error!("{}", error_message);
+        }
+        return Err(Error::other("error ocured"));
     }
 
     if dry_run {
@@ -700,6 +758,18 @@ fn add_command(config: &Config, args: &Args, state: &mut StateObject) -> Result<
 
                     trace!("final state:\n target: mtime={:?}\n source: sync={:?},\n         mtime={:?}",
                          target_file_modified, sync_creation, source_file_modified);
+                }
+            },
+            AddTask::CopyEncyptedFile(target_file, source_file) => {
+                info!("copy encrypted target {:?} to source {:?}", target_file, source_file);
+                if dry_run {
+                    continue;
+                }
+
+                use dfm::crypt::write_zip_file;
+                match write_zip_file(config, &target_file, &source_file) {
+                    Ok(_) => continue,
+                    Err(e) => return Err(e),
                 }
             },
             AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {
@@ -823,6 +893,8 @@ fn pull_command(config: &Config, args: &Args, state: &mut StateObject) -> Result
             info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
             continue; // ok
         }
+
+        // TODO handle encypted files and directories
 
         if target_abs_path.exists() {
             if target_abs_path.is_symlink() {
