@@ -12,6 +12,10 @@ use zip::{AesMode, CompressionMethod::Bzip2};
 use crate::{Settings, file_path_relative_to};
 
 pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), DfmError> {
+    // Ensure the parent directory exists (important when source path has subdirectories)
+    if let Some(parent) = source_file_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let file = std::fs::File::create(source_file_path.as_path())?;
     let mut zip = zip::ZipWriter::new(file);
 
@@ -71,8 +75,6 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
 
     Ok(())
 }
-
-// TODO make encrypting function for directory
 
 fn default_read_password() -> Result<String, DfmError> {
     let config = rpassword::ConfigBuilder::new()

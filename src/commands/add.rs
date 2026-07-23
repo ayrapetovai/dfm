@@ -178,7 +178,8 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             (false, regular_source_abs_path)
         };
 
-        // FXIME analyse is target is directory, then we must create a zip archive for directory, not for file.
+        // NOTE: directories are already handled by list_directory — it traverses and
+        // returns individual files, which are then encrypted one-by-one.
 
         debug!("analysing source file {:?}", source_abs_path);
 
