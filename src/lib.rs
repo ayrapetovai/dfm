@@ -52,7 +52,7 @@ impl StateObject {
     }
 }
 
-static XDG : Lazy<Xdg> = Lazy::new(|| Xdg::new().unwrap());
+static XDG : Lazy<Xdg> = Lazy::new(|| Xdg::new().expect("XDG directories must be available"));
 
 pub fn calc_local_ignore_file() -> Result<PathBuf, Error> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
@@ -65,29 +65,28 @@ pub fn calc_local_ignore_file() -> Result<PathBuf, Error> {
     };
 }
 
-pub fn open_or_create_target_ignore_file() -> File {
+pub fn open_or_create_target_ignore_file() -> Result<File, Error> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
-    return match XDG.state_file(&state_file_name) {
-        Ok(p) => OpenOptions::new()
-            .write(true)
-            .append(true)
-            .create(true)
-            .open(&p)
-            .unwrap(),
+    let p = match XDG.state_file(&state_file_name) {
+        Ok(p) => p,
         Err(e) => {
-            panic!("failed to find local ignore file: {}", e);
+            error!("failed to find local ignore file: {}", e);
+            return Err(Error::other(e));
         }
     };
-}
-
-// TODO return Result<File, Error> and check the error at the caller side
-pub fn open_or_create_file(path_to_file: &PathBuf) -> File {
     OpenOptions::new()
         .write(true)
         .append(true)
         .create(true)
-        .open(&path_to_file)
-        .unwrap()
+        .open(&p)
+}
+
+pub fn open_or_create_file(path_to_file: &PathBuf) -> Result<File, Error> {
+    OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(path_to_file)
 }
 
 // TODO refactor, make less code
@@ -136,9 +135,6 @@ pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<
     let haystack = haystack.to_str().unwrap();
     if regex.matches(haystack).matched_any() {
         let target_ignore_patterns = regex.patterns();
-        // if regex.matches(haystack).matched_any() {
-        //     return Some(format!("{:?}", regex.patterns()));
-        // }
         for pattern in target_ignore_patterns {
             let regex = Regex::new(pattern).unwrap();
             if regex.is_match(haystack) {
@@ -197,9 +193,9 @@ pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<
     return fs::write(path_to_state_file, state_content);
 }
 
-
+/// Config read from the TOML file on disk (all fields optional).
 #[derive(Serialize, Deserialize, Clone)]
-pub struct ConfigFile {
+pub struct Config {
     pub dot_prefix: Option<String>,
     pub symlink_postfix: Option<String>,
     pub encrypted_postfix: Option<String>,
@@ -220,20 +216,20 @@ pub struct ConfigFile {
     pub obtain_password_shell_command: Option<String>,
 }
 
-impl ConfigFile {
-    pub fn from_config(config: &Config) -> Self {
-        ConfigFile {
-            dot_prefix: Some(config.dot_prefix.clone()),
-            symlink_postfix: Some(config.symlink_postfix.clone()),
-            encrypted_postfix: Some(config.encrypted_postfix.clone()),
-            manage_symlinks: Some(config.manage_symlinks),
-            hooks: Some(config.hooks.clone().into_iter().map(|h| HookFile {
+impl Config {
+    pub fn from_settings(settings: &Settings) -> Self {
+        Config {
+            dot_prefix: Some(settings.dot_prefix.clone()),
+            symlink_postfix: Some(settings.symlink_postfix.clone()),
+            encrypted_postfix: Some(settings.encrypted_postfix.clone()),
+            manage_symlinks: Some(settings.manage_symlinks),
+            hooks: Some(settings.hooks.clone().into_iter().map(|h| HookFile {
                 when: h.when,
                 execute: h.execute
             }).collect()),
-            dotfiles_only: Some(config.dotfiles_only),
-            force_encryption_for: config.force_encryption_for.clone(),
-            obtain_password_shell_command: config.obtain_password_shell_command.clone(),
+            dotfiles_only: Some(settings.dotfiles_only),
+            force_encryption_for: settings.force_encryption_for.clone(),
+            obtain_password_shell_command: settings.obtain_password_shell_command.clone(),
         }
     }
 }
@@ -244,9 +240,9 @@ pub struct HookFile {
     pub execute: String,
 }
 
-// TODO rename to settings, rename ConfigFile to Config
+/// Runtime settings after merging defaults + config file + state.
 #[derive(Debug, Clone)]
-pub struct Config {
+pub struct Settings {
     pub config_file_found: bool,
     pub source_dir: String,
     pub target_dir: String,
@@ -278,7 +274,7 @@ pub struct Hook {
     pub execute: String,
 }
 
-pub fn write_config(path_to_config_file: &PathBuf, config: &ConfigFile) -> Result<(), Error> {
+pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<(), Error> {
     let content = match toml::to_string_pretty(config) {
         Ok(c) => c,
         Err(e) => {
@@ -338,8 +334,8 @@ pub fn calc_config_file_path() -> Result<PathBuf, Error>{
     return Ok(path_to_config_file);
 }
 
-pub fn create_default_config() -> Config {
-    Config {
+pub fn create_default_settings() -> Settings {
+    Settings {
         config_file_found: false,
         source_dir: "".to_owned(),
         target_dir: "$HOME".to_owned(), // TODO read HOME depending on operating system
@@ -354,7 +350,7 @@ pub fn create_default_config() -> Config {
     }
 }
 
-pub fn read_config(path_to_config_file: &PathBuf) -> Result<ConfigFile, Error> {
+pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, Error> {
     trace!("config file path {:?}", path_to_config_file);
 
     let config_file_content = match fs::read_to_string(path_to_config_file) {
@@ -372,10 +368,10 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Result<ConfigFile, Error> {
     };
 }
 
-pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>, state_object: Option<&StateObject>) -> Config {
+pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_object: Option<&StateObject>) -> Settings {
     match custom_opt {
         Some(custom) =>
-            Config {
+            Settings {
                 config_file_found: true,
                 source_dir: match state_object {
                     Some(state) => state.source_directory.to_str().unwrap().to_string(),
@@ -406,7 +402,11 @@ pub fn merge_configs(default: &Config, custom_opt: &Option<ConfigFile>, state_ob
                     Some(v) => v,
                     None => default.dotfiles_only.to_owned()
                 },
-                force_encryption_for: default.force_encryption_for.clone(),
+                force_encryption_for: if !custom.force_encryption_for.is_empty() {
+                    custom.force_encryption_for.clone()
+                } else {
+                    default.force_encryption_for.clone()
+                },
                 obtain_password_shell_command: match &custom.obtain_password_shell_command {
                     Some(s) => Some(s.clone()),
                     None => default.obtain_password_shell_command.clone()
@@ -512,26 +512,26 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
     return PathBuf::from(ret);
 }
 
-pub fn calc_working_dir_paths(config: &Config) -> Result<(PathBuf, PathBuf), Error> {
-    if config.source_dir.trim().is_empty() {
+pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf), Error> {
+    if settings.source_dir.trim().is_empty() {
         error!("failed to read source directory path, does config file present on path {}?", "<todo>");
         return Err(Error::other("failed to read source path from the config file: empty string"));
     }
 
-    trace!("using target directory from config (original) {:?}", config.target_dir);
+    trace!("using target directory from settings (original) {:?}", settings.target_dir);
 
-    let target_dir_path_expanded = envmnt::expand(&config.target_dir, None);
-    trace!("using target directory from config (expanded) {}", target_dir_path_expanded);
+    let target_dir_path_expanded = envmnt::expand(&settings.target_dir, None);
+    trace!("using target directory from settings (expanded) {}", target_dir_path_expanded);
 
     let target_dir_abs_path = match PathBuf::from_str(target_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
         Err(e) => return Err(Error::other(e))
     };
 
-    trace!("using source directory from config (original) {:?}", config.source_dir);
+    trace!("using source directory from settings (original) {:?}", settings.source_dir);
 
-    let source_dir_path_expanded = envmnt::expand(&config.source_dir, None);
-    trace!("using source directory from config (expanded) {}", source_dir_path_expanded);
+    let source_dir_path_expanded = envmnt::expand(&settings.source_dir, None);
+    trace!("using source directory from settings (expanded) {}", source_dir_path_expanded);
 
     let source_dir_abs_path = match PathBuf::from_str(source_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
@@ -679,8 +679,8 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
 }
 
 pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str) -> Result<Option<String>, Error> {
-    let config_file_content = fs::read_to_string(path_to_config_file).unwrap();
-    let config: Table = toml::from_str(&config_file_content).unwrap();
+    let config_file_content = fs::read_to_string(path_to_config_file)?;
+    let config: Table = toml::from_str(&config_file_content).map_err(|e| Error::other(e))?;
     return match config.get(param_name) {
         Some(v) => {
             Ok(Some(v.to_string()))
@@ -690,17 +690,17 @@ pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str
 }
 
 pub fn write_property_to_config(path_to_config_file: &PathBuf, param_name: &str, param_new_value: &str) -> Result<(), Error> {
-    let config_file_content = fs::read_to_string(path_to_config_file).unwrap();
-    let mut config: Table = toml::from_str(&config_file_content).unwrap();
+    let config_file_content = fs::read_to_string(path_to_config_file)?;
+    let mut config: Table = toml::from_str(&config_file_content).map_err(|e| Error::other(e))?;
     config.insert(param_name.to_owned(), Value::String(param_new_value.to_owned()));
-    let new_content = toml::to_string_pretty(&config).unwrap();
+    let new_content = toml::to_string_pretty(&config).map_err(|e| Error::other(e))?;
     fs::write(path_to_config_file, new_content)?;
     Ok(())
 }
 
 pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<String>, Error> {
-    let config_file_content = fs::read_to_string(path_to_config_file).unwrap();
-    let config: Table = toml::from_str(&config_file_content).unwrap();
+    let config_file_content = fs::read_to_string(path_to_config_file)?;
+    let config: Table = toml::from_str(&config_file_content).map_err(|e| Error::other(e))?;
     let mut params = vec![];
     for (_, (name, value)) in config.iter().enumerate() {
         params.push(format!("{} = {}", name, value));
