@@ -61,6 +61,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         Copy(PathBuf, PathBuf),
         CopyEncryptedFile(PathBuf, PathBuf),
         CreateSymlinkFilePointer(PathBuf, String),
+        CopyAndSymlink(PathBuf, PathBuf),
     }
 
     let mut tasks: Vec<AddTask> = Vec::new();
@@ -232,8 +233,13 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             info!("source file {:?} does not exist", source_abs_path);
         }
 
-        if encrypt || source_is_encrypted {
+        if *symlink && (encrypt || source_is_encrypted) {
+            error!("Cannot combine --symlink with encryption for {:?}", target_abs_path);
+            error_messages.push(format!("Target {:?} is encrypted but --symlink was requested", target_abs_path));
+        } else if encrypt || source_is_encrypted {
             tasks.push(AddTask::CopyEncryptedFile(target_abs_path, source_abs_path));
+        } else if *symlink {
+            tasks.push(AddTask::CopyAndSymlink(target_abs_path, source_abs_path));
         } else {
             tasks.push(AddTask::Copy(target_abs_path, source_abs_path));
         }
@@ -272,6 +278,25 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 }
 
                 sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path)?;
+            },
+            AddTask::CopyAndSymlink(target_file, source_file) => {
+                info!("copy target {:?} to source {:?} and replace target with symlink", target_file, source_file);
+                if dry_run {
+                    continue;
+                }
+
+                // 1. Copy file content to source
+                sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path)?;
+
+                // 2. Remove the original target file
+                fs::remove_file(&target_file)?;
+
+                // 3. Create a symlink at the target pointing to the source file
+                let target_parent = target_file.parent()
+                    .ok_or_else(|| DfmError::other("target file has no parent directory"))?
+                    .to_path_buf();
+                let link_target = file_path_relative_to(&source_file, &target_parent);
+                symlink::symlink_file(&link_target, &target_file)?;
             },
             AddTask::CopyEncryptedFile(target_file, source_file) => {
                 info!("copy encrypted target {:?} to source {:?}", target_file, source_file);
