@@ -1,19 +1,19 @@
 use std::fs;
-use std::io::{Error, ErrorKind, Write};
+use std::io::Write;
 use log::{debug, error, info};
 use regex::Regex;
 
 use dfm::*;
-use crate::{Args, Command};
+use crate::{Args, Command, DfmError};
 
-pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), Error> {
+pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     let Command::Ignore {
         paths,
         patterns,
         dry_run,
         ..
     } = &args.command else {
-        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `ignore`", args.command)));
+        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `ignore`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };
@@ -37,8 +37,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), Error> {
             } = list_directory(&vec![target_dir_abs_path.clone()], Some(&target_ignore_regex))?;
 
             if !error_messages.is_empty() {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
+                return Err(DfmError::InvalidData(
                     format!("failed to process some subdirectories or files in targets {:?}", error_messages)
                 ));
             }
@@ -93,7 +92,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), Error> {
         for pattern in patterns_args {
             if let Err(e) = Regex::new(pattern) {
                 error!("argument is invalid, {}", e);
-                return Err(Error::other(e));
+                return Err(DfmError::other(e));
             }
 
             debug!("adding regex /{}/", pattern);
@@ -126,7 +125,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), Error> {
             let escaped_path_str = regex::escape(ignore_path.to_str().unwrap());
             if let Err(e) = writeln!(target_ignore_file, "{}", escaped_path_str) {
                 error!("failed write path to file: {}", e);
-                return Err(e);
+                return Err(e.into());
             }
         }
     }
@@ -141,7 +140,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), Error> {
 
             if let Err(e) = writeln!(target_ignore_file, "{}", pattern) {
                 error!("failed write regex to file: {}", e);
-                return Err(e);
+                return Err(e.into());
             }
         }
     }
@@ -157,7 +156,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), Error> {
             let escaped_path_str = regex::escape(ignore_path.to_str().unwrap());
             if let Err(e) = writeln!(source_ignore_file, "{}", escaped_path_str) {
                 error!("failed write path to file: {}", e);
-                return Err(e);
+                return Err(e.into());
             }
         }
     }

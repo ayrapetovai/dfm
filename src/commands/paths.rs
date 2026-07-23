@@ -1,9 +1,9 @@
-use std::io::Error;
 use std::path::PathBuf;
 
 use dfm::*;
+use crate::DfmError;
 
-pub fn paths_command(settings: &Settings, path_to_config_file: &PathBuf, path_to_state_file: &PathBuf) -> Result<(), Error> {
+pub fn paths_command(settings: &Settings, path_to_config_file: &PathBuf, path_to_state_file: &PathBuf) -> Result<(), DfmError> {
     println!("config {:?}", path_to_config_file);
     println!("state  {:?}", path_to_state_file);
 

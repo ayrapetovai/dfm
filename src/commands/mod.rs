@@ -19,7 +19,7 @@ pub(crate) use pull::pull_command;
 pub(crate) use purge::purge_command;
 
 use std::fs;
-use std::io::Error;
+use crate::DfmError;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -41,7 +41,7 @@ pub(crate) fn sync_file_copy(
     source_file_in_source_dir: &PathBuf,
     state: &mut StateObject,
     source_dir_abs_path: &PathBuf,
-) -> Result<(), Error> {
+) -> Result<(), DfmError> {
     fs::create_dir_all(to.parent().unwrap())?;
     fs::copy(from, to)?;
 

@@ -1,6 +1,7 @@
 use std::{env, fs};
 use std::fs::File;
-use std::io::{Error, ErrorKind, Write};
+use std::io::Write;
+use crate::DfmError;
 use std::path::PathBuf;
 
 use log::{debug, error, info, warn};
@@ -10,7 +11,7 @@ use dfm::*;
 use crate::{Args, Command};
 use super::sync_file_copy;
 
-pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), Error> {
+pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
         paths,
         merge,
@@ -20,7 +21,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         encrypt,
         dry_run,
     } = &args.command else {
-        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `add`", args.command)));
+        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `add`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };
@@ -29,7 +30,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
     if *symlink && *encrypt {
         error!("Cannot encrypt source for symlink target");
-        return Err(Error::other("wrong arguments"));
+        return Err(DfmError::other("wrong arguments"));
     }
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
@@ -47,8 +48,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
     debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
+        return Err(DfmError::InvalidData(
             format!("failed to process some subdirectories or files in targets {:?}", error_messages)
         ));
     }
@@ -88,7 +88,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             let root = PathBuf::from("/");
             let mut target_symlink_abs_path = fs::canonicalize(target_symlink_abs_path_raw.parent().get_or_insert(&root))?;
             target_symlink_abs_path.push(target_symlink_abs_path_raw.file_name()
-                .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "path has no file name"))?);
+                .ok_or_else(|| DfmError::InvalidInput("path has no file name".into()))?);
             let target_symlink_abs_path = target_symlink_abs_path;
 
             if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_symlink_abs_path) {
@@ -243,7 +243,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         for error_message in error_messages {
             error!("{}", error_message);
         }
-        return Err(Error::other("error occurred"));
+        return Err(DfmError::other("error occurred"));
     }
 
     if dry_run {
@@ -252,7 +252,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
     if conflict_detected && !force {
         warn!("conflicts detected, no changes will be made");
-        return Err(Error::other("conflicts"))
+        return Err(DfmError::other("conflicts"))
     }
 
     if tasks.is_empty() {

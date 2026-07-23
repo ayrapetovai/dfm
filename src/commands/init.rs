@@ -1,20 +1,20 @@
 use std::{env, fs};
-use std::io::{Error, ErrorKind, Write};
+use std::io::Write;
 use std::path::PathBuf;
 
 use log::{debug, error, info, trace, warn};
 
 use dfm::*;
-use crate::{Args, Command};
+use crate::{Args, Command, DfmError};
 
-pub fn init_command(settings: &Settings, args: &Args) -> Result<(), Error> {
+pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     let Command::Init {
         path_to_source,
         path_to_target: path_to_target_opt,
         dry_run,
         ..
     } = &args.command else {
-        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `init`", args.command)));
+        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `init`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };
@@ -75,7 +75,7 @@ pub fn init_command(settings: &Settings, args: &Args) -> Result<(), Error> {
 
     let home_dir_path = match get_home_path() {
         Some(p) => p,
-        None => return Err(Error::new(ErrorKind::InvalidData, "failed to define home directory"))
+        None => return Err(DfmError::InvalidData("failed to define home directory".into()))
     };
 
     let target_abs_path = if let Some(path_to_target) = path_to_target_opt {
@@ -138,7 +138,7 @@ pub fn init_command(settings: &Settings, args: &Args) -> Result<(), Error> {
                 for ignore_file_record in ignore_file_records {
                     if let Err(e) = writeln!(source_ignore_file, "{}", regex::escape(ignore_file_record)) {
                         error!("failed write path to file: {}", e);
-                        return Err(e);
+                        return Err(e.into());
                     } else {
                         debug!("source ignore file: added record {}", ignore_file_record);
                     }

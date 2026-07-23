@@ -1,6 +1,7 @@
 use std::process::{Command, Stdio};
-use std::{fs, io};
-use std::io::{Error, Write};
+use std::fs;
+use std::io::Write;
+use crate::DfmError;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use log::debug;
@@ -10,7 +11,7 @@ use zip::{AesMode, CompressionMethod::Bzip2};
 
 use crate::{Settings, file_path_relative_to};
 
-pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), io::Error> {
+pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), DfmError> {
     let file = std::fs::File::create(source_file_path.as_path())?;
     let mut zip = zip::ZipWriter::new(file);
 
@@ -42,7 +43,7 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
         let output = child.wait_with_output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::other(format!("Error (return code {}): {}", output.status.code().unwrap_or(-1), stderr)));
+            return Err(DfmError::other(format!("Error (return code {}): {}", output.status.code().unwrap_or(-1), stderr)));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         stdout.to_string()
@@ -55,30 +56,30 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
     let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
 
     let inner_name_str = inner_name.to_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "non-UTF-8 path in zip entry"))?;
+        .ok_or_else(|| DfmError::InvalidData("non-UTF-8 path in zip entry".into()))?;
     zip.start_file(
         inner_name_str,
         SimpleFileOptions::default()
             .compression_method(Bzip2)
             .with_aes_encryption(AesMode::Aes256, &password)
             .unix_permissions(target_file_permissions.mode()),
-    ).map_err(|e| io::Error::other(e))?;
+    ).map_err(DfmError::other)?;
 
     let file_content = fs::read_to_string(target_file_path)?;
-    zip.write_all(file_content.as_bytes()).map_err(|e| io::Error::other(e))?;
-    zip.finish().map_err(|e| io::Error::other(e))?;
+    zip.write_all(file_content.as_bytes()).map_err(DfmError::other)?;
+    zip.finish().map_err(DfmError::other)?;
 
     Ok(())
 }
 
 // TODO make encrypting function for directory
 
-fn default_read_password() -> Result<String, io::Error> {
+fn default_read_password() -> Result<String, DfmError> {
     let config = rpassword::ConfigBuilder::new()
          .output_discard()
          .password_feedback_mask('*')
          .build();
 
     rpassword::read_password_with_config(config)
-        .map_err(|e| io::Error::other(format!("failed to read password: {}", e)))
+        .map_err(|e| DfmError::other(format!("failed to read password: {}", e)))
 }

@@ -3,7 +3,7 @@ pub mod crypt;
 use std::collections::HashMap;
 use std::{fs, io};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Error, ErrorKind};
+use std::io::{BufRead, BufReader};
 use std::ops::Add;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -16,10 +16,61 @@ use microxdg::Xdg;
 use regex::{Regex, RegexSet};
 use serde::Deserialize;
 use serde::Serialize;
+use thiserror::Error;
 use toml::{Table, Value};
 use walkdir::{DirEntry, WalkDir};
 use once_cell::sync::Lazy;
 use lazy_static::lazy_static;
+
+// ---------------------------------------------------------------------------
+// Error type
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Error)]
+pub enum DfmError {
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("Unsupported: {0}")]
+    Unsupported(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Invalid data: {0}")]
+    InvalidData(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("{0}")]
+    Other(String),
+}
+
+impl From<toml::ser::Error> for DfmError {
+    fn from(e: toml::ser::Error) -> Self {
+        DfmError::Other(e.to_string())
+    }
+}
+
+impl From<toml::de::Error> for DfmError {
+    fn from(e: toml::de::Error) -> Self {
+        DfmError::Other(e.to_string())
+    }
+}
+
+impl DfmError {
+    /// Shorthand for creating an `Other` variant.
+    pub fn other(msg: impl std::fmt::Display) -> Self {
+        DfmError::Other(msg.to_string())
+    }
+}
+
+impl From<regex::Error> for DfmError {
+    fn from(e: regex::Error) -> Self {
+        DfmError::Other(e.to_string())
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct StateObject {
@@ -54,48 +105,48 @@ impl StateObject {
 
 static XDG : Lazy<Xdg> = Lazy::new(|| Xdg::new().expect("XDG directories must be available"));
 
-pub fn calc_local_ignore_file() -> Result<PathBuf, Error> {
+pub fn calc_local_ignore_file() -> Result<PathBuf, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
      return match XDG.state_file(&state_file_name) {
         Ok(p) => Ok(p),
         Err(e) => {
             error!("failed to find local ignore file: {}", e);
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         }
     };
 }
 
-pub fn open_or_create_target_ignore_file() -> Result<File, Error> {
+pub fn open_or_create_target_ignore_file() -> Result<File, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
     let p = match XDG.state_file(&state_file_name) {
         Ok(p) => p,
         Err(e) => {
             error!("failed to find local ignore file: {}", e);
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         }
     };
-    OpenOptions::new()
+    Ok(OpenOptions::new()
         .write(true)
         .append(true)
         .create(true)
-        .open(&p)
+        .open(&p)?)
 }
 
-pub fn open_or_create_file(path_to_file: &PathBuf) -> Result<File, Error> {
-    OpenOptions::new()
+pub fn open_or_create_file(path_to_file: &PathBuf) -> Result<File, DfmError> {
+    Ok(OpenOptions::new()
         .write(true)
         .append(true)
         .create(true)
-        .open(path_to_file)
+        .open(path_to_file)?)
 }
 
 // TODO refactor, make less code
-pub fn calc_source_ignore_file(source_dir_abs_path: &PathBuf) -> Result<PathBuf, Error> {
+pub fn calc_source_ignore_file(source_dir_abs_path: &PathBuf) -> Result<PathBuf, DfmError> {
     let source_ignore_file_path = PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), &IGNORE_FILE_NAME_IN_SOURCE_DIR]);
     Ok(source_ignore_file_path)
 }
 
-pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, Error> {
+pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmError> {
     if !ignore_file_path.exists() {
         return Ok(RegexSet::empty());
     }
@@ -126,7 +177,7 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, Error>
     } else {
         match RegexSet::new(patterns) {
             Ok(r) => Ok(r),
-            Err(e) => Err(Error::other(e))
+            Err(e) => Err(DfmError::other(e))
         }
     }
 }
@@ -145,52 +196,47 @@ pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<
     return None;
 }
 
-pub fn calc_state_directory_path() -> Result<PathBuf, Error> {
+pub fn calc_state_directory_path() -> Result<PathBuf, DfmError> {
     match XDG.state() {
         Ok(path_to_config) => {
             Ok(PathBuf::from_iter([&path_to_config, &PathBuf::from(STATE_DIRECTORY_NAME_IN_XDG_STATE)]))
         },
-        Err(e) => Err(Error::other(e))
+        Err(e) => Err(DfmError::other(e))
     }
 }
 
-pub fn calc_state_file_path() -> Result<PathBuf, Error> {
+pub fn calc_state_file_path() -> Result<PathBuf, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, STATE_FILE_NAME_IN_XDG_STATE);
     return match XDG.state_file(&state_file_name) {
         Ok(p) => Ok(p),
         Err(e) => {
             error!("failed to find state file: {}", e);
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         }
     };
 }
 
-pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, Error> {
+pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, DfmError> {
     trace!("state file path {:?}", path_to_state_file);
 
     let state_file_content = match fs::read_to_string(path_to_state_file) {
         Ok(s) => s,
         Err(e) => {
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         }
     };
 
     return match toml::from_str(&state_file_content) {
         Err(e) => {
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         },
         Ok(s) => Ok(s)
     };
 }
 
-pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<(), Error> {
-    let state_content = match toml::to_string_pretty(state) {
-        Ok(c) => c,
-        Err(e) => {
-            return Err(Error::new(ErrorKind::InvalidData, e));
-        }
-    };
-    return fs::write(path_to_state_file, state_content);
+pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<(), DfmError> {
+    let state_content = toml::to_string_pretty(state)?;
+    Ok(fs::write(path_to_state_file, state_content)?)
 }
 
 /// Config read from the TOML file on disk (all fields optional).
@@ -274,11 +320,11 @@ pub struct Hook {
     pub execute: String,
 }
 
-pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<(), Error> {
+pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<(), DfmError> {
     let content = match toml::to_string_pretty(config) {
         Ok(c) => c,
         Err(e) => {
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         }
     };
     if let Some(config_parent_directory) = path_to_config_file.parent() {
@@ -286,7 +332,7 @@ pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<()
             fs::create_dir_all(config_parent_directory)?;
         }
     }
-    fs::write(path_to_config_file, content)
+    Ok(fs::write(path_to_config_file, content)?)
 }
 
 // TODO read HOME variable depending on the operation system
@@ -306,10 +352,10 @@ pub fn get_home_path() -> Option<PathBuf> {
     }
 }
 
-pub fn calc_config_file_path() -> Result<PathBuf, Error>{
+pub fn calc_config_file_path() -> Result<PathBuf, DfmError>{
     let home_path = match get_home_path() {
         Some(p) => p,
-        None => return Err(Error::new(ErrorKind::Unsupported, "Environment variable $HOME is not set"))
+        None => return Err(DfmError::Unsupported("Environment variable $HOME is not set".into()))
     };
     let config_in_home = PathBuf::from_iter(vec![home_path, PathBuf::from(CONFIG_FILE_NAME_IN_HOME)]);
 
@@ -350,19 +396,19 @@ pub fn create_default_settings() -> Settings {
     }
 }
 
-pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, Error> {
+pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, DfmError> {
     trace!("config file path {:?}", path_to_config_file);
 
     let config_file_content = match fs::read_to_string(path_to_config_file) {
         Ok(s) => s,
         Err(e) => {
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         }
     };
 
     return match toml::from_str(&config_file_content) {
         Err(e) => {
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         },
         Ok(c) => Ok(c)
     };
@@ -512,10 +558,10 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
     return PathBuf::from(ret);
 }
 
-pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf), Error> {
+pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf), DfmError> {
     if settings.source_dir.trim().is_empty() {
         error!("failed to read source directory path, does config file present on path {}?", "<todo>");
-        return Err(Error::other("failed to read source path from the config file: empty string"));
+        return Err(DfmError::other("failed to read source path from the config file: empty string"));
     }
 
     trace!("using target directory from settings (original) {:?}", settings.target_dir);
@@ -525,7 +571,7 @@ pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf),
 
     let target_dir_abs_path = match PathBuf::from_str(target_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
-        Err(e) => return Err(Error::other(e))
+        Err(e) => return Err(DfmError::other(e))
     };
 
     trace!("using source directory from settings (original) {:?}", settings.source_dir);
@@ -537,7 +583,7 @@ pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf),
         Ok(p) => remove_dots_from_path(&p),
         Err(e) => {
             error!("source directory path is bad {}", e);
-            return Err(Error::other(e));
+            return Err(DfmError::other(e));
         }
     };
 
@@ -550,7 +596,7 @@ pub struct ListDirectories {
     pub errors: Vec<String>,
 }
 
-pub fn list_directory(paths: &[PathBuf], filter_regexp_opt: Option<&RegexSet>) -> Result<ListDirectories, Error> {
+pub fn list_directory(paths: &[PathBuf], filter_regexp_opt: Option<&RegexSet>) -> Result<ListDirectories, DfmError> {
     trace!("list directories with filter {:?}", filter_regexp_opt);
 
     let ignore_filter =
@@ -614,12 +660,12 @@ pub enum CompareByTimestamp {
     NeverSynchronized,
 }
 
-pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &PathBuf, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, Error> {
+pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &PathBuf, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, DfmError> {
     let target_file_meta = match target_abs_path.metadata() {
         Ok(m) => m,
         Err(e) => {
             error!("failed to read target {:?} metadata, {}", target_abs_path, e);
-            return Err(e);
+            return Err(DfmError::Io(e));
         }
     };
 
@@ -627,7 +673,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
         Ok(m) => m,
         Err(e) => {
             error!("failed to read source {:?} metadata, {}", source_abs_path, e);
-            return Err(e);
+            return Err(DfmError::Io(e));
         }
     };
 
@@ -675,12 +721,12 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
         return Ok(CompareByTimestamp::TargetModified);
     }
 
-    Err(Error::other("the timestamps of the files under comparison are in inconsistent state"))
+    Err(DfmError::other("the timestamps of the files under comparison are in inconsistent state"))
 }
 
-pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str) -> Result<Option<String>, Error> {
+pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str) -> Result<Option<String>, DfmError> {
     let config_file_content = fs::read_to_string(path_to_config_file)?;
-    let config: Table = toml::from_str(&config_file_content).map_err(|e| Error::other(e))?;
+    let config: Table = toml::from_str(&config_file_content)?;
     return match config.get(param_name) {
         Some(v) => {
             Ok(Some(v.to_string()))
@@ -689,18 +735,18 @@ pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str
     };
 }
 
-pub fn write_property_to_config(path_to_config_file: &PathBuf, param_name: &str, param_new_value: &str) -> Result<(), Error> {
+pub fn write_property_to_config(path_to_config_file: &PathBuf, param_name: &str, param_new_value: &str) -> Result<(), DfmError> {
     let config_file_content = fs::read_to_string(path_to_config_file)?;
-    let mut config: Table = toml::from_str(&config_file_content).map_err(|e| Error::other(e))?;
+    let mut config: Table = toml::from_str(&config_file_content)?;
     config.insert(param_name.to_owned(), Value::String(param_new_value.to_owned()));
-    let new_content = toml::to_string_pretty(&config).map_err(|e| Error::other(e))?;
+    let new_content = toml::to_string_pretty(&config)?;
     fs::write(path_to_config_file, new_content)?;
     Ok(())
 }
 
-pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<String>, Error> {
+pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<String>, DfmError> {
     let config_file_content = fs::read_to_string(path_to_config_file)?;
-    let config: Table = toml::from_str(&config_file_content).map_err(|e| Error::other(e))?;
+    let config: Table = toml::from_str(&config_file_content)?;
     let mut params = vec![];
     for (_, (name, value)) in config.iter().enumerate() {
         params.push(format!("{} = {}", name, value));

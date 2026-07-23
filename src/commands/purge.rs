@@ -1,20 +1,19 @@
 use std::fs;
-use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 
 use log::{debug, info};
 
 use dfm::*;
-use crate::{Args, Command};
+use crate::{Args, Command, DfmError};
 
-pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &PathBuf) -> Result<(), Error> {
+pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &PathBuf) -> Result<(), DfmError> {
     let Command::Purge {
         dry_run,
         keep_source,
         keep_config_file,
         force
     } = &args.command else {
-        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `purge`", args.command)));
+        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `purge`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };

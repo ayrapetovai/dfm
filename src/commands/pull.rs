@@ -1,15 +1,14 @@
 use std::fs;
-use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 
 use log::{debug, error, info, warn};
 use regex::RegexSet;
 
 use dfm::*;
-use crate::{Args, Command};
+use crate::{Args, Command, DfmError};
 use super::sync_file_copy;
 
-pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), Error> {
+pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Pull {
         paths,
         merge,
@@ -17,7 +16,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
         symlink: target_must_be_symlink,
         dry_run,
     } = &args.command else {
-        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `pull`", args.command)));
+        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `pull`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };
@@ -40,8 +39,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
     debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
+        return Err(DfmError::InvalidData(
             format!("failed to process some subdirectories or files in source {:?}", error_messages)
         ));
     }
@@ -173,7 +171,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                     // TODO add merge
                     warn!("both source and target was modified, merge needed");
                     if !force {
-                        return Err(Error::new(ErrorKind::InvalidData, "target and source have conflicting modifications"));
+                        return Err(DfmError::InvalidData("target and source have conflicting modifications".into()));
                     }
                 },
                 CompareByTimestamp::NonModified => {
@@ -183,7 +181,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                 CompareByTimestamp::TargetModified => {
                     warn!("target was modified, pulling source will overwrite those changes");
                     if !force {
-                        return Err(Error::new(ErrorKind::InvalidData, "target was modified"));
+                        return Err(DfmError::InvalidData("target was modified".into()));
                     }
                 },
                 CompareByTimestamp::SourceModified => {
@@ -229,7 +227,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
         for error_string in error_list {
             warn!("error: {:?}", error_string);
         }
-        return Err(Error::other("improper operation"));
+        return Err(DfmError::other("improper operation"));
     }
 
     if tasks.is_empty() {
@@ -261,13 +259,13 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
                 if let Err(e) = symlink::remove_symlink_file(target_symlink_file_path) {
                     match e.kind() {
-                        ErrorKind::NotFound => {
+                        std::io::ErrorKind::NotFound => {
                             info!("target symlink {:?} does not exist", target_symlink_file_path);
                             // is ok
                         },
                         _ => {
                             error!("failed to remove symlink {:?}: {}", target_symlink_file_path, e);
-                            return Err(e);
+                            return Err(e.into());
                         }
                     }
                 }

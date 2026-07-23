@@ -1,6 +1,5 @@
 mod commands;
 
-use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
@@ -237,7 +236,7 @@ enum Command {
     Paths
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), dfm::DfmError> {
     let args = Args::parse();
 
     if let Err(e) = stderrlog::new()
@@ -245,7 +244,7 @@ fn main() -> Result<(), Error> {
         .verbosity(args.verbosity)
         .show_level(args.verbosity > 2)
         .init() {
-        return Err(Error::other(e));
+        return Err(dfm::DfmError::other(e));
     }
 
     let path_to_state_file = calc_state_file_path()?;
@@ -274,7 +273,7 @@ fn main() -> Result<(), Error> {
         },
         Command::Add { .. } => {
             if state_opt.is_none() {
-                return Err(Error::new(ErrorKind::NotFound, format!("state file is not found {:?}", path_to_state_file)));
+                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
             add_command(&settings, &args, &mut state)?;
@@ -282,7 +281,7 @@ fn main() -> Result<(), Error> {
         },
         Command::Pull { .. } => {
             if state_opt.is_none() {
-                return Err(Error::new(ErrorKind::NotFound, format!("state file is not found {:?}", path_to_state_file)));
+                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
             pull_command(&settings, &args, &mut state)?;
@@ -290,7 +289,7 @@ fn main() -> Result<(), Error> {
         },
         Command::Forget { .. } => {
             if state_opt.is_none() {
-                return Err(Error::new(ErrorKind::NotFound, format!("state file is not found {:?}", path_to_state_file)));
+                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
             forget_command(&settings, &args, &mut state)?;
@@ -303,7 +302,7 @@ fn main() -> Result<(), Error> {
             paths_command(&settings, &path_to_config_file, &path_to_state_file)
         },
         _ => {
-            Err(Error::new(ErrorKind::Unsupported, format!("subcommand {:?} is not implemented yet", args)))
+            Err(dfm::DfmError::Unsupported(format!("subcommand {:?} is not implemented yet", args)))
         }
     };
 }

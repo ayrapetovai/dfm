@@ -1,20 +1,19 @@
 use std::fs;
-use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 
 use log::{debug, error, info, trace, warn};
 
 use dfm::*;
-use crate::{Args, Command};
+use crate::{Args, Command, DfmError};
 
-pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), Error> {
+pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Forget {
         paths,
         force,
         dry_run,
         ..
     } = &args.command else {
-        return Err(Error::new(ErrorKind::Unsupported, format!("unreachable code reached: command {:?} is not `forget`", args.command)));
+        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `forget`", args.command)));
     };
 
     let dry_run = if !dry_run { args.dry_run } else { true };
@@ -36,8 +35,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
     debug!("traversing result is {:?}", traversed_paths);
 
     if !error_messages.is_empty() {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
+        return Err(DfmError::InvalidData(
             format!("failed to process some subdirectories or files in targets {:?}", error_messages)
         ));
     }
@@ -124,7 +122,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                             Ok(p) => p,
                             Err(e) => {
                                 error!("failed to read symlink {:?}: {}", target_symlink_abs_path, e);
-                                return Err(e);
+                                return Err(e.into());
                             }
                         };
                         let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
@@ -196,7 +194,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
         for error_message in error_messages {
             error!("{}", error_message);
         }
-        return Err(Error::other("forget failed"));
+        return Err(DfmError::other("forget failed"));
     }
 
     if tasks.is_empty() {
@@ -222,7 +220,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                 // even it is a symlink
                 if let Err(e) = fs::remove_file(&source_file) {
                     error!("failed to remove file {:?}: {}", source_file, e);
-                    return Err(e);
+                    return Err(e.into());
                 }
                 let source_rel_path = file_path_relative_to(&source_file, &source_dir_abs_path);
                 let source_rel_path = remove_dots_from_path(&source_rel_path);
@@ -235,7 +233,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                         info!("removing empty directory {:?}", dir);
                         if let Err(e) = fs::remove_dir(dir) {
                             error!("failed to remove parent directory {:?}: {}", dir, e);
-                            return Err(e);
+                            return Err(e.into());
                         }
                     } else {
                         trace!("removing stopped at {:?}", dir);
