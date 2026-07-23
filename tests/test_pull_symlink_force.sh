@@ -12,4 +12,4 @@ dfm pull --force file.txt
 
 # postcondition: still a symlink pointing to the source
 assert -L file.txt
-assert "$CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$CONTENT"

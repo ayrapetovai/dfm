@@ -7,7 +7,7 @@ dfm add file.txt
 
 # modify the target file after adding
 write "$MODIFIED" file.txt
-assert "$MODIFIED" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$MODIFIED"
 
 # pull without --force must fail because target is modified
 assert_fail dfm pull file.txt
@@ -16,4 +16,4 @@ assert_fail dfm pull file.txt
 dfm pull --force file.txt
 
 # postcondition: target file has the ORIGINAL content from source
-assert "$ORIGINAL" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$ORIGINAL"

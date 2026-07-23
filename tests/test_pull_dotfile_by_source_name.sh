@@ -6,4 +6,4 @@ dfm add .file
 rm .file
 dfm pull .file
 assert -f .file
-assert "$CONTENT" = "$(cat .file)"
+assert_content_eq ".file" "$CONTENT"

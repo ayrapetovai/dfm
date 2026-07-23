@@ -13,4 +13,4 @@ dfm pull "$PWD/dotfiles/file.txt"
 
 # postcondition: target file was restored from source
 assert -f file.txt
-assert "$CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$CONTENT"

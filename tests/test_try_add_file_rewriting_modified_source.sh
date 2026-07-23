@@ -9,8 +9,8 @@ dfm add file.txt
 write "$NEW_CONTENT" ./dotfiles/file.txt
 assert_fail dfm add file.txt
 
-assert "$NEW_CONTENT" = "$(cat ./dotfiles/file.txt)"
-assert "$ORIGINAL_CONTENT" = "$(cat file.txt)"
+assert_content_eq "./dotfiles/file.txt" "$NEW_CONTENT"
+assert_content_eq "file.txt" "$ORIGINAL_CONTENT"
 
 dfm add -f file.txt
-assert "$ORIGINAL_CONTENT" = "$(cat ./dotfiles/file.txt)"
+assert_content_eq "./dotfiles/file.txt" "$ORIGINAL_CONTENT"

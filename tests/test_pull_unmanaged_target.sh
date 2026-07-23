@@ -13,6 +13,6 @@ dfm pull
 # postcondition: managed file is unchanged in source
 #                unmanaged file is unchanged in target
 assert -f managed.txt
-assert "managed" = "$(cat managed.txt)"
+assert_content_eq "managed.txt" "managed"
 assert -f unmanaged_file.txt
-assert "unmanaged" = "$(cat unmanaged_file.txt)"
+assert_content_eq "unmanaged_file.txt" "unmanaged"

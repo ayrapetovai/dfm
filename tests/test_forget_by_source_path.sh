@@ -11,4 +11,4 @@ rm file.txt
 dfm forget file.txt
 
 # source file must be removed
-assert_fail test -f "$PWD/dotfiles/file.txt"
+assert_no_source "file.txt"

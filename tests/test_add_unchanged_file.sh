@@ -8,5 +8,5 @@ dfm add file.txt
 dfm add file.txt
 
 # postcondition: source file still exists with the same content
-assert -f "$PWD/dotfiles/file.txt"
-assert "$CONTENT" = "$(cat "$PWD/dotfiles/file.txt")"
+assert_source "file.txt"
+assert_content_eq "$PWD/dotfiles/file.txt" "$CONTENT"

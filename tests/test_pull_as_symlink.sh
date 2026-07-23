@@ -7,4 +7,4 @@ dfm pull -s
 # assert that file.txt is a symlink
 assert -L file.txt
 assert "$PWD/dotfiles/file.txt" = "$(readlink -f file.txt)"
-assert "$CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$CONTENT"

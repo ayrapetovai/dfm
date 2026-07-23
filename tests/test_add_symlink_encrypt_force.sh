@@ -7,7 +7,7 @@ ln -s "real_files/target.txt" "mylink"
 
 # add the symlink first (so it exists in source)
 dfm add mylink
-assert -f "$PWD/dotfiles/mylink.symlink"
+assert_source "mylink.symlink"
 
 # dfm add -e mylink without --force → must fail (cannot encrypt a symlink)
 assert_fail dfm add -e mylink
@@ -16,5 +16,5 @@ assert_fail dfm add -e mylink
 dfm add -f -e mylink
 
 # postcondition: existing symlink file is unchanged
-assert -f "$PWD/dotfiles/mylink.symlink"
-assert "real_files/target.txt" = "$(cat "$PWD/dotfiles/mylink.symlink")"
+assert_source "mylink.symlink"
+assert_content_eq "$PWD/dotfiles/mylink.symlink" "real_files/target.txt"

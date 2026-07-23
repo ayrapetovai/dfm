@@ -10,7 +10,7 @@ write "$CONTENT2" file2.txt
 dfm add
 
 # postcondition: both files were copied to source
-assert -f "$PWD/dotfiles/file1.txt"
-assert -f "$PWD/dotfiles/file2.txt"
-assert "$CONTENT1" = "$(cat "$PWD/dotfiles/file1.txt")"
-assert "$CONTENT2" = "$(cat "$PWD/dotfiles/file2.txt")"
+assert_source "file1.txt"
+assert_source "file2.txt"
+assert_content_eq "$PWD/dotfiles/file1.txt" "$CONTENT1"
+assert_content_eq "$PWD/dotfiles/file2.txt" "$CONTENT2"

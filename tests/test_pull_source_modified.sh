@@ -4,7 +4,7 @@ MODIFIED="$(uuid)"
 dfm init dotfiles
 write "$ORIGINAL" file.txt
 dfm add file.txt
-assert "$ORIGINAL" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$ORIGINAL"
 
 # modify the source file after add
 write "$MODIFIED" "$PWD/dotfiles/file.txt"
@@ -13,4 +13,4 @@ write "$MODIFIED" "$PWD/dotfiles/file.txt"
 dfm pull
 
 # postcondition: target file has the modified content from source
-assert "$MODIFIED" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$MODIFIED"

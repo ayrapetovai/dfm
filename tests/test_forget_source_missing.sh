@@ -13,8 +13,8 @@ dfm forget file.txt
 
 # target file must still exist
 assert -f file.txt
-assert "$CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$CONTENT"
 
 # pull must not recreate the source
 dfm pull
-assert_fail test -f "$PWD/dotfiles/file.txt"
+assert_no_source "file.txt"

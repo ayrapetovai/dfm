@@ -11,4 +11,4 @@ dfm forget file.txt
 
 assert_fail test -L file.txt
 assert_fail test -f file.txt
-assert_fail test -f "$PWD/dotfiles/file.txt"
+assert_no_source "file.txt"

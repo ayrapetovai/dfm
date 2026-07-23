@@ -10,9 +10,9 @@ write "$CONTENT" "$PWD/../other/file.txt"
 dfm add "$PWD/../other/file.txt"
 
 # postcondition: no source file was created
-assert_fail test -f "$PWD/dotfiles/other/file.txt"
+assert_no_source "other/file.txt"
 
 # --allow-foreign flag is parsed but currently has no effect (dead code),
 # so the file should still be skipped even with the flag
 dfm add --allow-foreign "$PWD/../other/file.txt"
-assert_fail test -f "$PWD/dotfiles/other/file.txt"
+assert_no_source "other/file.txt"

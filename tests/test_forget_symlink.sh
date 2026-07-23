@@ -25,13 +25,13 @@ echo "real content" > "real_files/other.txt"
 ln -s "real_files/other.txt" "mylink"
 
 dfm add mylink
-assert -f "$PWD/dotfiles/mylink.symlink"
-assert "real_files/other.txt" = "$(cat "$PWD/dotfiles/mylink.symlink")"
+assert_source "mylink.symlink"
+assert_content_eq "$PWD/dotfiles/mylink.symlink" "real_files/other.txt"
 assert -L mylink
 
 dfm forget mylink
 
 # source symlink file must be removed (B1b1: content matches pointee)
-assert_fail test -f "$PWD/dotfiles/mylink.symlink"
+assert_no_source "mylink.symlink"
 # target symlink stays (pointee outside source dir, B1a didn't fire)
 assert -L mylink

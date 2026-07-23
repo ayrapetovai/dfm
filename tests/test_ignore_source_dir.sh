@@ -3,7 +3,7 @@ dfm init dotfiles
 
 echo "content" > file.txt
 dfm add file.txt
-assert -f "$PWD/dotfiles/file.txt"
+assert_source "file.txt"
 
 # count lines in source ignore file before
 BEFORE=$(wc -l < "$PWD/dotfiles/.dfm_ignore_file")

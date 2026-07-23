@@ -14,10 +14,10 @@ write "$SOURCE_MOD" "$PWD/dotfiles/file.txt"
 assert_fail dfm pull
 
 # postcondition: target still has its modified content
-assert "$TARGET_MOD" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$TARGET_MOD"
 
 # pull with --force must succeed and overwrite target with source
 dfm pull --force
 
 # postcondition: target now has the source's content
-assert "$SOURCE_MOD" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$SOURCE_MOD"

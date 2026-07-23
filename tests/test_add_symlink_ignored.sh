@@ -12,4 +12,4 @@ dfm ignore mylink
 dfm add mylink
 
 # postcondition: no symlink file was created in source
-assert_fail test -f "$PWD/dotfiles/mylink.symlink"
+assert_no_source "mylink.symlink"

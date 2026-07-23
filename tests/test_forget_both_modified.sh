@@ -15,14 +15,14 @@ write "$MODIFIED_SOURCE" "$PWD/dotfiles/file.txt"
 assert_fail dfm forget file.txt
 # nothing should be deleted
 assert -f file.txt
-assert "$MODIFIED_TARGET" = "$(cat file.txt)"
-assert -f "$PWD/dotfiles/file.txt"
-assert "$MODIFIED_SOURCE" = "$(cat "$PWD/dotfiles/file.txt")"
+assert_content_eq "file.txt" "$MODIFIED_TARGET"
+assert_source "file.txt"
+assert_content_eq "$PWD/dotfiles/file.txt" "$MODIFIED_SOURCE"
 
 # forget with --force must succeed
 dfm forget --force file.txt
 # source file must be removed
-assert_fail test -f "$PWD/dotfiles/file.txt"
+assert_no_source "file.txt"
 # target file must still exist with modified content
 assert -f file.txt
-assert "$MODIFIED_TARGET" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$MODIFIED_TARGET"

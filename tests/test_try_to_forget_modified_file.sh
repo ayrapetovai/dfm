@@ -14,4 +14,4 @@ dfm pull
 write "$ANOTHER_NEW_CONTENT" "$PWD/dotfiles/file.txt"
 # must fail becase source is modified
 assert_fail dfm forget file.txt
-assert -f "$PWD/dotfiles/file.txt"
+assert_source "file.txt"

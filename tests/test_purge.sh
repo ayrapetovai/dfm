@@ -8,7 +8,7 @@ dfm add file.txt
 assert -f "$PWD/.config/dfm/config.toml"
 assert -d "$PWD/.local/state/dfm"
 assert -d "$PWD/dotfiles"
-assert -f "$PWD/dotfiles/file.txt"
+assert_source "file.txt"
 
 dfm purge
 

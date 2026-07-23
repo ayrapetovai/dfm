@@ -8,7 +8,7 @@ echo "new content" > "real_files/new.txt"
 # create symlink pointing to old.txt
 ln -s "real_files/old.txt" "mylink"
 dfm add mylink
-assert "real_files/old.txt" = "$(cat "$PWD/dotfiles/mylink.symlink")"
+assert_content_eq "$PWD/dotfiles/mylink.symlink" "real_files/old.txt"
 
 # repoint the symlink to new.txt
 rm mylink
@@ -18,4 +18,4 @@ ln -s "real_files/new.txt" "mylink"
 dfm add mylink
 
 # postcondition: symlink file now points to new.txt
-assert "real_files/new.txt" = "$(cat "$PWD/dotfiles/mylink.symlink")"
+assert_content_eq "$PWD/dotfiles/mylink.symlink" "real_files/new.txt"

@@ -14,12 +14,12 @@ write "$SOURCE_MOD" "$PWD/dotfiles/file.txt"
 assert_fail dfm add file.txt
 
 # postcondition: source still has its modified content (was not overwritten)
-assert "$SOURCE_MOD" = "$(cat "$PWD/dotfiles/file.txt")"
+assert_content_eq "$PWD/dotfiles/file.txt" "$SOURCE_MOD"
 # target still has its modified content
-assert "$TARGET_MOD" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$TARGET_MOD"
 
 # add with --force must overwrite source with target content
 dfm add -f file.txt
 
 # postcondition: source now has the target's content
-assert "$TARGET_MOD" = "$(cat "$PWD/dotfiles/file.txt")"
+assert_content_eq "$PWD/dotfiles/file.txt" "$TARGET_MOD"

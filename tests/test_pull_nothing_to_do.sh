@@ -10,9 +10,9 @@ dfm add file.txt
 rm file.txt
 dfm pull
 assert -f file.txt
-assert "$CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$CONTENT"
 
 # everything is now in sync; another pull should be a no-op
 dfm pull
 assert -f file.txt
-assert "$CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$CONTENT"

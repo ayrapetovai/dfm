@@ -9,4 +9,4 @@ write "$CONTENT" "$PWD/dotfiles/some_file.txt"
 dfm add "$PWD/dotfiles/some_file.txt"
 
 # postcondition: no additional source file was created (the original still exists)
-assert "$CONTENT" = "$(cat "$PWD/dotfiles/some_file.txt")"
+assert_content_eq "$PWD/dotfiles/some_file.txt" "$CONTENT"

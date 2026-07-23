@@ -12,10 +12,10 @@ write "$SOURCE_CONTENT" "$PWD/dotfiles/file.txt"
 dfm add file.txt
 
 # postcondition: source still has its original content (was not overwritten)
-assert "$SOURCE_CONTENT" = "$(cat "$PWD/dotfiles/file.txt")"
+assert_content_eq "$PWD/dotfiles/file.txt" "$SOURCE_CONTENT"
 
 # add with --force: must overwrite source with target content
 dfm add -f file.txt
 
 # postcondition: source now has target's content
-assert "$TARGET_CONTENT" = "$(cat "$PWD/dotfiles/file.txt")"
+assert_content_eq "$PWD/dotfiles/file.txt" "$TARGET_CONTENT"

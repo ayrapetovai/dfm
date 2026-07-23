@@ -6,4 +6,4 @@ write "$OLD_CONTENT" file.txt
 dfm add file.txt
 write "$NEW_CONTENT" file.txt
 assert_fail dfm pull
-assert "$NEW_CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$NEW_CONTENT"

@@ -20,4 +20,4 @@ CLEANUP
 
 # target file must still exist
 assert -f file.txt
-assert "content" = "$(cat file.txt)"
+assert_content_eq "file.txt" "content"

@@ -12,4 +12,4 @@ ln -s "dotfiles/real_file.txt" "mylink"
 dfm add mylink
 
 # postcondition: no extra symlink pointer file was created
-assert_fail test -f "$PWD/dotfiles/mylink.symlink"
+assert_no_source "mylink.symlink"

@@ -15,8 +15,8 @@ assert_fail dfm forget file.txt
 dfm forget --force file.txt
 
 # postcondition: source file is removed
-assert_fail test -f "$PWD/dotfiles/file.txt"
+assert_no_source "file.txt"
 
 # target file must still exist
 assert -f file.txt
-assert "$MODIFIED" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$MODIFIED"

@@ -7,7 +7,7 @@ echo "target" > "real_files/other.txt"
 ln -s "real_files/other.txt" "mylink"
 
 dfm add mylink
-assert "real_files/other.txt" = "$(cat "$PWD/dotfiles/mylink.symlink")"
+assert_content_eq "$PWD/dotfiles/mylink.symlink" "real_files/other.txt"
 assert -L mylink
 
 # modify the source symlink file to point somewhere else
@@ -15,11 +15,11 @@ echo "different/pointee" > "$PWD/dotfiles/mylink.symlink"
 
 # forget without --force → source symlink file should NOT be removed (B1b3)
 dfm forget mylink
-assert -f "$PWD/dotfiles/mylink.symlink"
+assert_source "mylink.symlink"
 # target symlink stays (it doesn't point into source dir)
 assert -L mylink
 
 # forget with --force → source symlink file should be removed (B1b2)
 dfm forget --force mylink
-assert_fail test -f "$PWD/dotfiles/mylink.symlink"
+assert_no_source "mylink.symlink"
 assert -L mylink

@@ -5,7 +5,7 @@ dfm init dotfiles
 write "$OLD_CONTENT" $PWD/dotfiles/file.txt
 dfm pull -s
 write "$NEW_CONTENT" $PWD/dotfiles/file.txt
-assert "$NEW_CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$NEW_CONTENT"
 dfm pull file.txt
 assert -L file.txt
-assert "$NEW_CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$NEW_CONTENT"

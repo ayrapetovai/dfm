@@ -10,5 +10,5 @@ dfm forget "$OUTSIDE_FILE"
 
 # outside file should remain untouched
 assert -f "$OUTSIDE_FILE"
-assert "outside" = "$(cat "$OUTSIDE_FILE")"
+assert_content_eq "$OUTSIDE_FILE" "outside"
 rm -f "$OUTSIDE_FILE"

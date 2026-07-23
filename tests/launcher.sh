@@ -60,6 +60,48 @@ function assert_fail() {
 }
 export assert_fail
 
+# Assert that a file exists in the source directory ($PWD/dotfiles/).
+function assert_source() {
+    assert -f "$PWD/dotfiles/$1"
+}
+export -f assert_source
+
+# Assert that a file does NOT exist in the source directory.
+function assert_no_source() {
+    assert_fail test -f "$PWD/dotfiles/$1"
+}
+export -f assert_no_source
+
+# Assert that a file's content matches the expected string.
+function assert_content_eq() {
+    local file="$1"
+    local expected="$2"
+    local actual
+    actual="$(cat "$file" 2>/dev/null)" || {
+        echo "Assertion failed: cannot read file $file"
+        exit 1
+    }
+    if [ "$actual" != "$expected" ]; then
+        echo "Assertion failed: file $file content mismatch"
+        echo "  expected: $expected"
+        echo "  actual:   $actual"
+        exit 1
+    fi
+}
+export -f assert_content_eq
+
+# Create a file with optional content, add it under management,
+# verify it landed in source, and echo the content for later use.
+function add_file() {
+    local name="$1"
+    local content="${2:-$(uuid)}"
+    write "$content" "$name"
+    dfm add "$name"
+    assert_source "$name"
+    echo "$content"
+}
+export -f add_file
+
 # mktemp creates directory in the /tmp wich is mounted to memory filesystem
 readonly TMP_HOME=$(mktemp -d)
 trap 'rm -rf -- "$TMP_HOME"' EXIT

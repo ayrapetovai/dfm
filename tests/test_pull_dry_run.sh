@@ -16,4 +16,4 @@ assert_fail test -f file.txt
 # verify actual pull still works
 dfm pull
 assert -f file.txt
-assert "$CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$CONTENT"

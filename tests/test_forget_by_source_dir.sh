@@ -8,8 +8,8 @@ dfm add file.txt
 dfm forget "$PWD/dotfiles/file.txt"
 
 # source file must be removed
-assert_fail test -f "$PWD/dotfiles/file.txt"
+assert_no_source "file.txt"
 
 # target file must still exist
 assert -f file.txt
-assert "content" = "$(cat file.txt)"
+assert_content_eq "file.txt" "content"

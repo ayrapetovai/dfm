@@ -9,4 +9,4 @@ dfm pull
 
 # postcondition: target file still exists with the same content
 assert -f file.txt
-assert "$CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$CONTENT"

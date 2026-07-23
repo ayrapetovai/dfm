@@ -7,7 +7,7 @@ echo "target" > "real_files/other.txt"
 ln -s "real_files/other.txt" "mylink"
 
 dfm add mylink
-assert -f "$PWD/dotfiles/mylink.symlink"
+assert_source "mylink.symlink"
 assert -L mylink
 
 # replace the target symlink with a regular file
@@ -21,7 +21,7 @@ echo "now a regular file" > mylink
 assert_fail dfm forget "$PWD/dotfiles/mylink.symlink"
 
 # source symlink file should still exist (forget failed)
-assert -f "$PWD/dotfiles/mylink.symlink"
+assert_source "mylink.symlink"
 # target regular file should still exist
 assert -f mylink
-assert "now a regular file" = "$(cat mylink)"
+assert_content_eq "mylink" "now a regular file"

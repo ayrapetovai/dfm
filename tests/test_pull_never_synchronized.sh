@@ -11,10 +11,10 @@ write "$SOURCE_CONTENT" "$PWD/dotfiles/file.txt"
 dfm pull
 
 # postcondition: target still has its original content (was not overwritten)
-assert "$TARGET_CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$TARGET_CONTENT"
 
 # pull with --force: must overwrite target with source content
 dfm pull --force
 
 # postcondition: target now has source's content
-assert "$SOURCE_CONTENT" = "$(cat file.txt)"
+assert_content_eq "file.txt" "$SOURCE_CONTENT"

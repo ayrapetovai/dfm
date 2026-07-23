@@ -13,5 +13,5 @@ ln -s "real_files/target.txt" "mylink"
 dfm add mylink
 
 # source symlink file must exist and contain the pointee path
-assert -f "$PWD/dotfiles/mylink.symlink"
-assert "real_files/target.txt" = "$(cat "$PWD/dotfiles/mylink.symlink")"
+assert_source "mylink.symlink"
+assert_content_eq "$PWD/dotfiles/mylink.symlink" "real_files/target.txt"

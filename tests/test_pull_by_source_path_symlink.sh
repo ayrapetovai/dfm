@@ -7,7 +7,7 @@ ln -s "real_files/target.txt" "mylink"
 
 # add the symlink — creates a .symlink file in source
 dfm add mylink
-assert -f "$PWD/dotfiles/mylink.symlink"
+assert_source "mylink.symlink"
 
 # remove the target symlink
 rm mylink

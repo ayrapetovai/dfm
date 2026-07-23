@@ -10,8 +10,8 @@ write "$CONTENT2" dir/file2.txt
 dfm add dir
 
 assert -d "$PWD/dotfiles/dir"
-assert -f "$PWD/dotfiles/dir/file1.txt"
-assert -f "$PWD/dotfiles/dir/file2.txt"
+assert_source "dir/file1.txt"
+assert_source "dir/file2.txt"
 
-assert "$CONTENT1" = "$(cat $PWD/dotfiles/dir/file1.txt)"
-assert "$CONTENT2" = "$(cat $PWD/dotfiles/dir/file2.txt)"
+assert_content_eq "$PWD/dotfiles/dir/file1.txt" "$CONTENT1"
+assert_content_eq "$PWD/dotfiles/dir/file2.txt" "$CONTENT2"
