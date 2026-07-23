@@ -11,16 +11,9 @@ use zip::{AesMode, CompressionMethod::Bzip2};
 
 use crate::{Settings, file_path_relative_to};
 
-pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), DfmError> {
-    // Ensure the parent directory exists (important when source path has subdirectories)
-    if let Some(parent) = source_file_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = std::fs::File::create(source_file_path.as_path())?;
-    let mut zip = zip::ZipWriter::new(file);
-
-    let target_file_permissions = fs::metadata(target_file_path)?.permissions();
-
+/// Obtain the encryption/decryption password from the configured shell command
+/// or by prompting the user interactively.
+pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
     let shell_env = "SHELL";
     let shell_env_value = if envmnt::exists(shell_env) {
         Some(envmnt::get_any(&vec![shell_env], ""))
@@ -31,7 +24,7 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
     debug!("get password command is set to {:?}", settings.obtain_password_shell_command);
     debug!("shell {:?}", shell_env_value);
 
-    let password = if let Some(get_password_command) = settings.obtain_password_shell_command.clone() &&
+    if let Some(get_password_command) = settings.obtain_password_shell_command.clone() &&
             !get_password_command.is_empty() &&
             let Some(shell) = shell_env_value {
         debug!("launching get password program");
@@ -50,11 +43,24 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
             return Err(DfmError::other(format!("Error (return code {}): {}", output.status.code().unwrap_or(-1), stderr)));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        stdout.to_string()
+        Ok(stdout.to_string())
     } else {
         debug!("using default procedure to get password");
-        default_read_password()?
-    };
+        default_read_password()
+    }
+}
+
+pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), DfmError> {
+    // Ensure the parent directory exists (important when source path has subdirectories)
+    if let Some(parent) = source_file_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::File::create(source_file_path.as_path())?;
+    let mut zip = zip::ZipWriter::new(file);
+
+    let target_file_permissions = fs::metadata(target_file_path)?.permissions();
+
+    let password = obtain_password(settings)?;
 
     let target_dir_path = PathBuf::from(&settings.target_dir);
     let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
@@ -72,6 +78,26 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
     let file_content = fs::read_to_string(target_file_path)?;
     zip.write_all(file_content.as_bytes()).map_err(DfmError::other)?;
     zip.finish().map_err(DfmError::other)?;
+
+    Ok(())
+}
+
+/// Decrypt a zip archive created by `write_zip_file` and write its content
+/// to the given target path. The archive must contain exactly one entry.
+pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file_path: &PathBuf) -> Result<(), DfmError> {
+    let password = obtain_password(settings)?;
+
+    // Ensure the target parent directory exists
+    if let Some(parent) = target_file_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let file = std::fs::File::open(source_zip_path)?;
+    let mut archive = zip::ZipArchive::new(file).map_err(DfmError::other)?;
+    let mut zip_file = archive.by_index_decrypt(0, password.as_bytes()).map_err(DfmError::other)?;
+
+    let mut output_file = std::fs::File::create(target_file_path)?;
+    std::io::copy(&mut zip_file, &mut output_file).map_err(DfmError::other)?;
 
     Ok(())
 }
