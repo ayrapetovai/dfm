@@ -78,6 +78,11 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             let target_file_abs_path = remove_dots_from_path(&target_file_abs_path);
             debug!("inferred target {:?}", target_file_abs_path);
 
+            if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_file_abs_path) {
+                info!("target {:?} is ignored by regex /{}/ in file {:?}", target_file_abs_path, pattern, target_ignore_file_path);
+                continue;
+            }
+
             if !target_file_abs_path.exists() && source_file_abs_path.exists() {
                 if source_file_abs_path.to_str().unwrap().ends_with(&settings.symlink_postfix) {
                     let source_file_content = fs::read_to_string(&source_file_abs_path)?;
@@ -213,7 +218,9 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                     tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
                     continue; // success
                 } else {
-                    warn!("for target {:?} no corresponding source file found", target_abs_path);
+                    return Err(DfmError::NotFound(
+                        format!("for target {:?} no corresponding source file found", target_abs_path)
+                    ));
                 }
             }
         }
