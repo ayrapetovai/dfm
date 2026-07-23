@@ -2,6 +2,15 @@
 
 set -euP
 
+TRACE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -x) TRACE="-x"; shift ;;
+        --) shift; break ;;
+        *) break ;;
+    esac
+done
+
 if ! ( whatis 7z > /dev/null; exit $? ); then
     echo ERROR 7z archiver is not available on PATH
 fi
@@ -64,19 +73,31 @@ export HOME="$TMP_HOME"
 cd $HOME
 
 TEST_CASES=$(find "$TESTS_DIR" -type f -name 'test*.sh' -printf "%p\n")
-echo "running $(echo "$TEST_CASES" | wc -l) tests"
+TEST_COUNT=$(echo "$TEST_CASES" | wc -l)
+if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
+    echo "running 1 test (of $TEST_COUNT)"
+else
+    echo "running $TEST_COUNT tests"
+fi
 
 SUCCED_COUNTER=0
 FAILED_COUNTER=0
 
 if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
-    ( set -eEux; source "$TEST_FILE_TO_RUN_ABS" )
+    test_name="$(basename $TEST_FILE_TO_RUN_ABS)"
+    if ( set -eEu $TRACE; source "$TEST_FILE_TO_RUN_ABS" ) ; then
+        echo "---- $test_name ✅"
+        SUCCED_COUNTER=$((SUCCED_COUNTER + 1))
+    else
+        echo "---- $test_name ❌"
+        FAILED_COUNTER=$((FAILED_COUNTER + 1))
+    fi
 else
     for test_case in $TEST_CASES; do
         test_name="$(basename $test_case)"
 
         # launch test
-        if ( set -eEux; source "$test_case" ) ; then
+        if ( set -eEu $TRACE; source "$test_case" ) ; then
             echo "---- $test_name ✅"
             SUCCED_COUNTER=$((SUCCED_COUNTER + 1))
         else
