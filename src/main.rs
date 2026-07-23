@@ -1298,6 +1298,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
                         // source was modified and if we remove it then we will lose the modifications
                         warn!("source {:?}, was modified, run with --force", source_abs_path);
                         error_messages.push("source was modified");
+                        tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                         continue; // error
                     }
 
@@ -1305,12 +1306,14 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
                         // source was modified and if we remove it then we will lose the modifications
                         warn!("source {:?} and target {:?}, both were modified, run with --force", source_abs_path, target_abs_path);
                         error_messages.push("source and target were modified");
+                        tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                         continue; // error
                     }
                     if CompareByTimestamp::TargetModified == cmp {
                         // source was modified and if we remove it then we will lose the modifications
                         warn!("target {:?}, was modified, run with --force", target_abs_path);
                         error_messages.push("target was modified");
+                        tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                         continue; // error
                     }
                     info!("source {:?} will be removed", source_abs_path);
@@ -1349,7 +1352,7 @@ fn forget_command(config: &Config, args: &Args, state: &mut StateObject) -> Resu
         match task {
             ForgetTask::Delete(source_file) => {
                 info!("delete {:?}", source_file);
-                if dry_run {
+                if dry_run && !*force {
                     continue;
                 }
 
