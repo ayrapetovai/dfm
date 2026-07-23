@@ -83,9 +83,18 @@ fi
 SUCCED_COUNTER=0
 FAILED_COUNTER=0
 
+run_test() {
+    local test_file="$1"
+    if [ -n "$TRACE" ]; then
+        ( set -eEu $TRACE; source "$test_file" )
+    else
+        ( set -eEu; source "$test_file" ) > /dev/null 2>&1
+    fi
+}
+
 if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
     test_name="$(basename $TEST_FILE_TO_RUN_ABS)"
-    if ( set -eEu $TRACE; source "$TEST_FILE_TO_RUN_ABS" ) ; then
+    if run_test "$TEST_FILE_TO_RUN_ABS"; then
         echo "---- $test_name ✅"
         SUCCED_COUNTER=$((SUCCED_COUNTER + 1))
     else
@@ -97,7 +106,7 @@ else
         test_name="$(basename $test_case)"
 
         # launch test
-        if ( set -eEu $TRACE; source "$test_case" ) ; then
+        if run_test "$test_case"; then
             echo "---- $test_name ✅"
             SUCCED_COUNTER=$((SUCCED_COUNTER + 1))
         else
