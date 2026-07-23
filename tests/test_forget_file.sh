@@ -1,5 +1,5 @@
 dfm init dotfiles
-write $(uuid) file.xt
+write $(uuid) file.txt
 dfm add file.txt
 dfm forget file.txt
 rm file.txt
