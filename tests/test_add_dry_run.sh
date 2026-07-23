@@ -1,0 +1,19 @@
+CONTENT="$(uuid)"
+
+dfm init dotfiles
+write "$CONTENT" file.txt
+
+# dry-run: no real changes should be made
+dfm add -n file.txt
+
+# postcondition: source file was NOT created
+assert_fail test -f "$PWD/dotfiles/file.txt"
+
+# also test global --dry-run flag
+dfm -n add file.txt
+assert_fail test -f "$PWD/dotfiles/file.txt"
+
+# verify actual add still works after dry runs
+dfm add file.txt
+assert -f "$PWD/dotfiles/file.txt"
+assert "$CONTENT" = "$(cat "$PWD/dotfiles/file.txt")"
