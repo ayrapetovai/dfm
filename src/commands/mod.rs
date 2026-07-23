@@ -28,6 +28,32 @@ use log::{error, trace, log_enabled};
 
 use dfm::*;
 
+// ---------------------------------------------------------------------------
+// Shared --dry-run / --force helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve the effective dry-run value: `true` if either the per-command flag
+/// *or* the global `--dry-run` flag is set.
+#[inline]
+pub(crate) fn resolve_dry_run(cmd_dry_run: bool, args_dry_run: bool) -> bool {
+    cmd_dry_run || args_dry_run
+}
+
+/// If `force` is `false`, return `Err(DfmError::Other(msg))`.
+/// Useful for the common post-loop "force required" check.
+///
+/// When `force` is `true` the caller still needs to handle the case
+/// (e.g. skip the conflict, or proceed despite errors); this helper
+/// only covers the "reject without force" half.
+#[inline]
+pub(crate) fn require_force(force: bool, msg: impl std::fmt::Display) -> Result<(), DfmError> {
+    if force {
+        Ok(())
+    } else {
+        Err(DfmError::Other(msg.to_string()))
+    }
+}
+
 /// Shared copy + permissions + mtime + state update logic used by both
 /// `add` (target → source) and `pull` (source → target).
 ///

@@ -5,6 +5,7 @@ use log::{debug, error, info, trace, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use super::{resolve_dry_run, require_force};
 
 pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Forget {
@@ -16,7 +17,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
         return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `forget`", args.command)));
     };
 
-    let dry_run = if !dry_run { args.dry_run } else { true };
+    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
     debug!("forget paths {:?}, force {}, dry-run {}", paths, force, dry_run);
 
@@ -190,11 +191,11 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
         }
     }
 
-    if !error_messages.is_empty() && !force {
-        for error_message in error_messages {
+    if !error_messages.is_empty() {
+        for error_message in &error_messages {
             error!("{}", error_message);
         }
-        return Err(DfmError::other("forget failed"));
+        require_force(*force, "forget failed")?;
     }
 
     if tasks.is_empty() {

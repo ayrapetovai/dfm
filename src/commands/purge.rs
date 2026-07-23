@@ -5,6 +5,7 @@ use log::{debug, info};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use super::resolve_dry_run;
 
 pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &PathBuf) -> Result<(), DfmError> {
     let Command::Purge {
@@ -16,7 +17,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
         return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `purge`", args.command)));
     };
 
-    let dry_run = if !dry_run { args.dry_run } else { true };
+    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
     let ref state_directory_path = match calc_state_directory_path() {
         Ok(path) => path,

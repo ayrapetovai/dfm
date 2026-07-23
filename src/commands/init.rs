@@ -6,6 +6,7 @@ use log::{debug, error, info, trace, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use super::resolve_dry_run;
 
 pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     let Command::Init {
@@ -17,7 +18,7 @@ pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
         return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `init`", args.command)));
     };
 
-    let dry_run = if !dry_run { args.dry_run } else { true };
+    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
     debug!("init with source path {:?}", path_to_source);
     debug!("init with target path {:?}", path_to_target_opt);

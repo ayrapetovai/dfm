@@ -5,6 +5,7 @@ use regex::Regex;
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use super::resolve_dry_run;
 
 pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     let Command::Ignore {
@@ -16,7 +17,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `ignore`", args.command)));
     };
 
-    let dry_run = if !dry_run { args.dry_run } else { true };
+    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
     debug!("ignore paths {:?}, patterns {:?}, dry-run {}", paths, patterns, dry_run);
 

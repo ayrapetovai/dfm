@@ -9,7 +9,7 @@ use regex::RegexSet;
 
 use dfm::*;
 use crate::{Args, Command};
-use super::sync_file_copy;
+use super::{sync_file_copy, resolve_dry_run, require_force};
 
 pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
@@ -24,7 +24,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `add`", args.command)));
     };
 
-    let dry_run = if !dry_run { args.dry_run } else { true };
+    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
     debug!("add paths {:?}, merge {}, foreign {}, force {}, symlink {}, encrypt {}", paths, merge, foreign, force, symlink, encrypt);
 
@@ -239,20 +239,21 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         }
     }
 
-    if !error_messages.is_empty() && !force {
-        for error_message in error_messages {
+    if !error_messages.is_empty() {
+        for error_message in &error_messages {
             error!("{}", error_message);
         }
-        return Err(DfmError::other("error occurred"));
+        require_force(*force, "error occurred")?;
     }
 
     if dry_run {
         info!("dry run specified, no changes will be made");
     }
 
-    if conflict_detected && !force {
-        warn!("conflicts detected, no changes will be made");
-        return Err(DfmError::other("conflicts"))
+    if conflict_detected {
+        // require_force ensures we only error without --force
+        require_force(*force, "conflicts")?;
+        warn!("conflicts detected, proceeding with --force");
     }
 
     if tasks.is_empty() {

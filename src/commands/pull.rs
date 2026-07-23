@@ -6,7 +6,7 @@ use regex::RegexSet;
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::sync_file_copy;
+use super::{sync_file_copy, resolve_dry_run, require_force};
 
 pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Pull {
@@ -19,7 +19,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
         return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `pull`", args.command)));
     };
 
-    let dry_run = if !dry_run { args.dry_run } else { true };
+    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
     debug!("pull paths {:?}, merge {}, force {}, dry-run {}", paths, merge, force, dry_run);
 
@@ -170,9 +170,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                 CompareByTimestamp::BothModified => {
                     // TODO add merge
                     warn!("both source and target was modified, merge needed");
-                    if !force {
-                        return Err(DfmError::InvalidData("target and source have conflicting modifications".into()));
-                    }
+                    require_force(*force, "target and source have conflicting modifications")?;
                 },
                 CompareByTimestamp::NonModified => {
                     info!("both source and target were not modified, no action needed, skipping...");
@@ -180,9 +178,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                 },
                 CompareByTimestamp::TargetModified => {
                     warn!("target was modified, pulling source will overwrite those changes");
-                    if !force {
-                        return Err(DfmError::InvalidData("target was modified".into()));
-                    }
+                    require_force(*force, "target was modified")?;
                 },
                 CompareByTimestamp::SourceModified => {
                     info!("only the source was modified")
@@ -223,11 +219,11 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
         }
     }
 
-    if !error_list.is_empty() && !force {
-        for error_string in error_list {
+    if !error_list.is_empty() {
+        for error_string in &error_list {
             warn!("error: {:?}", error_string);
         }
-        return Err(DfmError::other("improper operation"));
+        require_force(*force, "improper operation")?;
     }
 
     if tasks.is_empty() {
