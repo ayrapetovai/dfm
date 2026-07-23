@@ -3,6 +3,9 @@ use std::fs::File;
 use std::io::Write;
 use crate::DfmError;
 use std::path::PathBuf;
+use std::time::SystemTime;
+
+use filetime_creation::FileTime;
 
 use log::{debug, error, info, warn};
 use regex::RegexSet;
@@ -305,11 +308,17 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     continue;
                 }
 
-                use dfm::crypt::write_zip_file;
-                match write_zip_file(settings, &target_file, &source_file) {
-                    Ok(_) => continue,
-                    Err(e) => return Err(e),
-                }
+                dfm::crypt::write_zip_file(settings, &target_file, &source_file)?;
+
+                // Record sync time and sync mtimes (same as sync_file_copy for Copy)
+                let sync_creation = SystemTime::now();
+                let source_rel_path = file_path_relative_to(&source_file, &source_dir_abs_path);
+                let source_rel_path = remove_dots_from_path(&source_rel_path);
+                state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), sync_creation);
+
+                let ft = FileTime::from_system_time(sync_creation);
+                filetime_creation::set_file_mtime(&target_file, ft)?;
+                filetime_creation::set_file_mtime(&source_file, ft)?;
             },
             AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {
                 info!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to);
