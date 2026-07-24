@@ -23,9 +23,7 @@ dfm add --encrypt secret.txt
 dfm add --encrypt secret.txt
 
 # verify the encrypted source still decrypts correctly
-rm secret.txt
-7z -p"$PASSWORD" x "$PWD/dotfiles/secret.txt.encrypted" > /dev/null 2>&1
-assert_content_eq "secret.txt" "$ORIGINAL"
+assert_encrypted "secret.txt" "$ORIGINAL"
 
 # ------------------------------------------------------------------
 # 2. SourceModified: touch encrypted source, add without --force → fail
@@ -35,9 +33,7 @@ touch "$PWD/dotfiles/secret.txt.encrypted"
 assert_fail dfm add --encrypt secret.txt
 
 # postcondition: encrypted source unchanged
-rm secret.txt
-7z -p"$PASSWORD" x "$PWD/dotfiles/secret.txt.encrypted" > /dev/null 2>&1
-assert_content_eq "secret.txt" "$ORIGINAL"
+assert_encrypted "secret.txt" "$ORIGINAL"
 
 # ------------------------------------------------------------------
 # 3. SourceModified with --force → succeed and re-encrypt
@@ -50,6 +46,4 @@ touch "$PWD/dotfiles/secret.txt.encrypted"
 dfm add --encrypt --force secret.txt
 
 # postcondition: encrypted source now has the modified content
-rm secret.txt
-7z -p"$PASSWORD" x "$PWD/dotfiles/secret.txt.encrypted" > /dev/null 2>&1
-assert_content_eq "secret.txt" "$MODIFIED"
+assert_encrypted "secret.txt" "$MODIFIED"

@@ -21,6 +21,4 @@ assert_source "secret.txt.encrypted"
 assert_no_source "secret.txt"
 
 # verify the encrypted file can be decrypted with the password
-rm secret.txt
-7z -p"$PASSWORD" x -y "$PWD/dotfiles/secret.txt.encrypted" > /dev/null 2>&1
-assert_content_eq "secret.txt" "$CONTENT"
+assert_encrypted "secret.txt" "$CONTENT"

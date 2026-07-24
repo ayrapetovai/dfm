@@ -102,6 +102,20 @@ function add_file() {
 }
 export -f add_file
 
+# Decrypt $PWD/dotfiles/<target>.encrypted with $PASSWORD and assert its
+# content matches the expected value.
+# Usage: assert_encrypted <target_file> <expected_content>
+# Requires $PASSWORD to be set in the calling test.
+function assert_encrypted() {
+    local target_file="$1"
+    local expected="$2"
+
+    rm -f "$target_file"
+    7z -p"$PASSWORD" x -y "${PWD}/dotfiles/${target_file}.encrypted" > /dev/null 2>&1
+    assert_content_eq "$target_file" "$expected"
+}
+export -f assert_encrypted
+
 # mktemp creates directory in the /tmp wich is mounted to memory filesystem
 readonly TMP_HOME=$(mktemp -d)
 trap 'rm -rf -- "$TMP_HOME"' EXIT

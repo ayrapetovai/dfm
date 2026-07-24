@@ -25,14 +25,10 @@ assert_no_source "dir/a.txt"
 assert_no_source "dir/sub/b.txt"
 
 # decrypt and verify content of the flat file
-rm dir/a.txt
-7z -p"$PASSWORD" x -y "$PWD/dotfiles/dir/a.txt.encrypted" > /dev/null 2>&1
-assert_content_eq "dir/a.txt" "$CONTENT_A"
+assert_encrypted "dir/a.txt" "$CONTENT_A"
 
 # decrypt and verify content of the nested file
-rm dir/sub/b.txt
-7z -p"$PASSWORD" x -y "$PWD/dotfiles/dir/sub/b.txt.encrypted" > /dev/null 2>&1
-assert_content_eq "dir/sub/b.txt" "$CONTENT_B"
+assert_encrypted "dir/sub/b.txt" "$CONTENT_B"
 
 # --- regression: non-encrypted add still works on a separate directory ---
 mkdir -p other_dir

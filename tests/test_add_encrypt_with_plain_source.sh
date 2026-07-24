@@ -19,6 +19,4 @@ assert_source "file.txt.encrypted"
 assert_no_source "file.txt"
 
 # verify the encrypted file decrypts correctly
-rm file.txt
-7z -p"$PASSWORD" x -y "$PWD/dotfiles/file.txt.encrypted" > /dev/null 2>&1
-assert_content_eq "file.txt" "$CONTENT"
+assert_encrypted "file.txt" "$CONTENT"

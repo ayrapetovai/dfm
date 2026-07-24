@@ -28,6 +28,4 @@ assert_source "file.txt.encrypted"
 assert_no_source "file.txt"
 
 # verify decrypted content equals current target (add direction: target is truth)
-rm file.txt
-7z -p"$PASSWORD" x -y "$PWD/dotfiles/file.txt.encrypted" > /dev/null 2>&1
-assert_content_eq "file.txt" "$NEW_TARGET"
+assert_encrypted "file.txt" "$NEW_TARGET"
