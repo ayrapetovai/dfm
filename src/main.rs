@@ -178,10 +178,6 @@ enum Command {
         /// Files to merge, if omitted - all conflicting files.
         #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
-
-        /// Use specified merge command
-        #[arg(long, short = 't', num_args = 1, value_name = "COMMAND")]
-        tool: Option<String>,
     },
 
     // must check conflicts
@@ -296,6 +292,14 @@ fn main() -> Result<(), dfm::DfmError> {
         },
         Command::Paths => {
             paths_command(&settings, &path_to_config_file, &path_to_state_file)
+        },
+        Command::Merge { .. } => {
+            if state_opt.is_none() {
+                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
+            }
+            let mut state = state_opt.unwrap();
+            merge_command(&settings, &args, &mut state)?;
+            write_state(&path_to_state_file, &state)
         },
         _ => {
             Err(dfm::DfmError::Unsupported(format!("subcommand {:?} is not implemented yet", args)))
