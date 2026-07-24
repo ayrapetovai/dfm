@@ -5,7 +5,8 @@ use log::{debug, error, info, trace, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::{resolve_dry_run, require_force};
+use super::{resolve_dry_run, require_force, get_sync_time, remove_sync_state,
+            source_rel_to_target_rel, list_directory_or_error};
 
 pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Forget {
@@ -28,18 +29,8 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
         None => vec![target_dir_abs_path.clone()]
     };
 
-    let ListDirectories {
-        found: traversed_paths,
-        errors: error_messages,
-        ..
-    } = list_directory(&paths, None)?;
+    let traversed_paths = list_directory_or_error(&paths, None, "in targets")?;
     debug!("traversing result is {:?}", traversed_paths);
-
-    if !error_messages.is_empty() {
-        return Err(DfmError::InvalidData(
-            format!("failed to process some subdirectories or files in targets {:?}", error_messages)
-        ));
-    }
 
     #[derive(Debug)]
     enum ForgetTask {
@@ -114,10 +105,12 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                 if source_abs_path.to_str().unwrap().ends_with(&settings.symlink_postfix) {
                     let source_symlink_file_abs_path = source_abs_path;
                     let source_rel_path = file_path_relative_to(&source_symlink_file_abs_path, &source_dir_abs_path);
-                    let source_rel_str = source_rel_path.to_str().unwrap()
-                        .replace(&settings.dot_prefix, ".")
-                        .replace(&settings.symlink_postfix, "");
-                    let target_symlink_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &source_rel_str]);
+                    let source_rel_str = source_rel_path.to_str().unwrap();
+                    let target_rel_str = source_rel_to_target_rel(
+                        source_rel_str, &settings.dot_prefix,
+                        &settings.symlink_postfix, &settings.encrypted_postfix,
+                    );
+                    let target_symlink_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &target_rel_str]);
                     if target_symlink_abs_path.exists() {
                         let target_symlink_pointee_path = match fs::read_link(&target_symlink_abs_path) {
                             Ok(p) => p,
@@ -161,9 +154,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                     continue; // success
                 };
 
-                let source_file_rel_path = file_path_relative_to(&source_abs_path, &source_dir_abs_path);
-                let source_file_rel_path = remove_dots_from_path(&source_file_rel_path);
-                let sync_time_opt = state.syncs.get(source_file_rel_path.to_str().unwrap());
+                let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
 
                 let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt)?;
                 if CompareByTimestamp::SourceModified == cmp {
@@ -230,9 +221,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                     error!("failed to remove file {:?}: {}", source_file, e);
                     return Err(e.into());
                 }
-                let source_rel_path = file_path_relative_to(&source_file, &source_dir_abs_path);
-                let source_rel_path = remove_dots_from_path(&source_rel_path);
-                state.syncs.remove(source_rel_path.to_str().unwrap());
+                remove_sync_state(state, &source_file, &source_dir_abs_path);
 
                 let mut parent_opt = source_file.parent();
                 while let Some(dir) = parent_opt {

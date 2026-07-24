@@ -3,23 +3,7 @@ use std::time::SystemTime;
 use log::{debug, info, warn};
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::run_merge;
-
-/// Convert a source-relative path (state key) to a target-relative path,
-/// stripping encrypted/symlink postfixes just like pull.rs does.
-fn source_rel_to_target_rel(source_rel: &str, settings: &Settings) -> String {
-    let dot_prefix = &settings.dot_prefix;
-    let mut target_rel = source_rel.replace(dot_prefix, ".");
-
-    // Strip known postfixes (same order as pull.rs source-traversal branch)
-    if target_rel.ends_with(&settings.symlink_postfix) {
-        target_rel = target_rel[..target_rel.len() - settings.symlink_postfix.len()].to_string();
-    } else if target_rel.ends_with(&settings.encrypted_postfix) {
-        target_rel = target_rel[..target_rel.len() - settings.encrypted_postfix.len()].to_string();
-    }
-
-    target_rel
-}
+use super::{run_merge, source_rel_to_target_rel};
 
 /// Look up a source-relative path in state, trying known postfixes.
 /// Returns the matching state key (which may include encrypted/symlink postfix).
@@ -78,7 +62,10 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
                 let source_rel_str = source_rel.to_str().unwrap();
 
                 // Derive target path (replace dot_prefix, strip postfixes)
-                let target_rel = source_rel_to_target_rel(source_rel_str, settings);
+                let target_rel = source_rel_to_target_rel(
+                    source_rel_str, &settings.dot_prefix,
+                    &settings.symlink_postfix, &settings.encrypted_postfix,
+                );
                 let inferred_target_abs = PathBuf::from_iter([target_dir_abs_path.to_str().unwrap(), &target_rel]);
                 let inferred_target_abs = remove_dots_from_path(&inferred_target_abs);
 
@@ -127,7 +114,10 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
             let source_abs = remove_dots_from_path(&source_abs);
 
             // Derive target path (replace dot_prefix, strip postfixes)
-            let target_rel = source_rel_to_target_rel(source_rel, settings);
+            let target_rel = source_rel_to_target_rel(
+                source_rel, &settings.dot_prefix,
+                &settings.symlink_postfix, &settings.encrypted_postfix,
+            );
             let target_abs = PathBuf::from_iter([target_dir_abs_path.to_str().unwrap(), &target_rel]);
             let target_abs = remove_dots_from_path(&target_abs);
 

@@ -27,8 +27,85 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 use filetime_creation::{set_file_mtime, FileTime};
 use log::{error, info, trace, log_enabled};
+use regex::RegexSet;
 
 use dfm::*;
+
+// ---------------------------------------------------------------------------
+// Shared state helpers
+// ---------------------------------------------------------------------------
+
+/// Get the sync time for a file, computing the state key from its absolute path.
+pub(crate) fn get_sync_time<'a>(
+    state: &'a StateObject,
+    path: &PathBuf,
+    source_dir: &PathBuf,
+) -> Option<&'a SystemTime> {
+    let rel = file_path_relative_to(path, source_dir);
+    let rel = remove_dots_from_path(&rel);
+    state.syncs.get(rel.to_str().unwrap())
+}
+
+/// Remove the sync entry for a file, computing the state key from its absolute path.
+pub(crate) fn remove_sync_state(
+    state: &mut StateObject,
+    path: &PathBuf,
+    source_dir: &PathBuf,
+) {
+    let rel = file_path_relative_to(path, source_dir);
+    let rel = remove_dots_from_path(&rel);
+    state.syncs.remove(rel.to_str().unwrap());
+}
+
+/// Insert/update a sync entry and set mtimes on both the source-side file
+/// and the target-side file.
+pub(crate) fn update_sync_state(
+    state: &mut StateObject,
+    source_abs: &PathBuf,
+    target_abs: &PathBuf,
+    source_dir_abs: &PathBuf,
+) -> Result<(), DfmError> {
+    let sync_creation = SystemTime::now();
+    let source_rel_path = file_path_relative_to(source_abs, source_dir_abs);
+    let source_rel_path = remove_dots_from_path(&source_rel_path);
+    state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), sync_creation);
+    let ft = FileTime::from_system_time(sync_creation);
+    set_file_mtime(target_abs, ft)?;
+    set_file_mtime(source_abs, ft)?;
+    Ok(())
+}
+
+/// Convert a source-relative path (state key) to a target-relative path,
+/// stripping encrypted/symlink postfixes.
+pub(crate) fn source_rel_to_target_rel(
+    source_rel: &str,
+    dot_prefix: &str,
+    symlink_postfix: &str,
+    encrypted_postfix: &str,
+) -> String {
+    let mut target_rel = source_rel.replace(dot_prefix, ".");
+    if target_rel.ends_with(symlink_postfix) {
+        target_rel = target_rel[..target_rel.len() - symlink_postfix.len()].to_string();
+    } else if target_rel.ends_with(encrypted_postfix) {
+        target_rel = target_rel[..target_rel.len() - encrypted_postfix.len()].to_string();
+    }
+    target_rel
+}
+
+/// Thin wrapper around `list_directory` that bundles the error check.
+pub(crate) fn list_directory_or_error(
+    paths: &[PathBuf],
+    filter: Option<&RegexSet>,
+    context: &str,
+) -> Result<Vec<PathBuf>, DfmError> {
+    let ListDirectories { found, errors, .. } = list_directory(paths, filter)?;
+    if !errors.is_empty() {
+        return Err(DfmError::InvalidData(
+            format!("failed to process some subdirectories or files {}: {:?}", context, errors)
+        ));
+    }
+    Ok(found)
+}
 
 // ---------------------------------------------------------------------------
 // Shared --dry-run / --force helpers
@@ -79,25 +156,15 @@ pub(crate) fn sync_file_copy(
         error!("failed to set permissions {:?} to {:?}: {}", permissions.mode(), to, e);
     }
 
-    let sync_creation = SystemTime::now();
-    let source_rel_path = file_path_relative_to(source_file_in_source_dir, source_dir_abs_path);
-    let source_rel_path = remove_dots_from_path(&source_rel_path);
-    state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), sync_creation);
-
-    let sync_creation = FileTime::from_system_time(sync_creation);
-
-    set_file_mtime(to, sync_creation)?;
-    set_file_mtime(from, sync_creation)?;
+    update_sync_state(state, source_file_in_source_dir, from, source_dir_abs_path)?;
 
     if log_enabled!(log::Level::Trace) {
         let from_meta = from.metadata()?;
         let to_meta = to.metadata()?;
-
         let to_modified = to_meta.modified()?;
         let from_modified = from_meta.modified()?;
-
-        trace!("final state:\n from: mtime={:?}\n to: sync={:?},\n      mtime={:?}",
-             to_modified, sync_creation, from_modified);
+        trace!("final state:\n from: mtime={:?}\n to: mtime={:?}",
+             to_modified, from_modified);
     }
 
     Ok(())
@@ -203,18 +270,7 @@ pub(crate) fn run_merge(
     fs::copy(&result_path, target_abs_path)?;
 
     // Update sync state and mtimes
-    let sync_creation = SystemTime::now();
-    let source_rel_path = file_path_relative_to(source_abs_path, source_dir_abs_path);
-    let source_rel_path = remove_dots_from_path(&source_rel_path);
-    state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), sync_creation);
-
-    let ft = FileTime::from_system_time(sync_creation);
-    if let Err(e) = set_file_mtime(target_abs_path, ft) {
-        error!("failed to set target mtime after merge: {}", e);
-    }
-    if let Err(e) = set_file_mtime(source_abs_path, ft) {
-        error!("failed to set source mtime after merge: {}", e);
-    }
+    update_sync_state(state, source_abs_path, target_abs_path, source_dir_abs_path)?;
 
     let _ = fs::remove_dir_all(&merge_dir);
 

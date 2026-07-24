@@ -3,16 +3,14 @@ use std::fs::File;
 use std::io::Write;
 use crate::DfmError;
 use std::path::PathBuf;
-use std::time::SystemTime;
-
-use filetime_creation::FileTime;
 
 use log::{debug, error, info, warn};
 use regex::RegexSet;
 
 use dfm::*;
 use crate::{Args, Command};
-use super::{sync_file_copy, resolve_dry_run, require_force, run_merge};
+use super::{sync_file_copy, resolve_dry_run, require_force, run_merge,
+            update_sync_state, remove_sync_state, get_sync_time, list_directory_or_error};
 
 pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
@@ -42,18 +40,8 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         None => vec![target_dir_abs_path.clone()]
     };
 
-    let ListDirectories {
-        found: traversed_paths,
-        errors: error_messages,
-        ..
-    } = list_directory(&paths, None)?;
+    let traversed_paths = list_directory_or_error(&paths, None, "in targets")?;
     debug!("traversing result is {:?}", traversed_paths);
-
-    if !error_messages.is_empty() {
-        return Err(DfmError::InvalidData(
-            format!("failed to process some subdirectories or files in targets {:?}", error_messages)
-        ));
-    }
 
     let target_ignore_file_path = calc_local_ignore_file()?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
@@ -172,9 +160,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             if regular_source_abs_path.exists() {
                 // Converting from plain to encrypted.  The plain source will be
                 // deleted after encryption, so check if it has un-synced changes.
-                let plain_rel = file_path_relative_to(&regular_source_abs_path, &source_dir_abs_path);
-                let plain_rel = remove_dots_from_path(&plain_rel);
-                let sync_time_opt = state.syncs.get(plain_rel.to_str().unwrap());
+                let sync_time_opt = get_sync_time(state, &regular_source_abs_path, &source_dir_abs_path);
                 let cmp = compare_files_by_timestamps(&target_abs_path, &regular_source_abs_path, sync_time_opt)?;
 
                 match cmp {
@@ -221,9 +207,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
         // check if a conflict could take a place
         if source_abs_path.exists() {
-            let source_file_rel_path = file_path_relative_to(&source_abs_path, &source_dir_abs_path);
-            let source_file_rel_path = remove_dots_from_path(&source_file_rel_path);
-            let sync_time_opt = state.syncs.get(source_file_rel_path.to_str().unwrap());
+            let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
 
             let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt)?;
 
@@ -358,15 +342,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
                 dfm::crypt::write_zip_file(settings, &target_file, &source_file)?;
 
-                // Record sync time and sync mtimes (same as sync_file_copy for Copy)
-                let sync_creation = SystemTime::now();
-                let source_rel_path = file_path_relative_to(&source_file, &source_dir_abs_path);
-                let source_rel_path = remove_dots_from_path(&source_rel_path);
-                state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), sync_creation);
-
-                let ft = FileTime::from_system_time(sync_creation);
-                filetime_creation::set_file_mtime(&target_file, ft)?;
-                filetime_creation::set_file_mtime(&source_file, ft)?;
+                update_sync_state(state, &source_file, &target_file, &source_dir_abs_path)?;
 
                 // If a plain source exists, remove it — replaced by the encrypted version
                 let plain_source = filepath_in_source_dir(
@@ -376,9 +352,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 if plain_source.exists() {
                     fs::remove_file(&plain_source)?;
                     // Remove stale state entry for the plain source
-                    let plain_rel = file_path_relative_to(&plain_source, &source_dir_abs_path);
-                    let plain_rel = remove_dots_from_path(&plain_rel);
-                    state.syncs.remove(plain_rel.to_str().unwrap());
+                    remove_sync_state(state, &plain_source, &source_dir_abs_path);
                 }
             },
             AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {

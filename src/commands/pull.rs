@@ -1,15 +1,76 @@
 use std::fs;
 use std::path::PathBuf;
-use std::time::SystemTime;
-
-use filetime_creation::FileTime;
 
 use log::{debug, error, info, warn};
 use regex::RegexSet;
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::{sync_file_copy, resolve_dry_run, require_force, run_merge};
+use super::{sync_file_copy, resolve_dry_run, require_force, run_merge,
+            update_sync_state, get_sync_time, source_rel_to_target_rel,
+            list_directory_or_error};
+
+#[derive(Debug)]
+enum PullTask {
+    Copy(PathBuf, PathBuf),
+    CreateOrUpdateSymlink(PathBuf, String),
+    Decrypt(PathBuf, PathBuf),
+    Merge(PathBuf, PathBuf),
+}
+
+/// Handle the encrypted-source timestamp comparison for pull.
+/// Pushes a `Decrypt` or `Merge` task as appropriate.
+/// Returns an error via `require_force` if force is needed but not set.
+fn handle_encrypted_timestamps(
+    cmp: CompareByTimestamp,
+    source_abs: &PathBuf,
+    target_abs: &PathBuf,
+    merge: bool,
+    force: bool,
+    tasks: &mut Vec<PullTask>,
+) -> Result<(), DfmError> {
+    match cmp {
+        CompareByTimestamp::BothModified => {
+            warn!("both target and encrypted source {:?} were modified, merge needed", source_abs);
+            if merge {
+                tasks.push(PullTask::Merge(source_abs.clone(), target_abs.clone()));
+                return Ok(());
+            }
+            require_force(force, "target and encrypted source have conflicting modifications")?;
+            tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+        },
+        CompareByTimestamp::NonModified => {
+            if force {
+                info!("force flag set, decrypting despite no modifications");
+                tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+            } else {
+                info!("neither target nor encrypted source were modified, no action needed, skipping...");
+            }
+        },
+        CompareByTimestamp::TargetModified => {
+            warn!("target was modified, pulling encrypted source will overwrite those changes");
+            if merge {
+                tasks.push(PullTask::Merge(source_abs.clone(), target_abs.clone()));
+                return Ok(());
+            }
+            require_force(force, "target was modified")?;
+            tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+        },
+        CompareByTimestamp::SourceModified => {
+            info!("only the encrypted source was modified, decrypting...");
+            tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+        },
+        CompareByTimestamp::NeverSynchronized => {
+            if !force {
+                warn!("target {:?}\n\tand encrypted source {:?}\n\twere not synchronized.", target_abs, source_abs);
+                warn!("Use --force to replace target with decrypted source");
+            } else {
+                tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+            }
+        },
+    }
+    Ok(())
+}
 
 pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Pull {
@@ -34,25 +95,9 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
     };
 
     let regex_no_dot_files = RegexSet::new(vec![r#"^(.+/)?[^.][^/]+$"#]).unwrap();
-    let ListDirectories{
-        found: traversed_paths,
-        errors: error_messages,
-        ..
-    } = list_directory(&paths, Some(&regex_no_dot_files))?;
+    let traversed_paths = list_directory_or_error(&paths, Some(&regex_no_dot_files), "in source")?;
     debug!("traversing result is {:?}", traversed_paths);
 
-    if !error_messages.is_empty() {
-        return Err(DfmError::InvalidData(
-            format!("failed to process some subdirectories or files in source {:?}", error_messages)
-        ));
-    }
-
-    enum PullTask {
-        Copy(PathBuf, PathBuf),
-        CreateOrUpdateSymlink(PathBuf, String),
-        Decrypt(PathBuf, PathBuf),
-        Merge(PathBuf, PathBuf),
-    }
 
     let target_ignore_file_path = calc_local_ignore_file()?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
@@ -72,16 +117,11 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             debug!("provided path of a source {:?}", source_file_abs_path);
 
             let source_name = source_file_abs_path.to_str().unwrap().to_owned();
-            let target_file_rel_to_target_dir = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path);
-            let dot_prefix = settings.dot_prefix.clone();
-            let target_file_rel_to_target_dir = target_file_rel_to_target_dir.to_str().unwrap().replace(&dot_prefix, ".");
-            let target_file_rel_to_target_dir = if source_name.ends_with(&settings.symlink_postfix) {
-                target_file_rel_to_target_dir.replace(&settings.symlink_postfix, "")
-            } else if source_name.ends_with(&settings.encrypted_postfix) {
-                target_file_rel_to_target_dir.replace(&settings.encrypted_postfix, "")
-            } else {
-                target_file_rel_to_target_dir
-            };
+            let source_rel_str = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path).to_str().unwrap().to_owned();
+            let target_file_rel_to_target_dir = source_rel_to_target_rel(
+                &source_rel_str, &settings.dot_prefix,
+                &settings.symlink_postfix, &settings.encrypted_postfix,
+            );
             let target_file_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &target_file_rel_to_target_dir]);
             let target_file_abs_path = remove_dots_from_path(&target_file_abs_path);
             debug!("inferred target {:?}", target_file_abs_path);
@@ -122,52 +162,12 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             } else if target_file_abs_path.exists() && source_name.ends_with(&settings.encrypted_postfix) {
                 debug!("target {:?} exists, source is encrypted, checking timestamps", target_file_abs_path);
 
-                let source_file_rel_path = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path);
-                let source_file_rel_path = remove_dots_from_path(&source_file_rel_path);
-                let sync_time_opt = state.syncs.get(source_file_rel_path.to_str().unwrap());
+                let cmp = compare_files_by_timestamps(
+                    &target_file_abs_path, &source_file_abs_path,
+                    get_sync_time(state, &source_file_abs_path, &source_dir_abs_path),
+                )?;
 
-                let cmp = compare_files_by_timestamps(&target_file_abs_path, &source_file_abs_path, sync_time_opt)?;
-
-                match cmp {
-                    CompareByTimestamp::BothModified => {
-                        warn!("both target and encrypted source {:?} were modified, merge needed", source_file_abs_path);
-                        if *merge {
-                            tasks.push(PullTask::Merge(source_file_abs_path, target_file_abs_path));
-                            continue;
-                        }
-                        require_force(*force, "target and encrypted source have conflicting modifications")?;
-                        tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path));
-                    },
-                    CompareByTimestamp::NonModified => {
-                        if *force {
-                            info!("force flag set, decrypting despite no modifications");
-                            tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path));
-                        } else {
-                            info!("neither target nor encrypted source were modified, no action needed, skipping...");
-                        }
-                    },
-                    CompareByTimestamp::TargetModified => {
-                        warn!("target was modified, pulling encrypted source will overwrite those changes");
-                        if *merge {
-                            tasks.push(PullTask::Merge(source_file_abs_path, target_file_abs_path));
-                            continue;
-                        }
-                        require_force(*force, "target was modified")?;
-                        tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path));
-                    },
-                    CompareByTimestamp::SourceModified => {
-                        info!("only the encrypted source was modified, decrypting...");
-                        tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path));
-                    },
-                    CompareByTimestamp::NeverSynchronized => {
-                        if !force {
-                            warn!("target {:?}\n\tand encrypted source {:?}\n\twere not synchronized.", target_file_abs_path, source_file_abs_path);
-                            warn!("Use --force to replace target with decrypted source");
-                        } else {
-                            tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path));
-                        }
-                    },
-                }
+                handle_encrypted_timestamps(cmp, &source_file_abs_path, &target_file_abs_path, *merge, *force, &mut tasks)?;
                 continue;
             }
             // TODO check if the pointee of the symlink also is under management and needs to be pulled.
@@ -229,61 +229,19 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                 if source_encrypted_abs_path.exists() {
                     debug!("target {:?} exists, encrypted source found, checking timestamps", target_abs_path);
 
-                    let source_file_rel_path = file_path_relative_to(&source_encrypted_abs_path, &source_dir_abs_path);
-                    let source_file_rel_path = remove_dots_from_path(&source_file_rel_path);
-                    let sync_time_opt = state.syncs.get(source_file_rel_path.to_str().unwrap());
+                    let cmp = compare_files_by_timestamps(
+                        &target_abs_path, &source_encrypted_abs_path,
+                        get_sync_time(state, &source_encrypted_abs_path, &source_dir_abs_path),
+                    )?;
 
-                    let cmp = compare_files_by_timestamps(&target_abs_path, &source_encrypted_abs_path, sync_time_opt)?;
-
-                    match cmp {
-                        CompareByTimestamp::BothModified => {
-                            warn!("both target and encrypted source {:?} were modified, merge needed", source_encrypted_abs_path);
-                            if *merge {
-                                tasks.push(PullTask::Merge(source_encrypted_abs_path.clone(), target_abs_path.clone()));
-                                continue;
-                            }
-                            require_force(*force, "target and encrypted source have conflicting modifications")?;
-                            tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_abs_path));
-                        },
-                        CompareByTimestamp::NonModified => {
-                            if *force {
-                                info!("force flag set, decrypting despite no modifications");
-                                tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_abs_path));
-                            } else {
-                                info!("neither target nor encrypted source were modified, no action needed, skipping...");
-                            }
-                        },
-                        CompareByTimestamp::TargetModified => {
-                            warn!("target was modified, pulling encrypted source will overwrite those changes");
-                            if *merge {
-                                tasks.push(PullTask::Merge(source_encrypted_abs_path.clone(), target_abs_path.clone()));
-                                continue;
-                            }
-                            require_force(*force, "target was modified")?;
-                            tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_abs_path));
-                        },
-                        CompareByTimestamp::SourceModified => {
-                            info!("only the encrypted source was modified, decrypting...");
-                            tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_abs_path));
-                        },
-                        CompareByTimestamp::NeverSynchronized => {
-                            if !force {
-                                warn!("target {:?}\n\tand encrypted source {:?}\n\twere not synchronized.", target_abs_path, source_encrypted_abs_path);
-                                warn!("Use --force to replace target with decrypted source");
-                            } else {
-                                tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_abs_path));
-                            }
-                        },
-                    }
+                    handle_encrypted_timestamps(cmp, &source_encrypted_abs_path, &target_abs_path, *merge, *force, &mut tasks)?;
                     continue; // either skipped or task pushed, proceed to next file
                 }
                 info!("target {:?} is unmanaged,\n\tno source {:?} found, skipping...", target_abs_path, source_abs_path);
                 continue; // TODO is this an error?
             }
 
-            let source_file_rel_path = file_path_relative_to(&source_abs_path, &source_dir_abs_path);
-            let source_file_rel_path = remove_dots_from_path(&source_file_rel_path);
-            let sync_time_opt = state.syncs.get(source_file_rel_path.to_str().unwrap());
+            let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
 
             let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt)?;
 
@@ -424,16 +382,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
                 dfm::crypt::read_zip_file(settings, source_file, target_file)?;
 
-                // Record sync time, using the encrypted source path as the state key
-                // so that subsequent `add` can detect conflicts.
-                let sync_creation = SystemTime::now();
-                let source_rel_path = file_path_relative_to(source_file, &source_dir_abs_path);
-                let source_rel_path = remove_dots_from_path(&source_rel_path);
-                state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), sync_creation);
-
-                let ft = FileTime::from_system_time(sync_creation);
-                filetime_creation::set_file_mtime(target_file, ft)?;
-                filetime_creation::set_file_mtime(source_file, ft)?;
+                update_sync_state(state, source_file, target_file, &source_dir_abs_path)?;
             },
             PullTask::Merge(source, target) => {
                 info!("merge source {:?} and target {:?}", source, target);
