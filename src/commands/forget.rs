@@ -220,7 +220,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
         match task {
             ForgetTask::Delete(source_file) => {
                 info!("delete {:?}", source_file);
-                if dry_run && !*force {
+                if dry_run {
                     continue;
                 }
 

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use log::{debug, info};
+use log::{debug, error, info};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
@@ -29,6 +29,34 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
 
     if dry_run {
         info!("dry run specified, no changes will be made");
+    }
+
+    // Check for un-pulled source changes before deleting the source directory
+    if !*keep_source && !*force {
+        if let Ok(state_path) = calc_state_file_path() {
+            if let Ok(state) = read_state(&state_path) {
+                let mut modified_paths = vec![];
+                for (rel_path, sync_time) in &state.syncs {
+                    let source_path = PathBuf::from(&source_dir_abs_path).join(rel_path);
+                    if let Ok(meta) = source_path.metadata() {
+                        if let Ok(mtime) = meta.modified() {
+                            if mtime > *sync_time {
+                                modified_paths.push(rel_path.clone());
+                            }
+                        }
+                    }
+                }
+                if !modified_paths.is_empty() {
+                    error!("source directory contains files with un-pulled changes:");
+                    for path in &modified_paths {
+                        error!("  {:?}", path);
+                    }
+                    return Err(DfmError::Other(
+                        "use --force to purge despite un-pulled changes".into()
+                    ));
+                }
+            }
+        }
     }
 
     if !keep_config_file {

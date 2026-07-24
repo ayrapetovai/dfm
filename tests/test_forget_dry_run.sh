@@ -9,6 +9,11 @@ dfm forget --dry-run file.txt
 assert_source "file.txt"
 assert -f file.txt
 
+# dry-run + force — dry-run must still win
+dfm forget --dry-run --force file.txt
+assert_source "file.txt"
+assert -f file.txt
+
 # actual forget removes source
 dfm forget file.txt
 assert_no_source "file.txt"

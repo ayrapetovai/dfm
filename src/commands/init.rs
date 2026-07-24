@@ -33,16 +33,16 @@ pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     if !path_to_source.exists() {
         info!("source dir {:?} does not exist, creating", path_to_source);
         if dry_run {
-            warn!("dry run specified but it will not prevent from creating source directory {:?}", path_to_source)
-        }
-
-        let actual_path = if path_to_source.is_absolute() {
-            path_to_source.clone()
+            warn!("dry-run — skipping source directory creation");
         } else {
-            let current_dir = env::current_dir()?;
-            PathBuf::from_iter(vec![current_dir, path_to_source.clone()])
-        };
-        fs::create_dir_all(actual_path)?;
+            let actual_path = if path_to_source.is_absolute() {
+                path_to_source.clone()
+            } else {
+                let current_dir = env::current_dir()?;
+                PathBuf::from_iter(vec![current_dir, path_to_source.clone()])
+            };
+            fs::create_dir_all(actual_path)?;
+        }
     }
 
     let mut tasks = vec![];
