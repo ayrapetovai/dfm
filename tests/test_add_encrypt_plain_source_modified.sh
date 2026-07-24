@@ -1,24 +1,31 @@
 CONTENT="$(uuid)"
+MODIFIED="$(uuid)"
 PASSWORD="$(uuid)"
 
 dfm init dotfiles
 dfm config --set obtain_password_shell_command "echo -n $PASSWORD"
 
-# first add as plain file
+# add as plain file
 write "$CONTENT" file.txt
 dfm add file.txt
 assert_source "file.txt"
 
-# now add with --encrypt when an unencrypted source file already exists
-dfm add -e file.txt
+# modify the plain source
+write "$MODIFIED" dotfiles/file.txt
 
-# postcondition: encrypted source file exists
+# encrypt should reject due to SourceModified
+assert_fail dfm add -e file.txt 2>/dev/null
+
+# with --force it should succeed
+dfm add -e --force file.txt
+
+# encrypted source exists
 assert_source "file.txt.encrypted"
 
-# postcondition: plain source file was removed (no longer orphaned)
+# plain source was cleaned up
 assert_no_source "file.txt"
 
-# verify the encrypted file decrypts correctly
+# verify decrypted content matches target (add direction: target is truth)
 rm file.txt
 7z -p"$PASSWORD" x -y "$PWD/dotfiles/file.txt.encrypted" > /dev/null 2>&1
 assert_content_eq "file.txt" "$CONTENT"

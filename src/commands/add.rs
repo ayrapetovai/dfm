@@ -170,11 +170,44 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
         let (source_is_encrypted, source_abs_path) = if encrypted_source_abs_path.exists() || encrypt {
             if regular_source_abs_path.exists() {
-                warn!("target must be encrypted but unencrypted source is present {:?}", source_dir_abs_path);
-                // FIXME check if source is modified
-                // if not modified then remove it, and create and encrypted copy of target instead of it
-                // if only source modified then ???
-                // if both modified then ???
+                // Converting from plain to encrypted.  The plain source will be
+                // deleted after encryption, so check if it has un-synced changes.
+                let plain_rel = file_path_relative_to(&regular_source_abs_path, &source_dir_abs_path);
+                let plain_rel = remove_dots_from_path(&plain_rel);
+                let sync_time_opt = state.syncs.get(plain_rel.to_str().unwrap());
+                let cmp = compare_files_by_timestamps(&target_abs_path, &regular_source_abs_path, sync_time_opt)?;
+
+                match cmp {
+                    CompareByTimestamp::BothModified => {
+                        println!("both target {:?} and plain source {:?} were modified, encryption would delete plain source changes",
+                            target_abs_path, regular_source_abs_path);
+                        conflict_detected = true;
+                        if !force {
+                            continue;
+                        }
+                    },
+                    CompareByTimestamp::SourceModified => {
+                        println!("plain source {:?} was modified, encryption would discard those changes",
+                            regular_source_abs_path);
+                        conflict_detected = true;
+                        if !force {
+                            continue;
+                        }
+                    },
+                    CompareByTimestamp::NonModified => {
+                        // safe to replace
+                    },
+                    CompareByTimestamp::TargetModified => {
+                        // target is truth for add, safe to replace
+                    },
+                    CompareByTimestamp::NeverSynchronized => {
+                        if !force {
+                            warn!("plain source {:?}\n\tand target {:?}\n\twere never synchronized.", regular_source_abs_path, target_abs_path);
+                            warn!("Use --force to replace plain source with encrypted source");
+                            continue;
+                        }
+                    },
+                }
             }
             (true, encrypted_source_abs_path)
         } else {
@@ -319,6 +352,19 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 let ft = FileTime::from_system_time(sync_creation);
                 filetime_creation::set_file_mtime(&target_file, ft)?;
                 filetime_creation::set_file_mtime(&source_file, ft)?;
+
+                // If a plain source exists, remove it — replaced by the encrypted version
+                let plain_source = filepath_in_source_dir(
+                    &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
+                    &target_file, None,
+                );
+                if plain_source.exists() {
+                    fs::remove_file(&plain_source)?;
+                    // Remove stale state entry for the plain source
+                    let plain_rel = file_path_relative_to(&plain_source, &source_dir_abs_path);
+                    let plain_rel = remove_dots_from_path(&plain_rel);
+                    state.syncs.remove(plain_rel.to_str().unwrap());
+                }
             },
             AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {
                 info!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to);
