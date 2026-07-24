@@ -343,6 +343,7 @@ The password is cached in memory for the duration of the process, so you are pro
 Encrypted files (suffix `.encrypted`) are standard ZIP archives with AES-128 encryption. They can be decrypted with any tool that supports AES-encrypted ZIP, such as `7z`:
 
 ```bash
+# will ask for the password
 7z x filename.encrypted
 ```
 
@@ -389,8 +390,6 @@ source_dir/dot-bashrc.symlink              -- symlink pointer file
 ## Limitations
 
 - **Status subcommand**: Not implemented (CLI stub only).
-- **Backups**: The README once described automatic gzip backups before overwrites; this feature is not implemented.
-- **Hooks**: Pre/post hooks are parsed from the config file but never executed.
 - **Config `--set` and arrays**: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the TOML file directly.
 - **Dotfiles outside UTF-8 paths**: Only valid UTF-8 paths are supported.
 - **Merge tool**: The merge command is run directly (no shell), so shell features (`|`, `>`, `$VAR`) in `merge_tool_command` are not processed.
