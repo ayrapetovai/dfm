@@ -4,11 +4,9 @@ using a separate directory under a version control system (source).
 - safe copy from target to source and vise versa
 - show all kinds of statuses
 - ignore specified files in target and source directories
-- call mergetool on conflicts (two-way merge)
-- backup files before overwriting
+- call mergetool on conflicts (three-way merge)
 - tracking symlinks and files they point to, if in source directory
 - encrypt files and directories with AES
-- process hooks on any stage of a subcommand
 
 ## How Dotfile Managing is Performed
 

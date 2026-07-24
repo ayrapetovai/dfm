@@ -12,7 +12,7 @@ use regex::RegexSet;
 
 use dfm::*;
 use crate::{Args, Command};
-use super::{sync_file_copy, resolve_dry_run, require_force};
+use super::{sync_file_copy, resolve_dry_run, require_force, run_merge};
 
 pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
@@ -64,6 +64,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         CopyEncryptedFile(PathBuf, PathBuf),
         CreateSymlinkFilePointer(PathBuf, String),
         CopyAndSymlink(PathBuf, PathBuf),
+        Merge(PathBuf, PathBuf),
     }
 
     let mut tasks: Vec<AddTask> = Vec::new();
@@ -233,6 +234,10 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                         target_abs_path, source_abs_path);
                     conflict_detected = true;
                     if !force {
+                        if *merge {
+                            tasks.push(AddTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
+                            continue;
+                        }
                         continue;
                     }
                 },
@@ -241,6 +246,10 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                               source_abs_path, target_abs_path);
                     conflict_detected = true;
                     if !force {
+                        if *merge {
+                            tasks.push(AddTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
+                            continue;
+                        }
                         continue;
                     }
                 },
@@ -333,6 +342,13 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     .to_path_buf();
                 let link_target = file_path_relative_to(&source_file, &target_parent);
                 symlink::symlink_file(&link_target, &target_file)?;
+            },
+            AddTask::Merge(source, target) => {
+                info!("merge source {:?} and target {:?}", source, target);
+                if dry_run {
+                    continue;
+                }
+                run_merge(settings, &source, &target, state, &source_dir_abs_path)?;
             },
             AddTask::CopyEncryptedFile(target_file, source_file) => {
                 info!("copy encrypted target {:?} to source {:?}", target_file, source_file);

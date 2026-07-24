@@ -85,7 +85,8 @@ fn create_default_test_config(source: Option<PathBuf>, target: Option<PathBuf>) 
         hooks: vec![],
         dotfiles_only: false,
         force_encryption_for: vec![],
-        obtain_password_shell_command: Some("".to_owned())
+        obtain_password_shell_command: Some("".to_owned()),
+        merge_tool_command: None,
     }
 }
 

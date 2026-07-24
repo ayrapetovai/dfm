@@ -9,7 +9,7 @@ use regex::RegexSet;
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::{sync_file_copy, resolve_dry_run, require_force};
+use super::{sync_file_copy, resolve_dry_run, require_force, run_merge};
 
 pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Pull {
@@ -51,6 +51,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
         Copy(PathBuf, PathBuf),
         CreateOrUpdateSymlink(PathBuf, String),
         Decrypt(PathBuf, PathBuf),
+        Merge(PathBuf, PathBuf),
     }
 
     let target_ignore_file_path = calc_local_ignore_file()?;
@@ -130,14 +131,27 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                 match cmp {
                     CompareByTimestamp::BothModified => {
                         warn!("both target and encrypted source {:?} were modified, merge needed", source_file_abs_path);
+                        if *merge {
+                            tasks.push(PullTask::Merge(source_file_abs_path, target_file_abs_path));
+                            continue;
+                        }
                         require_force(*force, "target and encrypted source have conflicting modifications")?;
                         tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path));
                     },
                     CompareByTimestamp::NonModified => {
-                        info!("neither target nor encrypted source were modified, no action needed, skipping...");
+                        if *force {
+                            info!("force flag set, decrypting despite no modifications");
+                            tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path));
+                        } else {
+                            info!("neither target nor encrypted source were modified, no action needed, skipping...");
+                        }
                     },
                     CompareByTimestamp::TargetModified => {
                         warn!("target was modified, pulling encrypted source will overwrite those changes");
+                        if *merge {
+                            tasks.push(PullTask::Merge(source_file_abs_path, target_file_abs_path));
+                            continue;
+                        }
                         require_force(*force, "target was modified")?;
                         tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path));
                     },
@@ -224,14 +238,27 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                     match cmp {
                         CompareByTimestamp::BothModified => {
                             warn!("both target and encrypted source {:?} were modified, merge needed", source_encrypted_abs_path);
+                            if *merge {
+                                tasks.push(PullTask::Merge(source_encrypted_abs_path.clone(), target_abs_path.clone()));
+                                continue;
+                            }
                             require_force(*force, "target and encrypted source have conflicting modifications")?;
                             tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_abs_path));
                         },
                         CompareByTimestamp::NonModified => {
-                            info!("neither target nor encrypted source were modified, no action needed, skipping...");
+                            if *force {
+                                info!("force flag set, decrypting despite no modifications");
+                                tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_abs_path));
+                            } else {
+                                info!("neither target nor encrypted source were modified, no action needed, skipping...");
+                            }
                         },
                         CompareByTimestamp::TargetModified => {
                             warn!("target was modified, pulling encrypted source will overwrite those changes");
+                            if *merge {
+                                tasks.push(PullTask::Merge(source_encrypted_abs_path.clone(), target_abs_path.clone()));
+                                continue;
+                            }
                             require_force(*force, "target was modified")?;
                             tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_abs_path));
                         },
@@ -262,15 +289,26 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
             match cmp {
                 CompareByTimestamp::BothModified => {
-                    // TODO add merge
+                    if *merge {
+                        tasks.push(PullTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
+                        continue;
+                    }
                     warn!("both source and target was modified, merge needed");
                     require_force(*force, "target and source have conflicting modifications")?;
                 },
                 CompareByTimestamp::NonModified => {
-                    info!("both source and target were not modified, no action needed, skipping...");
-                    continue; // success
+                    if *force {
+                        info!("force flag set, copying despite no modifications");
+                    } else {
+                        info!("both source and target were not modified, no action needed, skipping...");
+                        continue; // success
+                    }
                 },
                 CompareByTimestamp::TargetModified => {
+                    if *merge {
+                        tasks.push(PullTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
+                        continue;
+                    }
                     warn!("target was modified, pulling source will overwrite those changes");
                     require_force(*force, "target was modified")?;
                 },
@@ -396,6 +434,13 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                 let ft = FileTime::from_system_time(sync_creation);
                 filetime_creation::set_file_mtime(target_file, ft)?;
                 filetime_creation::set_file_mtime(source_file, ft)?;
+            },
+            PullTask::Merge(source, target) => {
+                info!("merge source {:?} and target {:?}", source, target);
+                if dry_run {
+                    continue;
+                }
+                run_merge(settings, source, target, state, &source_dir_abs_path)?;
             },
         }
     }

@@ -260,6 +260,7 @@ pub struct Config {
     #[serde(with = "serde_regex")]
     pub force_encryption_for: Vec<Regex>,
     pub obtain_password_shell_command: Option<String>,
+    pub merge_tool_command: Option<String>,
 }
 
 impl Config {
@@ -276,6 +277,7 @@ impl Config {
             dotfiles_only: Some(settings.dotfiles_only),
             force_encryption_for: settings.force_encryption_for.clone(),
             obtain_password_shell_command: settings.obtain_password_shell_command.clone(),
+            merge_tool_command: settings.merge_tool_command.clone(),
         }
     }
 }
@@ -311,7 +313,7 @@ pub struct Settings {
     // default_ignored: Vec<Regex>,
     pub force_encryption_for: Vec<Regex>,
     pub obtain_password_shell_command: Option<String>,
-
+    pub merge_tool_command: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -392,7 +394,8 @@ pub fn create_default_settings() -> Settings {
         hooks: vec![],
         dotfiles_only: false,
         force_encryption_for: BY_DEFAULT_FORCE_ENCRYPTION_FILES.to_vec(),
-        obtain_password_shell_command: Some("".to_owned()), // TODO need to make serde to add empy fiels to file
+        obtain_password_shell_command: Some("".to_owned()), // TODO need to make serde to add empty files to file
+        merge_tool_command: Some("vimdiff {target} {result} {source}".to_owned()),
     }
 }
 
@@ -456,6 +459,10 @@ pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_obj
                 obtain_password_shell_command: match &custom.obtain_password_shell_command {
                     Some(s) => Some(s.clone()),
                     None => default.obtain_password_shell_command.clone()
+                },
+                merge_tool_command: match &custom.merge_tool_command {
+                    Some(s) => Some(s.clone()),
+                    None => default.merge_tool_command.clone()
                 },
             },
         None => default.clone()
