@@ -177,6 +177,10 @@ enum Command {
         /// Files to merge, if omitted - all conflicting files.
         #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
+
+        /// Run only checks, no changes will be made to filesystem.
+        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        dry_run: bool,
     },
 
     // must check conflicts
