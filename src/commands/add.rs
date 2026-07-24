@@ -18,7 +18,6 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
     let Command::Add {
         paths,
         merge,
-        allow_foreign: foreign,
         force,
         symlink,
         encrypt,
@@ -29,7 +28,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
     let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
-    debug!("add paths {:?}, merge {}, foreign {}, force {}, symlink {}, encrypt {}", paths, merge, foreign, force, symlink, encrypt);
+    debug!("add paths {:?}, merge {}, force {}, symlink {}, encrypt {}", paths, merge, force, symlink, encrypt);
 
     if *symlink && *encrypt {
         error!("Cannot encrypt source for symlink target");

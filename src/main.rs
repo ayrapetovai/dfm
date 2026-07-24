@@ -90,10 +90,6 @@ enum Command {
         #[arg(long, short, num_args = 0, default_value_t = false)]
         merge: bool,
 
-        /// Force managing files outside target directory.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
-        allow_foreign: bool,
-
         /// Overwrite source file on conflict and add symlinks.
         #[arg(long, short = 'f', num_args = 0, default_value_t = false)]
         force: bool,
