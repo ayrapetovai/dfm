@@ -172,8 +172,7 @@ enum Command {
         useless_patterns: bool,
     },
 
-    // TODO implement like https://man7.org/linux/man-pages/man1/git-mergetool.1.html
-    /// Perform 2-way merge on conflicting files.
+    /// Perform 3-way merge on conflicting files.
     Merge {
         /// Files to merge, if omitted - all conflicting files.
         #[arg(value_name = "PATH")]

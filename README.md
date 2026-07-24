@@ -1,284 +1,396 @@
-# Dotfile Manager
-This program is designed to maintain copies of configuration files from the home directory (target)
-using a separate directory under a version control system (source).
-- safe copy from target to source and vise versa
-- show all kinds of statuses
-- ignore specified files in target and source directories
-- call mergetool on conflicts (three-way merge)
-- tracking symlinks and files they point to, if in source directory
-- encrypt files and directories with AES
+# Dotfile Manager (dfm)
 
-## How Dotfile Managing is Performed
+A CLI tool to manage dotfiles: keep copies of configuration files from your home directory (**target**) inside a version-controlled **source** directory, and synchronize changes between them safely.
 
-### Terminology
-1. `config file` - the file in filesystem that contains parameters of the program.  
-2. `state file` - file in which the synchronization time, `target directory` and `source directory` paths are stored.  
-3. `target directory` - is set to be root for all files/directories to managed by the dotfime manager. There
-    can be only one `target directory` for the whole filesystem.
-4. `source directory` - used to store the information and copies of the `managed files`.  
-5. `target file` (TF) - a managed file in the `target directory`.  
-6. `source file` (SF) - the backing up file in `source directory`.  
-7. `managed file/directory/symlink` - the filesystem object for which will be created a corresponding object
-    in the source directory.
-8. `synchronization time` (mtime) - time when the last write of `target file` to the `source direcory` was made.  
-9. `modification time` (mtime) - time when the last modification of a file was performed.  
-10. btime - time when file was read the last time, it is not used in the dotfile manager.  
-11. exists - true/false, if file or directory present in filesystem.  
+- Copy files between target and source with conflict detection
+- Three-way merge for conflicting files
+- Symlink tracking (files and their pointees)
+- AES-encrypted storage for sensitive files
+- Ignore lists for target and source files
 
-Successful `add` subcommand modifies the `synchronization time` in `state file` and `modification time` of the `source file` to be equal to
-the `modification time` of the `target file` and to each other.
+## Quick start
 
-Successful `pull` subcommand modifies times the same way as `add` subcommand.
+```bash
+# Initialize with an existing dotfiles repository
+dfm init /path/to/dotfiles
+dfm pull
 
-Regular run (non init subcommand):
-1. try to read `~/.config/dfm/config.toml`,
-2. if not found then try to read `~/.dfm.toml`,
-3. if not found then raises an error and prints help.
-
-### Encryption
-While doing `init`, `add` or `pull` dfm use config specified command to obtain a passphrase.
-The passphrase is used to encrypt/decrypt files.
-For this config file must have set a property - cli command that will provide the passphrase.
-That is why the `init` must pull the config file from the source directory to have the passphrase being ready for
-decryption and encryption. By default, the command is `read -s; echo -n $REPLY` (no variable expansion).
-The command is run by `$SHELL -c '{}'` (no variable expansion), this also must be configurable.
-Subcommands warns if sensible files are added without encryption: .ssh, ...
-Decrypt manualy by command:
-```shell
-# will ask for password
-7z x filename
+# Initialize with a new directory
+dfm init /path/to/new/repo
+dfm add ~/.bashrc ~/.config/git/config
 ```
 
-### Backups
-`Target files` and `source files` can be copied to the `~/.local/state/dfm/**` and gzipped before being
-overwritten by commands `add`, `pull` or `merge`.
+---
 
-### Ignored Files
-The `source directory` is ignored by default, yet the directory that contains it is not ignored.
-All files and subdirectories of the `source directory` can be added under the management.
+## Table of Contents
 
-### Add and Pull Conflict Detection
-Subcommand `add` copy files from `target directory` to `source directory`, subcommand `pull` copy from
-`source directory` to `target directory` respectively.
-Before perform any coping the check for modification conflict is performed.  
-The check algorithm allows to figure out the fact that `target file` was edited by user or owning program, and the fact
-that `source file` was edited by user or by `git`.
-1. if !TF.exists && SF.exists then, `add` aborts with error, `pull` copies SF to TF.
-2. if TF.exists && !TF.symlink && !SF.exists then `add` will copy TF to SF, `pull` will fail.
-3. if TF.exists && TF.symlink && !SF.exists then `add` will fail and `pull` will fail.
-4. if !TF.exists && !SF.exists then, `add` will fail, `pull` will fail.
-5. if TF.exists && TF.symlink && SF.exists then, `add` do nothing and `pull` do nothing.
-6. if TF.exists && !TF.symlink && SF.exists then, checks performed:
-    1. if TF.mtime == SF.ctime && SF.ctime == SF.mtime then, no file was modified, `add` and `pull` will do nothing.
-    2. if TF.mtime == SF.ctime && SF.ctime < SF.mtime, `source file` was modified, `target file` was not,
-    `add` subcommand will overwrite changes in `source file` (conflict), `pull` subcommand will copy new version
-    of `source file` to the `target file` (no conflict).
-    3. if TF.mtime > SF.ctime && SF.ctime == SF.mtime then, `target file` was modified, `source file` was not,
-    `add` subcommand will copy new version of the `target file` to the `source file` (no conflict), `pull` subcommand
-    will overwrite new changes in the `target file` (conflict).
-    4. if TF.mtime > SF.ctime && SF.ctime < SF.mtime then, both files was modified independently, both `add` and
-   `pull` subcommands will overwrite new modifications (conflict).
+1. [Concepts](#1-concepts)
+2. [Commands](#2-commands)
+   - [init](#21-init)
+   - [add](#22-add)
+   - [pull](#23-pull)
+   - [merge](#24-merge)
+   - [forget](#25-forget)
+   - [ignore](#26-ignore)
+   - [paths](#27-paths)
+   - [config](#28-config)
+   - [purge](#29-purge)
+   - [status](#210-status)
+3. [Configuration](#3-configuration)
+4. [Encryption](#4-encryption)
+5. [Conflict detection](#5-conflict-detection)
+6. [File layout](#6-file-layout)
 
-### Paths
-Pthe `paths` command prints paths and descriptions for them:
-- `target directory`, when dfm is initialized and before initialization.
-- `source directory` to be used.
-- `config file` path before or after initialization.
-- `state file` path before or after initialization.
+---
 
-### Init
-The supposed workflow is this:
-Setting up an existing repo with dotfiles:
-- user downloads the repository, with the `source directory` locating in the root of
-the repository, or in the one of subdirectories.
-- user executes `$ dfm init path/to/repo/` or with path directly to the `source directory`.
-- user executes `$ dfm pull` to copy all the dotfiles to the `target directory` (home).
+## 1 Concepts
 
-Creating a new repo for dotfiles:
-- user crates a directory somewhere in filesystem to make it a `source directory`.
-- user executes `$ dfm init path/to/that/new/dir`.
-- user executes `$ dfm add` to add all dotfiles under the management.
+| Term | Description |
+|---|---|
+| **Target directory** | The root for all managed files, usually `$HOME`. |
+| **Source directory** | A directory (typically under version control) that stores copies of managed files. |
+| **Target file (TF)** | A managed file inside the target directory. |
+| **Source file (SF)** | The backing copy inside the source directory. |
+| **State file** | A TOML file (`state.toml`) that stores synchronization timestamps. |
+| **Sync time** | The timestamp recorded when a target→source (add) or source→target (pull) copy completed. Used for conflict detection. |
 
-The given path expected to be the `source directory` path.
-- If the given path does not exist then -exit with error- create one and creates a `.dfm_root` in it.
-- If this path contains a file `.dfm_root`, then the program reads the file content,
-the content is a path to the `source directory`, if it is created by `dfm`, the path is ".".
-- If the path from the `.dfm_root` does not exist then exit with error.
-Recursively search for the source directory, by this way.
-- Having `source directory`, reads the `source ignore file` and creates if not exists.
-- Add records ".dfm_root", ".git", ".dfm_ignore_source", ".dfm_ignore_target" ot the `source ignore file` if the file was created.
-- Having `source directory`, search for the `config file` inside,
-apply the `pull` subcommand to the found `config file`.
-- If the config file does not exist in source directory then create the config
-file in the `$XDG_CONFIG_PATH` (or `$HOME`?) directory and fill it with default
-config parameters from the call of `default_config` function.
-- In the `config file` in the `target directory`, we must set the `source_dir` variable
-to the path of the `source directory`.
-- Create the empty `$XDG_STATE_PATH/dfm/state.toml` file if it does not exist or
-clean the file if exists.
+### Path mapping
 
-### Add
-The subcommand take the paths of the target directory (does not operate on paths in the source directory, unlike
-the other commands) and creates corresponding files in the source directory.
-Subcommand traverses in depth all given path to locate the files, each file can be:
-- a symlink, that points not into the source directory
-    - if --force then create a symlink file in the source directory,
-    - otherwise do nothing
-- a symlink, that points into the source directory pointing at the corresponding file
-    - do nothing
-- a symlink, that points into the source directory pointing at the non-corresponding file
-    - if --force then create a symlink file in source directory
-- a symlink, that has an associated symlink file in the source directory
-    - check if the symlink and the symlink file are pointing to the same file,
-    if not, update the symlink file to point to the same file as the symlink.
-- a symlink, that has no associated `symlink file` in the source directory
-    - if --force then create a symlink file.
-- an existing file, that has no corresponding file in the source directory
-    - create a corresponding file.
-- an existing file, that has a corresponding file in the source directory
-    - if changes in target and source files are not conflicting then
-    copy target file to the source file
-- a non-existing file, that has no corresponding file in the source directory
-    - error "file not found"
-- a non-existing file, that has a corresponding file in the source directory
-    - error "file not found"
+File names starting with `.` in the target directory are stored with a **dot prefix** in the source directory (default: `dot-`). This keeps hidden files visible in the source tree.
 
-### Pull
-The subcommand takes the names of a files from target directory.
-If the specified filename does not exist in target directory, then `pull` will calculate the corresponding names
-in the source directory. If there is no such a file in source directory - error.
-For existing target files: replacement, for non-existing files: creation (does not require special conditions).
-Replacement checks if there is no conflict.
-Traverse all directories in given paths, get the list of files to work on
-each file in the target directory could be:
-- a symlink, that points not into the source directory
-    - exit with error, or remove if --force?
-- a symlink, that points into the source directory pointing at the corresponding file
-    - do nothing
-- a symlink, that points into the source directory pointing at the non-corresponding file
-    - exit with error, if --force then remove the link and create one pointing to the right file
-- a symlink, that has an associated symlink file in the source directory
-    - if the link points to the file specified in the source symlink file then do nothing
-    - otherwise error or if --force then recreate  the link.
-- an existing file, that has no corresponding file in the source directory
-    - error "target file is not managed"
-- an existing file, that has a corresponding file in the source directory
-    - if target file was not modified then overwrite it with the source file,
-    - otherwise error or if --force then overwrite or if --merge call merge tool
-- a non-existing file, that has no corresponding file in the source directory
-    - error "file not found and not managed"
-- a non-existing file, that has a corresponding file in the source directory
-    - copy the source file to the path of a target file
+- Target `~/.bashrc` → Source `source_dir/dot-bashrc`
+- Target `~/.config/foo.conf` → Source `source_dir/dot-config/foo.conf`
 
-The `pull` subcommand is able to take a path from the source directory,
-to make is easier to copy just managed files, that don't yet exist in the home directory.
-Each file in the source directory could be:
-- an existing file, that has no corresponding file in the target directory
-    - copy file from source directory to the path of the target file
-- an existing file, that has a corresponding file in the target directory
-    - if target file is not modified then copy source file to the path of the target file
-    - or error or if --force then copy, or is --merge then run merge
-- an existing symlink file, that has a corresponding symlink in the target directory
-    - do nothing, but if the symlink pints to the wrong file recreate it if --force
-- a non-existing file
-    - error "file does not exist and is not managed"
+The dot prefix and other postfixes are configurable (see [Configuration](#3-configuration)).
 
-### Forget
-The `forget` subcommand is for removing files from the source directory. It can take
-path to either a path to a file in target directory or a path to a file in the source directory.
-Traverse all directories in given paths, get the list of files to work on
-each file in the target directory could be:
-- a symlink, that points not into the source directory
-    - do nothing
-- a symlink, that points into the source directory pointing at the corresponding file
-    - remove corresponding file and the symlink
-- a symlink, that points into the source directory pointing at the non-corresponding file
-    - remove the symlink only
-- a symlink, has an associated symlink file in the source directory
-    - if symlink pointee corresponds to the symlink file then remove symlink file
-    - otherwise ask for the --force flag
-- a symlink, has no associated symlink file in the source directory
-    - do nothing
-- an existing file, that has no corresponding file in the source directory
-    - do nothing
-- an existing file, that has a corresponding file in the source directory
-    - if the corresponding source file was not modified then remove it
-    - otherwise ask for the --force flag
-- a non-existing file, that has no corresponding file in the source directory
-    - do nothing
-- a non-existing file, that has a corresponding file in the source directory
-    - if corresponding file was not modified then remove it
-    - otherwise ask for the flag --force
+---
 
-The `forget` subcommand is able to take a path from the source directory,
-to make is easier to remove files.
-Each file in the source directory could be:
-- an existing file, that has no corresponding file in the target directory
-    - if source file ws not modified then remove it
-    - otherwise ask for the flag --force
-- an existing file, that has a corresponding file in the target directory
-    - if the source file was not modified or both files was not modified then
-    remove source file.
-    - or ask for the flag --force to remove the source file.
-- an existing file, that has a corresponding symlink in the target directory
-    - check if symlink points to the same pointee as the source symlink file then
-    remove the source symlink file
-    - otherwise ask for the flag --force to remove it
-- a non-existing file
-    - error "file does not exist"
+## 2 Commands
 
-### Ignore
-The program supports an ignore list for files in target and source directories.
-Those ignore lists are files `~/.local/state/dfm/ignore_list` containing
-ignored file paths and patterns for target directory and `**/dotfiles/.dfm_ignore_list`
-containing file paths and patterns for the source directory. If a file contained in
-the ignore list, it is not processed by other subcommands until the file was removed
-from the ignore list.  
-Ignore list consists of lines, each line is a comment (`#`) or a filepath or a regular
-expression. Everything after `#` is ignored. `#` can be escaped `\#`, then it is a part
-of the filepath or the regular expression.
-- Blank lines ignored.
-- A regular expression `abc#foo` will be read as `abc`, whereas `abc\#foo` will be read
-as `abc#foo`.
-- for each file in target directory the relative filepath is calculated. For file
-`/home/user/.config/prg/config.yaml` the relative path will be `.config/prg/config.yaml`.
-- the regular expression must match this relative path from the start to the end for
-file to be ignored.
+### 2.1 `init`
 
-If regular expression matched to the path, the directory containing a file, then this
-directory is not traversed - all files in it considered to be ignored.
-- if path in target dir add it to the state ignore list, if it is in a source
-directory then add it to the source ignore list.
-- for path in paths if path is a directory then ignore it, do not traverse it.
-- if path does not exist ask of using --force to add it.
-- if path does to belong to the target directory or to the source directory then error.
-- if path in target directory is `add`ed then error, suggest to `forget` it.
-- if path in source directory is `pull`ed then error, suggest to remove corresponding target file.
-- try to create a regex instance out of the given pattern, to check if it is valid.
-And try to find a file that will correspond to this pattern, if no such files found
-then print an error, that the pattern does not ignore anything and can be added only
-with --force.
+Set up the source directory, config file, and state file.
 
-# Debugging
-sudo apt install rust-gdb
-
-- to extract test file's name, cargo will print it
-    cargo test test_extract_failure
-
-like that
-
-```
-❯ cargo test --no-run
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
-  Executable unittests src/lib.rs (target/debug/deps/dfm-84f8f22cc401afab)
-  Executable unittests src/main.rs (target/debug/deps/dfm-dec712b5ec2bb297)
+```bash
+dfm init <PATH> [TARGET]
 ```
 
-target/debug/deps/dfm-dec712b5ec2bb297 --test test_case_function_name
+- `<PATH>` — the source directory (created if it does not exist). A marker file `.dfm_root` is written inside.
+- `[TARGET]` — optional target directory. Default: `$HOME`.
 
-- bugstaker's executable is called 'bs'
-cargo install bugstalker
+`init` will:
+1. Locate or create the source directory (recursively searches parent directories for `.dfm_root`).
+2. Create the source ignore file if it does not exist.
+3. Look for a config file inside the source directory and `pull` it.
+4. If no config file exists in the source directory, create one at `$XDG_CONFIG_HOME/dfm/config.toml` with defaults, writing the source directory path into it.
+5. Create or clear the state file at `$XDG_STATE_HOME/dfm/state.toml`.
 
-bs target/debug/deps/dfm-dec712b5ec2bb297
-(bs) break source.rs:line
-(bs) run
+| Flag | Description |
+|---|---|
+| `-n`, `--dry-run` | Show what would be done without making changes. |
+
+### 2.2 `add`
+
+Copy files from the target directory to the source directory.
+
+```bash
+dfm add [PATH...] [--merge] [--force] [--symlink] [--encrypt] [--dry-run]
+```
+
+- `PATH...` — files or directories to add. Omitting traverses the entire target directory (respecting ignore rules).
+- Each file is compared against its source counterpart using [conflict detection](#5-conflict-detection). Only safe copies proceed automatically; conflicts require `--force` or `--merge`.
+
+| Flag | Description |
+|---|---|
+| `-m`, `--merge` | On conflict, run the three-way merge tool instead of aborting. |
+| `-f`, `--force` | Overwrite source files on conflict. |
+| `-s`, `--symlink` | Move the file to the source directory and replace the target with a symlink. |
+| `-e`, `--encrypt` | Encrypt the file before storing in the source directory. |
+| `-n`, `--dry-run` | Check without making changes. |
+
+#### Symlink handling
+
+When traversed paths include symlinks, `add` resolves each symlink using these rules:
+
+| Scenario | Behavior |
+|---|---|
+| Symlink points *outside* the source directory | Create a symlink file in the source directory (with `--force` only). |
+| Symlink points to the corresponding source file | Do nothing. |
+| Symlink points to a *different* source file | Update the symlink file (with `--force` only). |
+| Symlink has an existing symlink file in source | Update the symlink file if the pointee differs. |
+| Symlink has *no* symlink file in source | Create a symlink file (with `--force` only). |
+
+### 2.3 `pull`
+
+Copy files from the source directory to the target directory.
+
+```bash
+dfm pull [PATH...] [--merge] [--force] [--symlink] [--dry-run]
+```
+
+- `PATH...` — files or directories in the *source* directory. Omitting pulls all files from the source directory.
+- You may also pass a target-directory path; the corresponding source path is computed automatically.
+
+| Flag | Description |
+|---|---|
+| `-m`, `--merge` | On conflict, run the three-way merge tool instead of aborting. |
+| `-f`, `--force` | Overwrite target files on conflict. |
+| `-s`, `--symlink` | Create symlinks in the target directory pointing to source files. |
+| `-n`, `--dry-run` | Check without making changes. |
+
+#### Symlink handling (non-source path)
+
+| Scenario | Behavior |
+|---|---|
+| Symlink points outside source dir | Error (or overwrite with `--force`). |
+| Symlink points to the correct source file | Do nothing. |
+| Symlink points to a *different* source file | Error (or fix with `--force`). |
+| Symlink matches its source symlink file | Do nothing. |
+| Symlink *differs* from its source symlink file | Recreate the symlink (with `--force` only). |
+
+#### Symlink handling (source path)
+
+| Scenario | Behavior |
+|---|---|
+| Source symlink file + target path does not exist | Create a symlink in the target. |
+| Source symlink file + existing target symlink | Recreate if the pointee does not match. |
+
+### 2.4 `merge`
+
+Run the three-way merge tool on files that have been modified in both target and source (**BothModified**).
+
+```bash
+dfm merge [PATH...]
+```
+
+- `PATH...` — optional paths to filter which files to merge. Pass a target path or a source path; the corresponding counter-part is resolved automatically.
+- Without arguments, scans all entries in the state file for `BothModified` files.
+- Skips symlinks and files matching the target ignore pattern.
+
+The merge tool is configured by the `merge_tool_command` setting (default: `vimdiff {target} {result} {source}`). The placeholders are:
+
+| Placeholder | Description |
+|---|---|
+| `{target}` | Working-directory side (plain text copy). |
+| `{source}` | Cellar side (decrypted if the source is encrypted). |
+| `{result}` | Output file — the merge tool writes the result here. |
+
+After the merge tool exits successfully, `result.<file>` is copied back to both the target and the source (and re-encrypted if needed). The sync state is updated to the merge time.
+
+### 2.5 `forget`
+
+Remove a file from management (does **not** delete the target file).
+
+```bash
+dfm forget [PATH...] [--force] [--dry-run]
+```
+
+- `PATH...` — paths in either the target or source directory.
+- Without a path, `forget` processes all managed files.
+
+#### Target-path behavior
+
+| Scenario | Behavior |
+|---|---|
+| Symlink pointing outside source dir | Do nothing. |
+| Symlink pointing to the correct source file | Remove both source file and symlink. |
+| Symlink pointing to a *different* source file | Remove the symlink only. |
+| Symlink matching its source symlink file | Remove the source symlink file. |
+| Symlink *differing* from its source symlink file | Require `--force`. |
+| File with a corresponding source file | Remove the source file (unless source was modified — then require `--force`). |
+| File with no corresponding source file | Do nothing. |
+| Non-existing file with a source entry | Remove the state entry (unless source was modified — then require `--force`). |
+
+#### Source-path behavior
+
+| Scenario | Behavior |
+|---|---|
+| Source file with no target file | Remove source (unless modified — require `--force`). |
+| Source file with a target file | Remove source (unless modified — require `--force`). |
+| Source symlink file with matching target symlink | Remove source symlink file. |
+| Source symlink file with *mismatched* target symlink | Require `--force`. |
+
+### 2.6 `ignore`
+
+Add paths or regex patterns to the ignore list. Ignored files are skipped by `add`, `pull`, `merge`, and `forget`.
+
+```bash
+dfm ignore [PATH...] [-p PATTERN...] [--dry-run]
+```
+
+- `PATH...` — file paths to ignore (relative to target or source directory).
+- `-p`, `--patterns` — regex patterns to ignore.
+- Omitting both paths and patterns traverses the target directory and prints the current ignore status.
+
+The program maintains two ignore files:
+- **Target ignore file** at `$XDG_STATE_HOME/dfm/ignore_file` — patterns for target-side files.
+- **Source ignore file** at `source_dir/.dfm_ignore_file` — patterns for source-side files.
+
+Ignore file format:
+- One entry per line.
+- Lines starting with `#` are comments. `\#` escapes a literal `#`.
+- Blank lines are ignored.
+- Each line is a regex that must match the *full* relative path (from the root of the target or source directory).
+
+### 2.7 `paths`
+
+Print the resolved paths used by dfm.
+
+```bash
+dfm paths
+```
+
+Outputs the target directory, source directory, config file, and state file paths.
+
+### 2.8 `config`
+
+Read or write config file properties.
+
+```bash
+dfm config --get <NAME>
+dfm config --set <NAME> <VALUE>
+dfm config --list
+```
+
+| Flag | Description |
+|---|---|
+| `-g`, `--get <NAME>` | Print the value of a config property. |
+| `-s`, `--set <NAME> <VALUE>` | Set a config property. |
+| `-l`, `--list` | List all config properties. |
+
+Note: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the config file directly.
+
+### 2.9 `purge`
+
+Remove all program data: config file, source directory, and state directory.
+
+```bash
+dfm purge [--keep-source] [--keep-config-file] [--force] [--dry-run]
+```
+
+Before removing the source directory, `purge` checks for un-pulled changes (source files modified since their last sync). If any exist, the command aborts unless `--force` is given.
+
+| Flag | Description |
+|---|---|
+| `-s`, `--keep-source` | Do not remove the source directory. |
+| `-c`, `--keep-config-file` | Do not remove the config file. |
+| `-f`, `--force` | Remove the source directory even if it has un-pulled changes. |
+| `-n`, `--dry-run` | Check without making changes. |
+
+### 2.10 `status`
+
+> **Not yet implemented.** Defined in the CLI parser but currently returns `"not implemented yet"`.
+
+---
+
+## 3 Configuration
+
+The config file is read from `$XDG_CONFIG_HOME/dfm/config.toml` (or `~/.dfm.toml` if the XDG path does not exist).
+
+### Default settings
+
+```toml
+source_dir = "/path/to/dotfiles"
+target_dir = "/home/user"
+dot_prefix = "dot-"
+symlink_postfix = ".symlink"
+encrypted_postfix = ".encrypted"
+manage_symlinks = true
+dotfiles_only = false
+force_encryption_for = ["\\.ssh"]
+obtain_password_shell_command = ""
+merge_tool_command = "vimdiff {target} {result} {source}"
+```
+
+### Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `source_dir` | String (path) | Path to the source directory. |
+| `target_dir` | String (path) | Path to the target directory (usually `$HOME`). |
+| `dot_prefix` | String | Prefix to replace leading `.` in filenames inside the source directory. |
+| `symlink_postfix` | String | Suffix appended to symlink pointer files in the source directory. |
+| `encrypted_postfix` | String | Suffix appended to encrypted source files. |
+| `manage_symlinks` | Boolean | Whether to track symlinks (unused in current command logic). |
+| `dotfiles_only` | Boolean | If `true`, only process files starting with `.` (unused in current command logic). |
+| `force_encryption_for` | Array of regex | File paths matching these regexes are always encrypted on `add`. |
+| `obtain_password_shell_command` | String (shell command) | Command to obtain the encryption password. See [Encryption](#4-encryption). |
+| `merge_tool_command` | String (template) | Merge tool command with `{target}`, `{source}`, `{result}` placeholders. |
+
+> **Note:** `manage_symlinks` and `dotfiles_only` are parsed from the config file but not currently consulted by any command. Their behavior is always equivalent to `true` / `false` respectively.
+
+---
+
+## 4 Encryption
+
+Sensitive files can be stored in AES-encrypted ZIP archives. Files matching `force_encryption_for` regexes (default: `\.ssh`) are automatically encrypted on `add`. Encryption can also be requested per-run with `--encrypt`.
+
+### Obtaining a password
+
+When `obtain_password_shell_command` is set (non-empty), dfm runs it via `$SHELL -c <command>` and reads the password from stdout. Example:
+
+```bash
+# Config
+obtain_password_shell_command = "security find-generic-password -w -a dfm"
+```
+
+When the setting is empty (the default), dfm prompts interactively using `rpassword` (masked input with `*`).
+
+The password is cached in memory for the duration of the process, so you are prompted only once per `dfm` invocation.
+
+### Decryption manually
+
+Encrypted files (suffix `.encrypted`) are standard ZIP archives with AES-128 encryption. They can be decrypted with any tool that supports AES-encrypted ZIP, such as `7z`:
+
+```bash
+7z x filename.encrypted
+```
+
+---
+
+## 5 Conflict detection
+
+Before any copy, dfm compares timestamps to detect concurrent modifications. The comparison uses three values:
+
+- **TF mtime** — last modification time of the target file.
+- **SF mtime** — last modification time of the source file.
+- **Sync time** — the stored timestamp of the last successful sync (set by both `add` and `pull`).
+
+The algorithm:
+
+| Condition | Result | `add` behavior | `pull` behavior |
+|---|---|---|---|
+| TF mtime == sync == SF mtime | **NonModified** | Skip (or copy with `--force`) | Skip (or copy with `--force`) |
+| TF mtime == sync < SF mtime | **SourceModified** | Overwrite source (conflict); `--merge` runs merge tool | Copy source → target (safe) |
+| TF mtime > sync == SF mtime | **TargetModified** | Copy target → source (safe) | Overwrite target (conflict); `--merge` runs merge tool |
+| TF mtime > sync < SF mtime | **BothModified** | Conflict; `--merge` runs merge tool | Conflict; `--merge` runs merge tool |
+| No sync time recorded | **NeverSynchronized** | Require `--force` | Require `--force` |
+
+For encrypted source files, the conflict check is performed against the encrypted file's mtime; decryption is only scheduled when safe (or forced/merged).
+
+---
+
+## 6 File layout
+
+```
+$XDG_CONFIG_HOME/dfm/config.toml         -- user config
+~/.dfm.toml                               -- fallback config (if XDG path absent)
+$XDG_STATE_HOME/dfm/state.toml            -- sync timestamps
+$XDG_STATE_HOME/dfm/ignore_file           -- target-side ignore patterns
+source_dir/.dfm_root                       -- source directory marker
+source_dir/.dfm_ignore_file                -- source-side ignore patterns
+source_dir/dot-bashrc                      -- managed copy of ~/.bashrc
+source_dir/dot-bashrc.encrypted            -- encrypted managed copy
+source_dir/dot-bashrc.symlink              -- symlink pointer file
+```
+
+---
+
+## Limitations
+
+- **Status subcommand**: Not implemented (CLI stub only).
+- **Backups**: The README once described automatic gzip backups before overwrites; this feature is not implemented.
+- **Hooks**: Pre/post hooks are parsed from the config file but never executed.
+- **Config `--set` and arrays**: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the TOML file directly.
+- **Dotfiles outside UTF-8 paths**: Only valid UTF-8 paths are supported.
+- **Merge tool**: The merge command is run directly (no shell), so shell features (`|`, `>`, `$VAR`) in `merge_tool_command` are not processed.
