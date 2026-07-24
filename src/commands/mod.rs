@@ -216,7 +216,7 @@ pub(crate) fn run_merge(
     // Copy both sides into the merge directory:
     //   target.<file> = working-dir side (always plain text)
     //   source.<file> = cellar side (decrypted if encrypted)
-    //   result.<file> = empty — merge tool writes output here
+    //   result.<file> = merge tool writes output here
     let target_path = merge_dir.join(format!("target.{}", file_name));
     let source_path = merge_dir.join(format!("source.{}", file_name));
     let result_path = merge_dir.join(format!("result.{}", file_name));
@@ -226,8 +226,6 @@ pub(crate) fn run_merge(
     } else {
         fs::copy(source_abs_path, &source_path)?;
     }
-    fs::write(&result_path, "")?;
-
     let command = resolve_merge_command(settings)?;
 
     // Parse command template: first token is the program, rest are arguments
@@ -254,11 +252,14 @@ pub(crate) fn run_merge(
             DfmError::Io(e)
         })?;
 
-    if !status.success() {
+    if !status.success() || !result_path.exists() {
         let _ = fs::remove_dir_all(&merge_dir);
-        return Err(DfmError::Other(
+        let reason = if !status.success() {
             format!("merge tool exited with status {}", status)
-        ));
+        } else {
+            format!("merge tool exited successfully but did not create {:?}", result_path)
+        };
+        return Err(DfmError::Other(reason));
     }
 
     // Copy the merged result to BOTH the source and the target
