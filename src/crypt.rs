@@ -53,6 +53,9 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
     debug!("get password command is set to {:?}", settings.obtain_password_shell_command);
     debug!("shell {:?}", shell_env_value);
 
+    print!(": ");
+    std::io::stdout().flush().unwrap();
+
     let password = if let Some(get_password_command) = settings.obtain_password_shell_command.clone() &&
             !get_password_command.is_empty() &&
             let Some(shell) = shell_env_value {
@@ -75,7 +78,10 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
         stdout.to_string()
     } else {
         debug!("using default procedure to get password");
-        default_read_password()?
+        let pwd = default_read_password()?;
+        println!();
+        std::io::stdout().flush().unwrap();
+        pwd
     };
 
     // Cache for subsequent calls
@@ -93,11 +99,12 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
 
     let target_file_permissions = fs::metadata(target_file_path)?.permissions();
 
-    let password = obtain_password(settings)?;
-
     let target_dir_path = PathBuf::from(&settings.target_dir);
     let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
 
+    println!("file {:?} needs an encryption password", inner_name);
+
+    let password = obtain_password(settings)?;
     let inner_name_str = inner_name.to_str()
         .ok_or_else(|| DfmError::InvalidData("non-UTF-8 path in zip entry".into()))?;
     zip.start_file(
@@ -127,6 +134,11 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
     }
 
     let mut already_retried = false;
+
+
+    let target_dir_path = PathBuf::from(&settings.target_dir);
+    let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
+    println!("file {:?} needs an encryption password", inner_name);
 
     loop {
         let password = obtain_password(settings)?;

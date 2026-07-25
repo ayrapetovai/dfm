@@ -1,3 +1,5 @@
-- Remove source and target paths from state file. If the are used in code replace them with paths from Settings.
+- When encrypting or decrypting files provide promp with text "password for {filename_relative_target_directory}:".
 - Add flag --managed to 'status' subcomand, if the flag specifid list only managed filesystem objects.
 - Check that forced encryption encrypts files in 'add' command.
+- 'forget' unpulled files does not remove it, in it is encrypted (password prompted), or target is absend the --force must be used.
+ - check: when source files is removed by 'forget' commnd, its parrent directory must alsoe be removed if it is not source director and contained only this file.
