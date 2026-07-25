@@ -64,7 +64,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
     enum AddTask {
         Copy(PathBuf, PathBuf),
         CopyEncryptedFile(PathBuf, PathBuf),
-        CreateSymlinkFilePointer(PathBuf, String),
+        CreateSymlinkFilePointer(PathBuf, PathBuf, String),
         CopyAndSymlink(PathBuf, PathBuf),
         Merge(PathBuf, PathBuf),
     }
@@ -126,12 +126,12 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 if !source_symlink_file_points_to_right_target {
                     debug!("source symlink file points to the wrong file, must be {:?}", &target_symlink_pointee_rel_path);
                 }
-                tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
+                tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
             } else if source_symlink_file_points_to_right_target {
                 debug!("for target symlink {:?},\n\tsource symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
             } else if !target_symlink_pointee_abs_path.starts_with(&source_dir_abs_path) {
                 debug!("for target symlink {:?},\n\tdoes not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
-                tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
+                tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
             } else {
                 debug!("target symlink {:?}\n\tpointee is managed as {:?}", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
             };
@@ -392,7 +392,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     remove_sync_state(state, &plain_source, &source_dir_abs_path);
                 }
             },
-            AddTask::CreateSymlinkFilePointer(source_symlink, points_to) => {
+            AddTask::CreateSymlinkFilePointer(source_symlink, target_abs, points_to) => {
                 info!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to);
                 if dry_run {
                     continue;
@@ -401,6 +401,8 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 // open if exists or create, if it doesn't
                 let mut symlink_file = File::create(&source_symlink)?;
                 symlink_file.write(points_to.as_bytes())?;
+
+                update_sync_state(state, &source_symlink, &target_abs, &source_dir_abs_path)?;
             },
         }
     }
