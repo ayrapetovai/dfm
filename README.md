@@ -1,3 +1,4 @@
+![image info](https://img.shields.io/badge/status-not%20ready-red)
 # Dotfile Manager (dfm)
 
 A CLI tool to manage dotfiles: keep copies of configuration files from your home directory (**target**) inside a version-controlled **source** directory, and synchronize changes between them safely.
@@ -12,12 +13,16 @@ A CLI tool to manage dotfiles: keep copies of configuration files from your home
 
 ```bash
 # Initialize with an existing dotfiles repository
-dfm init /path/to/dotfiles
+dfm init /path/to/dotfiles/repo
 dfm pull
 
 # Initialize with a new directory
-dfm init /path/to/new/repo
+git clone link/to/new/dotfiles/repo
+dfm init /path/to/new/dotfiles/repo
 dfm add ~/.bashrc ~/.config/git/config
+git add .
+git -c "initial"
+git push
 ```
 
 ---
