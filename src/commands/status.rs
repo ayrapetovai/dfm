@@ -425,7 +425,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
     } else {
         out.push_str(&format!("Source: {}\n", source_str));
     }
-    out.push_str(&format!("Target: {}\n\n", target_str));
+    out.push_str(&format!("Target: {}\n{}", target_str, if entries.is_empty() { "" } else { "\n" }));
 
     // Group entries by code
     let mut merge: Vec<&StatusEntry> = Vec::new();
@@ -451,8 +451,10 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
     }
 
     // Helper to write a group
-    let write_group = |out: &mut String, header: &str, items: &[&StatusEntry]| {
-        if items.is_empty() { return; }
+    let write_group = |out: &mut String, header: &str, items: &[&StatusEntry], is_last_goup: bool| {
+        if items.is_empty() {
+            return;
+        }
         out.push_str(&format!("{}:\n", header));
         for item in items {
             if let Some(ref pat) = item.matched_pattern {
@@ -461,16 +463,40 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
                 out.push_str(&format!("  {}  {}\n", item.code, item.path));
             }
         }
-        out.push('\n');
+        // Do not print after the last group in list as 'ls -lR' shell command
+        if !is_last_goup {
+            out.push('\n');
+        }
     };
 
-    write_group(&mut out, "Changes to merge", &merge);
-    write_group(&mut out, "Changes to add", &add);
-    write_group(&mut out, "Changes to pull", &pull);
-    write_group(&mut out, "Unpulled", &unpulled);
-    write_group(&mut out, "Unmanaged files", &unmanaged);
-    write_group(&mut out, "Up to date", &uptodate);
-    write_group(&mut out, "Ignored", &ignored);
+    let group_order = vec![
+        merge.is_empty(),
+        add.is_empty(),
+        pull.is_empty(),
+        unpulled.is_empty(),
+        unmanaged.is_empty(),
+        uptodate.is_empty(),
+        ignored.is_empty(),
+        stale_patterns.is_empty(),
+    ];
+
+    let mut group_lastness = vec![];
+    for i in 0..group_order.len() {
+        // If all from i to the right are empty
+        // then ith group is the last to be printed
+        let is_last = group_order.iter()
+            .skip(i + 1)
+            .any(|&se| !se);
+        group_lastness.push(is_last);
+    }
+
+    write_group(&mut out, "Changes to merge", &merge, group_lastness[0]);
+    write_group(&mut out, "Changes to add", &add, group_lastness[1]);
+    write_group(&mut out, "Changes to pull", &pull, group_lastness[2]);
+    write_group(&mut out, "Unpulled", &unpulled, group_lastness[3]);
+    write_group(&mut out, "Unmanaged files", &unmanaged, group_lastness[4]);
+    write_group(&mut out, "Up to date", &uptodate, group_lastness[5]);
+    write_group(&mut out, "Ignored", &ignored, group_lastness[6]);
 
     // Stale patterns
     if !stale_patterns.is_empty() {
@@ -478,7 +504,6 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
         for p in stale_patterns {
             out.push_str(&format!("  !P  {}\n", p));
         }
-        out.push('\n');
     }
 
     out
@@ -495,6 +520,8 @@ fn print_paged(output: &str, _force_pager: bool) -> Result<(), DfmError> {
 
     if line_count > term_height {
         // Use pager
+        // TODO create a field in config file and settings for the paging command
+        // by default in config it must be 'less -FRSX', but env PAGER has the priority.
         let pager_cmd = env::var("PAGER").unwrap_or_else(|_| "less -FRSX".to_string());
         let parts: Vec<&str> = pager_cmd.split_whitespace().collect();
         if parts.is_empty() {
@@ -510,6 +537,7 @@ fn print_paged(output: &str, _force_pager: bool) -> Result<(), DfmError> {
             .spawn()?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(output.as_bytes())?;
+            stdin.flush()?;
         }
         child.wait()?;
     } else {
