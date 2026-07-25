@@ -36,11 +36,11 @@ else
 fi
 export EXECUTABLE
 
-eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@" && sleep 0.01s; }'
+eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@" && sleep 0.001s; }'
 export "$PROGRAMM_NAME_IN_SHELL"
 
 function write() {
-    echo "$1" > "$2" && sleep 0.01s
+    echo "$1" > "$2" && sleep 0.001s
 }
 export write;
 
