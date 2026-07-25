@@ -55,7 +55,7 @@ dfm/
 └── tests/
     ├── launcher.sh           ← test runner
     ├── README.md
-    └── test_*.sh             ← 114 shell integration tests (inc. 4 status tests + 1 symlink status test)
+    └── test_*.sh             ← 119 shell integration tests
 ```
 
 ---
@@ -270,11 +270,13 @@ On `pull --force`, `NonModified` also copies (overrides the skip).
 
 ### `Status` command
 - Implemented in `src/commands/status.rs`. No longer a stub.
-- Exit codes: 0 = clean, 1 = conflicts, 2 = unpulled/unmanaged, 4 = stale patterns. OR-combined.
+- Exit codes: 0 = clean, 1 = only `BothModified` (`MM`) produces non-zero. Unmanaged (`??`, `?L`), unpulled (`!?`), and stale patterns (`!P`) no longer produce exit codes 2 or 4.
 
 #### Architecture (three phases)
 1. **Phase 1** — Iterate all `state.syncs` entries, compute source→target path, compare timestamps → status code.
-2. **Phase 2** — Walk target directory via `list_directory_or_error`, find files not in state → `??` (unmanaged) or `!!` (ignored). Skips source dir contents and dfm internal files.
+2. **Phase 2** — Walk target directory via `list_directory_or_error`, find files not in state → `??` (unmanaged) or `!!` (ignored) or `?L`/`!L` (unmanaged/ignored symlinks). Skips source dir contents and dfm internal files.
+
+   Symlinks in Phase 2 get `LL` (managed, hidden by default) **only** when `pointee_in_state` — the pointee resolves to a path inside the **source** directory (the `--symlink` pattern where a symlink points directly into the cellar). Pointees inside the target dir or outside do NOT make the symlink `LL` — they appear as `?L` instead, because the symlink itself is not in `state.syncs` and won't be recreated by `dfm pull`.
 3. **Phase 3** — Check every ignore pattern against all traversed files → unused/stale patterns.
 
 #### Status codes
@@ -336,7 +338,7 @@ On `pull --force`, `NonModified` also copies (overrides the skip).
 - Two tests: `init_command_creates_files_and_directories_with_default_config`
   and `add_file_to_source`.
 
-### Current test count: 109 shell tests (all pass), 2 Rust unit tests
+### Current test count: 119 shell tests (all pass), 2 Rust unit tests
 
 ---
 
@@ -386,3 +388,84 @@ Global flags:
 - `sealed_test` + `lazy_static` — Rust unit tests
 - `stderrlog` — logging
 - `symlink` — cross-platform symlink management
+
+---
+
+## Coding / Test Conventions
+
+### Test conventions
+
+- **`set -eEu` is always in effect.** The test runner sources each test file inside `( set -eEu; source "$test_file" )`. Any command returning non-zero **immediately aborts** the test. This makes explicit `assert $? = 0` calls dead code; the idiomatic patterns are:
+  - `cmd | grep -q "pattern"` — aborts if pattern NOT found
+  - `! cmd | grep -q "pattern"` — aborts if pattern IS found
+  - `cmd | grep -qv "pattern"` — aborts if pattern IS found (equivalent to `! cmd | grep -q`)
+  - `cmd` alone — aborts if command fails
+- **No `sleep` calls in tests.** Use the `write` helper (bakes in `sleep 0.01s`) and the `dfm()` shell function (bakes in `sleep 0.01s` after each binary call).
+- **`grep -q` early-exit with pipes** is safe. `grep -q` exits as soon as it finds a match, sending SIGPIPE to the upstream command. This is fine because the test runner does NOT use `set -o pipefail` (only `set -eEu`), so pipe failures do not abort the test. This also means the upstream command may not produce its full output — avoid relying on side effects.
+- **No long dashed separator comments** (`# ------------ ...`). All test files avoid these.
+- **Test file naming**: `test_<description>.sh`, each file covers one focused scenario.
+
+### Rust code conventions
+
+- **Symlink pointer files = filename + `.symlink`.** The postfix is **appended** to the full filename, never replacing any part:
+  - `mylink` → source file `mylink.symlink`
+  - `link-to-file.txt` → source file `link-to-file.txt.symlink`
+- **Task pattern for deferred execution.** Mutating operations are pushed as `AddTask` / `PullTask` enum values into a `Vec<AddTask>`, then executed in a second loop after the analysis loop. A `continue` in the analysis loop does NOT affect tasks already queued — they still execute in the final task loop.
+  - In `add.rs`: symlink handling pushes `CreateSymlinkFilePointer` into `tasks`, then falls through to the non-symlink path with the **pointee path** as `target_path`. If the pointee is already managed, the `continue` at `NonModified` skips only the remaining non-symlink processing — the pointer-file task was already queued and still executes.
+- **Two-phase status** (Phase 1 / Phase 2):
+  - **Phase 1** iterates `state.syncs` — managed files get codes `MM`, `M `, ` M`, `--`, `LL` (if source key ends with symlink_postfix), `!?`, `NM`.
+  - **Phase 2** walks the target directory — unmanaged files get `??` or `?L` (symlinks) or `!!`/`!L` (ignored).
+  - `LL` from Phase 2 (`pointee_in_state`) only applies when the pointee resolves into the **source** directory. Pointees in the target dir or outside do NOT make the symlink `LL` — the symlink shows as `?L`.
+
+---
+
+## Debug Strategies (ranked by effectiveness)
+
+### Strategy 1 — `-x` trace first (always)
+```bash
+cd tests && TRACE=1 ./launcher.sh -x failing_test.sh 2>&1 | tail -40
+```
+
+**Cost:** zero code changes, zero rebuild. Run immediately.
+
+**What you get:** every command with its expanded arguments, the exact line that fails, path resolution, and return codes. This single command **suffices for most failures**:
+- The trace shows which assertion line failed
+- It shows stdout/stderr interleaved (e.g. `grep` returned 1 because the pattern was not in the output)
+- It shows the exact paths being compared
+
+**Action after trace:** read the failure line and the 5-10 lines above it. Do NOT yet touch code.
+
+### Strategy 2 — One targeted `eprintln!` at the assertion boundary
+Only reach for this when Strategy 1 shows a failure but the *reason* is not obvious from the trace (e.g. the command ran successfully but produced wrong output, or a file comparison failed silently).
+
+**The rule:** add exactly **one** `eprintln!("... {:?}", actual_value)` at the point where the asserted value is computed or just before the assertion happens. Print the **actual value** that the test or code is checking — compare it mentally to what the test expects.
+
+**Good examples:**
+```rust
+// When a test expects a file to exist but it doesn't:
+eprintln!("source_symlink_file_abs_path={:?}", source_symlink_file_abs_path);
+// → immediately shows "/dotfiles/link-to-file.txt.symlink" vs test expecting "link-to-file.symlink"
+```
+
+```rust
+// When status output is missing expected content:
+eprintln!("pointee_in_state={:?}, pointer_in_state={:?}", pointee_in_state, pointer_in_state);
+// → immediately shows which check returned wrong value
+```
+
+**Do NOT do:**
+- Multiple `eprintln!` at different control flow points (high rebuild time, most are noise)
+- `println!` tracing through every branch of a `match`
+- Adding prints to `lib.rs` utility functions unless that function is the proven culprit
+
+### Strategy 3 — Read the function end-to-end (least effective)
+Only if strategies 1+2 still don't explain the failure. Read the full function to understand the control flow. This costs high cognitive load but zero compilation. It explains *why* but rarely reveals the actual mismatched value — use it to form a hypothesis, then confirm with Strategy 2.
+
+### Key shortcuts
+
+| You see this | Likely cause |
+|---|---|
+| `grep` returns 1 on `dfm status` | The entry exists but is in a hidden category (`LL`, `--`, `!!`) or the code is not producing it at all. Try `--all` or `--short` |
+| `test -f` fails for a symlink pointer file | The `.symlink` postfix is appended to the **full filename** (e.g. `link-to-file.txt.symlink`, not `link-to-file.symlink`). Check the actual filename with Strategy 2 |
+| `assert_source` fails | The source file path is wrong: dot-prefix substitution, postfix, or path component mismatch. Print the computed path |
+| `Continue`/`Skip` in task code | The task may have been pushed before the `continue` — it still executes in the task loop. The `continue` only skips the rest of the current loop iteration, not already-queued tasks |
