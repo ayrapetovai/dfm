@@ -235,7 +235,7 @@ enum Command {
     Paths
 }
 
-fn main() -> Result<(), dfm::DfmError> {
+fn main_logic() -> Result<(), dfm::DfmError> {
     let args = Args::parse();
 
     if let Err(e) = stderrlog::new()
@@ -316,4 +316,10 @@ fn main() -> Result<(), dfm::DfmError> {
             status_command(&settings, &args, &state)
         },
     };
+}
+
+fn main() {
+    if let Err(e) = main_logic() {
+        eprintln!("{:?}", e);
+    }
 }
