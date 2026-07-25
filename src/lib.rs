@@ -553,7 +553,7 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
     if !path.to_str().unwrap().starts_with("/") && ret.starts_with("/"){
         ret.remove(0);
     }
-    if go_back_counter > 0 {
+    if go_back_counter > 0 && ret.starts_with("/") {
         ret.remove(0);
     }
     for _ in 0..go_back_counter {

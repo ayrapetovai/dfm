@@ -203,26 +203,20 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
             let pointee_in_state = fs::read_link(target_abs)
                 .ok()
                 .and_then(|link_target| {
-                    // Resolve relative to the target file's parent directory
                     let abs = target_abs.parent().unwrap_or(std::path::Path::new(".")).join(&link_target);
                     fs::canonicalize(&abs).ok()
                 })
                 .map(|pointee_abs| {
+                    // Only consider pointee managed when it points into the source dir
+                    // (the --symlink pattern). A pointee inside the target dir or elsewhere
+                    // does NOT make the symlink itself managed — if it's not in state.syncs
+                    // it should appear as ?L so the user can decide to add it.
                     if pointee_abs.starts_with(&source_dir_abs) {
-                        // Case 1: pointee is inside source dir (--symlink case)
                         let rel = file_path_relative_to(&pointee_abs, &source_dir_abs);
                         let rel = remove_dots_from_path(&rel);
                         state_keys.contains(rel.to_str().unwrap_or(""))
                     } else {
-                        // Case 2: pointee is in target dir or elsewhere —
-                        // compute the source-equivalent path via filepath_in_source_dir
-                        let pointee_source = filepath_in_source_dir(
-                            &settings.dot_prefix, &target_dir_abs, &source_dir_abs,
-                            &pointee_abs, None,
-                        );
-                        let rel = file_path_relative_to(&pointee_source, &source_dir_abs);
-                        let rel = remove_dots_from_path(&rel);
-                        state_keys.contains(rel.to_str().unwrap_or(""))
+                        false
                     }
                 })
                 .unwrap_or(false);
