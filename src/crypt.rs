@@ -156,7 +156,7 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
             }
             Err(zip::result::ZipError::InvalidPassword) if !already_retried => {
                 clear_password_cache();
-                eprintln!("Wrong password for {:?}, please try again.", source_zip_path);
+                eprintln!("wrong password for {:?}, please try again.", source_zip_path);
                 already_retried = true;
                 // Loop back — obtain_password will re-prompt since the cache was cleared
             }

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::{Command as ProcessCmd, Stdio};
 use std::io::Write;
 
+use colored::Colorize;
 use log::{debug, info};
 use regex::Regex;
 
@@ -123,10 +124,10 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         } else if target_exists && source_exists {
             let cmp = compare_files_by_timestamps(&target_abs, &source_abs, Some(sync_time))?;
             match cmp {
-                CompareByTimestamp::BothModified => ("MM", target_rel.clone()),
-                CompareByTimestamp::TargetModified => ("M ", target_rel.clone()),
-                CompareByTimestamp::SourceModified => (" M", target_rel.clone()),
-                CompareByTimestamp::NonModified => ("--", target_rel.clone()),
+                CompareByTimestamp::BothModified => ("MM", target_rel.red().to_string()),
+                CompareByTimestamp::TargetModified => ("M ", target_rel.yellow().to_string()),
+                CompareByTimestamp::SourceModified => (" M", target_rel.yellow().to_string()),
+                CompareByTimestamp::NonModified => ("--", target_rel.green().to_string()),
                 CompareByTimestamp::NeverSynchronized => ("NM", target_rel.clone()),
             }
         } else {
@@ -347,10 +348,10 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
 
     if *unused_patterns {
         if stale_patterns.is_empty() {
-            info!("no unused ignore patterns");
+            info!("unused ignore patterns");
         } else {
             for p in &stale_patterns {
-                println!("!P\t{}", p);
+                println!("!P\t{}", p.red().to_string());
             }
         }
         return Ok(());
