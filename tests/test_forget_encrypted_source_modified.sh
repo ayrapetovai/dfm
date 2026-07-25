@@ -8,9 +8,7 @@ MODIFIED="$(uuid)"
 dfm init dotfiles
 dfm config --set obtain_password_shell_command "echo -n $PASSWORD"
 
-# ------------------------------------------------------------------
 # 1. SourceModified: touch encrypted source, forget without --force → fail
-# ------------------------------------------------------------------
 write "$ORIGINAL" secret.txt
 dfm add --encrypt secret.txt
 assert_source "secret.txt.encrypted"
@@ -30,9 +28,7 @@ assert_no_source "secret.txt.encrypted"
 write "$ORIGINAL" secret.txt
 dfm add --encrypt secret.txt
 
-# ------------------------------------------------------------------
 # 2. BothModified: touch encrypted source AND modify target
-# ------------------------------------------------------------------
 write "$MODIFIED" secret.txt
 touch "$PWD/dotfiles/secret.txt.encrypted"
 

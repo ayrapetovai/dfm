@@ -13,10 +13,8 @@ dfm config --set obtain_password_shell_command "echo -n $PASSWORD"
 write "$MERGED" "$PWD/expected_merged"
 dfm config --set merge_tool_command "cp $PWD/expected_merged {result}"
 
-# ---------------------------------------------------------------
 # Scenario 1: BothModified — pull --merge decrypts encrypted source
 # and merges into the target
-# ---------------------------------------------------------------
 write "$ORIGINAL" secret.txt
 dfm add --encrypt secret.txt
 assert_encrypted "secret.txt" "$ORIGINAL"
@@ -40,9 +38,7 @@ dfm pull --merge secret.txt
 # merge tool wrote $MERGED to {result}, result goes to both target and source
 assert_content_eq "secret.txt" "$MERGED"
 
-# ---------------------------------------------------------------
 # Scenario 2: TargetModified — pull --merge resolves via merge tool
-# ---------------------------------------------------------------
 write "$ORIGINAL" secret.txt
 dfm add --encrypt --force secret.txt
 assert_encrypted "secret.txt" "$ORIGINAL"
@@ -59,9 +55,7 @@ dfm pull --merge secret.txt
 # merge tool wrote $MERGED to {result}, which is copied to both target and source
 assert_content_eq "secret.txt" "$MERGED"
 
-# ---------------------------------------------------------------
 # Scenario 3: merge tool fails — error
-# ---------------------------------------------------------------
 write "$ORIGINAL" secret.txt
 dfm add --encrypt --force secret.txt
 rm secret.txt

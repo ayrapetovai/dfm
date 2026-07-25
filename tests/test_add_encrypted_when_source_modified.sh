@@ -12,9 +12,7 @@ MODIFIED="$(uuid)"
 dfm init dotfiles
 dfm config --set obtain_password_shell_command "echo -n $PASSWORD"
 
-# ------------------------------------------------------------------
 # 1. NonModified: second add --encrypt with nothing changed
-# ------------------------------------------------------------------
 write "$ORIGINAL" secret.txt
 dfm add --encrypt secret.txt
 
@@ -25,9 +23,7 @@ dfm add --encrypt secret.txt
 # verify the encrypted source still decrypts correctly
 assert_encrypted "secret.txt" "$ORIGINAL"
 
-# ------------------------------------------------------------------
 # 2. SourceModified: touch encrypted source, add without --force → fail
-# ------------------------------------------------------------------
 touch "$PWD/dotfiles/secret.txt.encrypted"
 
 assert_fail dfm add --encrypt secret.txt
@@ -35,9 +31,7 @@ assert_fail dfm add --encrypt secret.txt
 # postcondition: encrypted source unchanged
 assert_encrypted "secret.txt" "$ORIGINAL"
 
-# ------------------------------------------------------------------
 # 3. SourceModified with --force → succeed and re-encrypt
-# ------------------------------------------------------------------
 write "$MODIFIED" secret.txt
 
 # touch the encrypted source again so mtime > new sync time isn't an issue

@@ -9,9 +9,7 @@ dfm init dotfiles
 # configure a merge tool that copies the incoming changes to the result file
 dfm config --set merge_tool_command "cp {target} {result}"
 
-# ------------------------------------------------------------------
 # Scenario 1: BothModified — add --merge resolves via merge tool
-# ------------------------------------------------------------------
 write "$CONTENT" file.txt
 dfm add file.txt
 assert_source "file.txt"
@@ -27,9 +25,7 @@ dfm add --merge file.txt
 # source was updated with merged content
 assert_source "file.txt"
 
-# ------------------------------------------------------------------
 # Scenario 2: SourceModified — add --merge resolves via merge tool
-# ------------------------------------------------------------------
 # re-add to get a clean state
 write "$CONTENT" file.txt
 dfm add --force file.txt
@@ -41,9 +37,7 @@ write "$MODIFIED" "$PWD/dotfiles/file.txt"
 dfm add --merge file.txt
 assert_source "file.txt"
 
-# ------------------------------------------------------------------
 # Scenario 3: merge tool fails — error
-# ------------------------------------------------------------------
 write "$CONTENT" file.txt
 dfm add --force file.txt
 write "$MODIFIED" "$PWD/dotfiles/file.txt"

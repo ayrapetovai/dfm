@@ -7,6 +7,7 @@ pub(crate) mod merge;
 pub(crate) mod paths;
 pub(crate) mod pull;
 pub(crate) mod purge;
+pub(crate) mod status;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -19,6 +20,7 @@ pub(crate) use merge::merge_command;
 pub(crate) use paths::paths_command;
 pub(crate) use pull::pull_command;
 pub(crate) use purge::purge_command;
+pub(crate) use status::status_command;
 
 use std::fs;
 use crate::DfmError;

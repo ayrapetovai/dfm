@@ -11,9 +11,7 @@ dfm init dotfiles
 dfm config --set obtain_password_shell_command "echo -n $PASSWORD"
 dfm config --set merge_tool_command "cp {target} {result}"
 
-# ------------------------------------------------------------------
 # Setup: create a clean encrypted state, then pull to target
-# ------------------------------------------------------------------
 write "$ORIGINAL" secret.txt
 dfm add --encrypt secret.txt
 assert_encrypted "secret.txt" "$ORIGINAL"
@@ -35,14 +33,10 @@ rm -f v2.txt
 # now the state still has the original sync_time for "secret.txt.encrypted"
 # but the source file has new content and target has new content → BothModified
 
-# ------------------------------------------------------------------
 # Act: no-args branch iterates state, strips .encrypted from target path
-# ------------------------------------------------------------------
 dfm merge
 
-# ------------------------------------------------------------------
 # Assert: merged content (copied from target via merge tool) appears on both sides
-# ------------------------------------------------------------------
 assert_content_eq "secret.txt" "$MODIFIED"
 
 # Re-pull to verify the encrypted source was also updated with merged content

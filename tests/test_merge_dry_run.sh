@@ -10,9 +10,7 @@ dfm init dotfiles
 # If the sentinel exists after the dry run, the tool was called — test fails.
 dfm config --set merge_tool_command "touch $SENTINEL"
 
-# ------------------------------------------------------------------
 # Setup: create a clean state for a plain file
-# ------------------------------------------------------------------
 write "$CONTENT" file.txt
 dfm add file.txt
 assert_source "file.txt"
@@ -21,18 +19,12 @@ assert_source "file.txt"
 write "$MODIFIED" file.txt
 write "$CONTENT" "$PWD/dotfiles/file.txt"
 
-# ------------------------------------------------------------------
 # Act: dry-run merge — the merge tool must never run
-# ------------------------------------------------------------------
 dfm merge --dry-run
 
-# ------------------------------------------------------------------
 # Assert: sentinel file must not exist
-# ------------------------------------------------------------------
 assert_fail test -f "$SENTINEL"
 
-# ------------------------------------------------------------------
 # Also test the global --dry-run flag
-# ------------------------------------------------------------------
 dfm merge -n
 assert_fail test -f "$SENTINEL"

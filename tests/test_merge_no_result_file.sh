@@ -10,9 +10,7 @@ dfm init dotfiles
 # `true` exits 0 and creates nothing — exactly the case we want to catch.
 dfm config --set merge_tool_command "true"
 
-# ------------------------------------------------------------------
 # Setup: create a clean state for a plain file
-# ------------------------------------------------------------------
 write "$CONTENT" file.txt
 dfm add file.txt
 assert_source "file.txt"
@@ -21,7 +19,5 @@ assert_source "file.txt"
 write "$MODIFIED" file.txt
 write "$CONTENT" "$PWD/dotfiles/file.txt"
 
-# ------------------------------------------------------------------
 # Act: dfm merge — merge tool succeeds but writes no result
-# ------------------------------------------------------------------
 assert_fail dfm merge 2>/dev/null

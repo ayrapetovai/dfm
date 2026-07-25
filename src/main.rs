@@ -133,43 +133,47 @@ enum Command {
         dry_run: bool,
     },
 
-    /// Show status of managed files. [default: show difference]
+    /// Show status of managed files.
     Status {
-        /// Difference between target files and source files [default]
-        #[arg(long, short = 'd', num_args = 0, default_value_t = true)]
-        difference: bool,
-
-        /// Full report: differences, management, ignoring.
+        /// Full report: include up-to-date and ignored entries.
         #[arg(long, short = 'a', num_args = 0, default_value_t = false)]
         all: bool,
 
-        /// List managed files
-        #[arg(long, short = 'm', num_args = 0, default_value_t = false)]
-        managed: bool,
+        /// One line per file with two-letter status code.
+        #[arg(long, short = 's', num_args = 0, default_value_t = false)]
+        short: bool,
 
-        /// List unmanaged files.
-        #[arg(long, short = 'M', num_args = 0, default_value_t = false)]
+        /// Stable machine-readable output (tab-separated, never paged).
+        #[arg(long, num_args = 0, default_value_t = false)]
+        porcelain: bool,
+
+        /// Only conflicted (BothModified) entries.
+        #[arg(long, short = 'c', num_args = 0, default_value_t = false)]
+        conflicted: bool,
+
+        /// Only modified entries (target or source).
+        #[arg(long, short = 'm', num_args = 0, default_value_t = false)]
+        modified: bool,
+
+        /// Only unmanaged entries.
+        #[arg(long, short = 'U', num_args = 0, default_value_t = false)]
         unmanaged: bool,
 
-        /// Source files that was pulled.
+        /// Only unpulled entries (source-only).
         #[arg(long, short = 'p', num_args = 0, default_value_t = false)]
-        pulled: bool,
+        unpulled: bool,
 
-        /// Source files that was not pulled.
-        #[arg(long, short = 'P', num_args = 0, default_value_t = false)]
-        never_pulled: bool,
-
-        /// List ignored files.
+        /// Only ignored entries.
         #[arg(long, short = 'i', num_args = 0, default_value_t = false)]
         ignored: bool,
 
-        /// List pattern used to ignore files.
+        /// List active ignore patterns.
         #[arg(long, short = 'l', num_args = 0, default_value_t = false)]
         ignored_patterns: bool,
 
-        /// List unused ignore patterns.
+        /// List unused (stale) ignore patterns.
         #[arg(long, short = 'u', num_args = 0, default_value_t = false)]
-        useless_patterns: bool,
+        unused_patterns: bool,
     },
 
     /// Perform 3-way merge on conflicting files.
@@ -304,8 +308,12 @@ fn main() -> Result<(), dfm::DfmError> {
             merge_command(&settings, &args, &mut state)?;
             write_state(&path_to_state_file, &state)
         },
-        _ => {
-            Err(dfm::DfmError::Unsupported(format!("subcommand {:?} is not implemented yet", args)))
-        }
+        Command::Status { .. } => {
+            if state_opt.is_none() {
+                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
+            }
+            let state = state_opt.unwrap();
+            status_command(&settings, &args, &state)
+        },
     };
 }

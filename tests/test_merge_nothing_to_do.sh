@@ -8,9 +8,7 @@ CONTENT2="$(uuid)"
 dfm init dotfiles
 dfm config --set merge_tool_command "touch $PWD/MERGE_TOOL_WAS_CALLED"
 
-# ------------------------------------------------------------------
 # Setup: add two files in a clean state — neither gets modified
-# ------------------------------------------------------------------
 write "$CONTENT1" foo.txt
 dfm add foo.txt
 assert_source "foo.txt"
@@ -19,14 +17,10 @@ write "$CONTENT2" bar.txt
 dfm add bar.txt
 assert_source "bar.txt"
 
-# ------------------------------------------------------------------
 # Act: both entries are NonModified → nothing to merge
-# ------------------------------------------------------------------
 dfm merge
 
-# ------------------------------------------------------------------
 # Assert: both files unchanged AND merge tool was never called
-# ------------------------------------------------------------------
 assert_content_eq "foo.txt" "$CONTENT1"
 assert_content_eq "bar.txt" "$CONTENT2"
 assert_content_eq "$PWD/dotfiles/foo.txt" "$CONTENT1"

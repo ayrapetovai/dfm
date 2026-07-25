@@ -39,14 +39,17 @@ Unused ignore patterns:  1
 Used by both `--short` (human-readable short) and `--porcelain` (stable machine-readable).
 
 | Code | Meaning |
-|---|---|
+|---|---|---|
 | `MM` | BothModified — target and source changed independently |
 | `M ` | TargetModified — only target changed (can `dfm add`) |
 | ` M` | SourceModified — only source changed (can `dfm pull`) |
-| `NM` | NeverSynchronized — no sync record exists |
 | `--` | NonModified — up to date |
+| `LL` | Managed symlink — target symlink points to managed pointee |
+| `NM` | NeverSynchronized — no sync record exists |
 | `??` | Unmanaged — exists in target only, untracked |
+| `?L` | Unmanaged symlink — symlink not tracked by dfm |
 | `!!` | Ignored — matches an ignore pattern |
+| `!L` | Ignored symlink — symlink matching an ignore pattern |
 | `!P` | Unused pattern — ignore regex that matches no file |
 | `!?` | Unpulled — exists in source only, not yet pulled |
 
@@ -102,20 +105,25 @@ dfm status --conflicted && exit 0  # nothing to merge
 dfm merge                           # resolve conflicts
 ```
 
-## Implementation priorities
+## Implementation status
 
-| Priority | Feature | ROADMAP ref |
+| Priority | Feature | Status |
 |---|---|---|
-| **P0** | Categorized list grouped by action (merge / add / pull / unmanaged / ignored) | line 2 |
-| **P0** | Detect and show unpulled source files (`!?`) | line 3 |
-| **P0** | Detect and show unmanaged target files (`??`) | line 4 |
-| **P0** | Per-file sync status: BothModified / SourceModified / TargetModified / NonModified / NeverSynchronized | line 5 |
-| **P0** | Show ignored files with the matching regex pattern | line 6 |
-| **P1** | Unused (stale) ignore pattern detection | line 7 |
-| **P1** | `--short` / `-s` | — |
-| **P1** | `--porcelain` stable output | — |
-| **P1** | Exit code differentiation | — |
-| **P2** | Pager (`$PAGER` / default `less -FRSX`) | line 2, screen-height detection |
-| **P2** | Filter flags (`--conflicted`, `--modified`, `--unmanaged`, etc.) | — |
-| **P3** | Git integration (branch, ahead/behind, dirty) | — |
-| **P3** | `--all` flag | — |
+| **P0** | Categorized list grouped by action (merge / add / pull / unmanaged / ignored) | ✅ Done |
+| **P0** | Detect and show unpulled source files (`!?`) | ✅ Done |
+| **P0** | Detect and show unmanaged target files (`??`) | ✅ Done |
+| **P0** | Per-file sync status: BothModified / SourceModified / TargetModified / NonModified / NeverSynchronized | ✅ Done |
+| **P0** | Show ignored files with the matching regex pattern | ✅ Done |
+| **P1** | Unused (stale) ignore pattern detection | ✅ Done |
+| **P1** | `--short` / `-s` | ✅ Done |
+| **P1** | `--porcelain` stable output | ✅ Done |
+| **P1** | Exit code differentiation (0/1/2/4 OR-combined) | ✅ Done |
+| **P2** | Pager (`$PAGER` / default `less -FRSX`, screen-height detection) | ✅ Done |
+| **P2** | Filter flags (`--conflicted`, `--modified`, `--unmanaged`, `--unpulled`, `--ignored`) | ✅ Done |
+| **P2** | `--all` flag | ✅ Done |
+| **P2** | `--ignored-patterns` / `--unused-patterns` | ✅ Done |
+| **P2** | Symlink status codes (`?L`, `!L`, `LL`) | ✅ Done |
+| **P3** | Git integration (branch, dirty/clean in header) | ✅ Done |
+| **P3** | Ahead / behind counts vs upstream | ⏳ Not yet |
+| **P3** | Last commit summary | ⏳ Not yet |
+

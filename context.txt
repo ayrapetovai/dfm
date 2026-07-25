@@ -1,0 +1,388 @@
+# DFM — Dotfile Manager
+
+## What is DFM?
+
+A CLI tool to manage dotfiles (config files in $HOME). It copies files between a
+*target directory* (usually $HOME) and a *source directory* (a git-tracked
+directory like ~/dotfiles). Has two main directions:
+
+  - **add** (push): copy from target → source
+  - **pull**: copy from source → target
+
+Also supports: init, forget, purge, ignore, paths, config.
+
+---
+
+## Quick Start
+
+```bash
+cargo build                          # compile (debug)
+cargo build --release                # compile (release, abort on panic)
+cargo test                           # Rust unit tests only
+cargo test -- --nocapture            # with stdout
+bash tests/launcher.sh               # full shell integration test suite
+bash tests/launcher.sh -x            # with trace output in subshells
+bash tests/launcher.sh tests/test_foo.sh  # run a single test
+```
+
+Verbosity levels: `-v 0` quiet, `-v 1` brief (default), `-v 2` info, `-v 3` debug.
+
+---
+
+## Project Structure
+
+```
+dfm/
+├── Cargo.toml
+├── context.txt              ← this file
+├── src/
+│   ├── main.rs              ← CLI types (Args, Command) + dispatch
+│   ├── lib.rs               ← shared: DfmError, Settings, Config,
+│   │                           StateObject, paths, merge, list_directory,
+│   │                           compare_files_by_timestamps, ignore
+│   ├── crypt.rs             ← AES zip encryption/decryption (write_zip_file, read_zip_file, obtain_password)
+│   └── commands/
+│       ├── mod.rs           ← re-exports + sync_file_copy + helpers
+│       ├── add.rs           ← add/push logic
+│       ├── pull.rs          ← pull logic
+│       ├── forget.rs        ← forget logic
+│       ├── init.rs          ← init logic
+│       ├── ignore.rs        ← ignore logic
+│       ├── purge.rs         ← purge logic
+│       ├── config.rs        ← config get/set/logic
+│       ├── paths.rs         ← paths print
+│       └── tests.rs         ← Rust unit tests (sealed_test)
+└── tests/
+    ├── launcher.sh           ← test runner
+    ├── README.md
+    └── test_*.sh             ← 114 shell integration tests (inc. 4 status tests + 1 symlink status test)
+```
+
+---
+
+## Key Types
+
+- **`DfmError`** (lib.rs:30) — unified error enum:
+  - `Io(io::Error)` — wraps std I/O
+  - `Unsupported(String)` — unimplemented commands
+  - `NotFound(String)` — missing files
+  - `InvalidData(String)` — corrupt state/config
+  - `InvalidInput(String)` — invalid CLI args
+  - `Other(String)` — all else
+  - Has `From<io::Error>`, `From<toml::ser::Error>`, `From<toml::de::Error>`
+  - Construct with `DfmError::other(msg: impl Display)`
+
+- **`Settings`** (lib.rs) — runtime settings merged from
+  defaults + config file + state. Fields: source_dir, target_dir, dot_prefix,
+  symlink_postfix, encrypted_postfix, manage_symlinks, hooks (dead),
+  dotfiles_only, force_encryption_for, obtain_password_shell_command,
+  merge_tool_command.
+
+- **`Config`** (lib.rs, ex-`ConfigFile`) — TOML config file representation.
+
+- **`StateObject`** (lib.rs) — in-memory state with `syncs: HashMap<String, SystemTime>`
+  tracking last sync timestamps per source-relative file path.
+
+- **`Args`** + **`Command`** enum (main.rs) — clap-derived CLI.
+
+---
+
+## How State & Ignore Work
+
+- **State file** — `$XDG_STATE_HOME/dfm/state.toml` — tracks sync timestamps.
+  Read/written via `read_state` / `write_state`. Per-file key is the source-relative
+  path (e.g. `file.txt`).
+
+- **Target ignore file** — `$XDG_STATE_HOME/dfm/ignore_file` — one regex pattern
+  per line. Paths are escaped relative paths (e.g. `file\.txt`). Loaded by
+  `load_ignore_regex`, checked by `check_path_matches_regex`.
+
+- **Source ignore file** — `source_dir/.dfm_ignore_file` — same format, but
+  checked during `add` on source-reachable paths.
+
+- **Init markers** — `source_dir/.dfm_root`, `source_dir/.dfm_ignore_file`,
+  `source_dir/.dfm_ignore_source`, `source_dir/.dfm_ignore_target`.
+
+---
+
+## Shared Helpers (commands/mod.rs)
+
+- **`sync_file_copy(from, to, source_file_in_source_dir, state, source_dir)`** —
+  copies file, preserves permissions, sets mtime on both sides, updates state.
+  Source-side file for state key is the 3rd arg (different for add vs pull).
+
+- **`resolve_dry_run(cmd_flag, global_flag)`** — OR of per-command and global
+  `--dry-run` / `-n`.
+
+- **`require_force(force, msg) -> Result<()>`** — returns `Err(DfmError::Other)`
+  if `force` is false.
+
+---
+
+## Design Patterns
+
+### --dry-run
+Every mutating command has its own `-n` flag AND a global one in `Args`.
+The `merge` subcommand also has `-n`/`--dry-run` (added alongside the merge
+implementation). Use `resolve_dry_run(cmd, global)` to get effective value. At
+task execution time, if dry-run is true, skip the actual I/O but log what would
+happen.
+
+### --force
+- In **add** / **forget**: force allows overwriting/skipping on conflict. The
+  conflict is logged as an error (via `error_list` / `require_force`), and
+  without `--force` the command fails.
+- In **pull**: same pattern. `error_list` accumulates non-fatal issues; after
+  the loop `require_force` gates the result.
+- Some conditions (e.g. non-existent path) return `Err` directly — `--force`
+  cannot fix a fundamentally wrong input.
+
+### Conflict detection (`compare_files_by_timestamps`)
+Returns `CompareByTimestamp` enum:
+- `BothModified` — both files changed since last sync → merge needed, --force
+- `NonModified` — neither changed → skip (unless `--force` on pull)
+- `TargetModified` — target changed → --force required
+- `SourceModified` — source changed → proceed (safe)
+- `NeverSynchronized` — no sync record found → --force required
+
+On `pull --force`, `NonModified` also copies (overrides the skip).
+
+---
+
+## Key Gotchas & Known Issues
+
+### Tests
+- **`dfm()` shell function** in launcher.sh has `&& sleep 0.01s` which
+  suppresses `set -e` inside the function body. Use explicit `assert_fail` to
+  verify non-zero exits.
+- **Two Rust unit tests** use `crate::{Args, Command}` and live in
+  `src/commands/tests.rs` (not `tests/` dir) because they reference binary-internal
+  items.
+
+### Merge dry-run tests
+- `test_merge_dry_run.sh`, `test_add_merge_dry_run.sh`,
+  `test_pull_merge_dry_run.sh` use a sentinel-file technique: the merge tool is
+  configured as `touch $PWD/SENTINEL`, and the test asserts the sentinel was
+  **not** created after the dry run.
+- Both per-command `--dry-run` and global `-n` are tested.
+
+### Merge no-result-file test
+- `test_merge_no_result_file.sh` uses `true` as the merge tool — exits 0 but
+  creates nothing — to verify that `run_merge` treats a missing result file as
+  an error even when the tool exits successfully.
+
+### Pull ignore bug (FIXED)
+- The `check_path_matches_regex` call was only in the "user-provided target path"
+  branch of the loop. Pulling without args traverses the source dir, enters a
+  different branch, and skipped the ignore check entirely.
+- **Fix**: added ignore check in the source-path branch right after computing
+  the inferred target path.
+- Both `dfm pull` (no args) and `dfm pull <path>` now respect `dfm ignore`.
+
+### `list_directory` quirks
+- Non-existent paths are **silently passed through** — WalkDir NotFound returns
+  the original path as a traversed entry. This means `dfm pull /nonexistent/path`
+  will try to process it. The command now returns `Err(DfmError::NotFound)`
+  when no source file matches.
+
+### Ignore file format
+- `dfm ignore <path>` writes the **escaped relative path** (using `regex::escape`),
+  not the canonical absolute path, to the target ignore file.
+- Patterns are matched against the **full absolute target path**, so `file\.txt`
+  matches anywhere in `/home/user/file.txt` or `/home/user/subdir/file.txt`.
+
+### `config --set`
+- Stores all values as TOML strings. Array-typed fields (e.g.
+  `force_encryption_for`) cannot be set via `--set` — requires direct config
+  file editing.
+
+### Dot-prefix convention
+- Files in source dir with `dot_` prefix map to hidden (dot) files in target:
+  e.g. `dot_bashrc` → `~/.bashrc`. Controlled by `Settings.dot_prefix`.
+
+### `--merge` flag (add & pull)
+
+- Available on both `Add` and `Pull` subcommands. When a conflict is detected
+  (`BothModified`, `SourceModified` in add; `BothModified`, `TargetModified` in
+  pull) and `--merge` is set, a `Merge(PathBuf, PathBuf)` task is pushed into
+  the task list instead of the regular `Copy`/`Decrypt`/`CopyEncryptedFile` task.
+  The task is executed in the final task loop alongside other operations.
+
+- **`run_merge(settings, source_abs_path, target_abs_path, state, source_dir_abs_path)`**
+  in `src/commands/mod.rs` does the actual merge:
+  1. Creates `target.<file>` (working-dir side), `source.<file>` (cellar side,
+     decrypted if encrypted) in a `.current_merge/` dir
+  2. Parses the configured `merge_tool_command` — first whitespace token is the
+     program, rest are args with `{target}`, `{source}`, `{result}` replaced by
+     actual temp file paths. The merge tool is **responsible for creating** the
+     result file (it is not pre-created).
+  3. Runs the program directly (no shell wrapper)
+  4. After the tool exits, validates **both** success exit code **and** result
+     file existence. If the tool exits 0 but did not create the result file,
+     it is treated as an error.
+  5. Copies `result.<file>` to **both** `target_abs_path` and `source_abs_path`
+     (re-encrypts to source if encrypted)
+  6. Updates sync state and mtimes for both sides
+  7. Cleans up `.current_merge/` directory
+
+- **No `MergeDirection` enum** — `run_merge` is direction-agnostic; it copies
+  the result to both sides unconditionally.
+
+- **Default command**: `"vimdiff {target} {result} {source}"` (3-way merge).
+  Falls back to an error if `merge_tool_command` is empty or unset — there is
+  no `$MERGE_TOOL`/`$EDITOR`/hardcoded fallback anymore.
+
+- **Encrypted merge**: source is transparently decrypted to `source.<file>`
+  before the merge and re-encrypted from `result.<file>` after.
+
+- **Three merge-related placeholders** available in `merge_tool_command`:
+  `{target}` — working-dir side, `{source}` — cellar side, `{result}` — the
+  file the tool should write the merged output into.
+
+### Encryption / Decryption
+- `write_zip_file(settings, target_file, source_zip_path)` creates a zip archive
+  with a single AES-256 encrypted entry (Bzip2 compressed) containing the file
+  content.
+- `read_zip_file(settings, source_zip_path, target_file)` decrypts index 0 from
+  the zip archive and writes the plaintext to the target file.
+- `obtain_password(settings)` returns the password by either running the
+  configured shell command or prompting interactively.
+- `add --encrypt` on a directory encrypts individual files inside it (the
+  traversal happens at the `list_directory` level, not in `write_zip_file`).
+- **Password caching**: `obtain_password()` uses a process-global
+  `Mutex<Option<String>>` to cache the password after the first retrieval.
+  Subsequent encrypt/decrypt operations silently reuse it. On
+  `zip::result::ZipError::InvalidPassword` during decryption, the cache is
+  cleared and the user is re-prompted exactly once.
+- `pull` decrypts via `PullTask::Decrypt(target, source_encrypted)` — triggered
+  both in the source-traversal path and the missing-target path when the source
+  file ends with `settings.encrypted_postfix` (`.encrypted`).
+- When the target already exists and the encrypted source is found, the same
+  `compare_files_by_timestamps` logic runs as for unencrypted files: conflicts
+  (`BothModified`, `TargetModified`) require `--force`; `NonModified` skips;
+  `SourceModified` re-decrypts; `NeverSynchronized` requires `--force`.
+- State is updated after decryption using the encrypted source path as the key,
+  so subsequent `add` can detect conflicts.
+
+### Hooks
+- `Settings.hooks` field exists but no hook execution logic is implemented.
+  Will be removed.
+
+### `Status` command
+- Implemented in `src/commands/status.rs`. No longer a stub.
+- Exit codes: 0 = clean, 1 = conflicts, 2 = unpulled/unmanaged, 4 = stale patterns. OR-combined.
+
+#### Architecture (three phases)
+1. **Phase 1** — Iterate all `state.syncs` entries, compute source→target path, compare timestamps → status code.
+2. **Phase 2** — Walk target directory via `list_directory_or_error`, find files not in state → `??` (unmanaged) or `!!` (ignored). Skips source dir contents and dfm internal files.
+3. **Phase 3** — Check every ignore pattern against all traversed files → unused/stale patterns.
+
+#### Status codes
+| Code | Meaning |
+|---|---|
+| `MM` | BothModified — target and source changed since sync |
+| `M ` | TargetModified — only target changed |
+| ` M` | SourceModified — only source changed |
+| `--` | NonModified — in sync |
+| `LL` | Managed symlink — target symlink points to managed file |
+| `NM` | NeverSynchronized / source or target missing |
+| `??` | Unmanaged — exists in target, not in state |
+| `?L` | Unmanaged symlink — symlink not tracked by dfm |
+| `!?` | Unpulled — exists in source, target missing |
+| `!!` | Ignored — matches an ignore pattern |
+| `!L` | Ignored symlink — symlink matching an ignore pattern |
+| `!P` | Unused ignore pattern |
+
+#### Output
+- **Header**: Shows both `Source: <path>` and `Target: <path>`, plus git info if applicable
+- **Default**: categorized groups with headers, hides `--`, `LL`, `!!`, `!L` unless `--all`
+- `--short`: one line per file `CODE PATH`
+- `--porcelain`: tab-separated `CODE\tPATH`, stable, never paged
+
+#### Filters
+- `--unmanaged`: shows `??` and `?L`
+- `--ignored`: shows `!!` and `!L`
+- `--all`: includes `--`, `LL`, `!!`, `!L`
+- `--conflicted`, `--modified`, `--unpulled` unchanged
+
+---
+
+## Testing
+
+### Shell integration tests
+- **Runner**: `tests/launcher.sh`
+- Runs all `tests/test_*.sh` files. Each sources the test file in a subshell
+  with `set -eEu`.
+- Each test gets a fresh `$HOME` (a temp dir), `$TMP_HOME` is cleaned between
+  tests.
+- `dfm` is a shell function wrapping the debug binary + `sleep 0.01s`.
+- `-x` flag to `launcher.sh` enables trace output in subshells.
+- Without `-x`, subshell stdout+stderr is redirected to `/dev/null`.
+
+#### Test helper functions (exported from launcher.sh)
+
+| Function | Signature | Purpose |
+|---|---|---|
+| `assert` | `assert <expr...>` | Wraps `test "$@"` — passes all args through |
+| `assert_fail` | `assert_fail <cmd...>` | Asserts a command exits non-zero |
+| `write` | `write <content> <file>` | Writes content to file + `sleep 0.01s` |
+| `assert_source` | `assert_source <relpath>` | Assert file exists at `$PWD/dotfiles/<relpath>` |
+| `assert_no_source` | `assert_no_source <relpath>` | Assert file does NOT exist at `$PWD/dotfiles/<relpath>` |
+| `assert_content_eq` | `assert_content_eq <file> <expected>` | Assert file content matches expected string (descriptive error on mismatch) |
+| `add_file` | `add_file <name> [content]` | Create file with optional content, add it, verify source, and echo the content |
+
+### Rust unit tests
+- In `src/commands/tests.rs` (sealed_test crate for filesystem isolation).
+- Two tests: `init_command_creates_files_and_directories_with_default_config`
+  and `add_file_to_source`.
+
+### Current test count: 109 shell tests (all pass), 2 Rust unit tests
+
+---
+
+## Commands Reference
+
+```
+dfm init <SOURCE> [TARGET]    — initialize: create source dir, state file, config
+dfm add [PATH...]             — copy file(s) from target to source
+dfm pull [PATH...]            — copy file(s) from source to target
+dfm forget <PATH...>          — remove file from management (keep file)
+dfm ignore <PATH...>          — add regex patterns to ignore file
+dfm purge [-s] [-c] [-f]     — remove all state (optionally keep source/config)
+dfm config --get <NAME>       — read config property
+dfm config --set <NAME> <VALUE> — write config property (string only)
+dfm config --list             — list all properties
+dfm paths                     — print key paths
+dfm merge [PATH...]            — run 3-way merge on BothModified files
+dfm status [--short|--porcelain] [--conflicted|--modified|--unmanaged|--unpulled|--ignored|--all] [--ignored-patterns|--unused-patterns]
+dfm status                     — categorized list (merge/add/pull/unmanaged)
+dfm status --short             — one line per file: CODE PATH
+dfm status --porcelain         — stable tab-separated: CODE\tPATH
+dfm status --conflicted        — only BothModified
+dfm status --modified          — only modified entries (any M)
+dfm status --unmanaged         — only ?? entries
+dfm status --unpulled          — only !? entries
+dfm status --ignored           -- only !! entries
+dfm status --all               — include up-to-date (--) and ignored (!!)
+dfm status --ignored-patterns  — list active ignore patterns
+dfm status --unused-patterns   — list stale patterns
+```
+
+Global flags:
+- `-n` / `--dry-run` — no changes, only checks
+- `-v <0-3>` — verbosity
+- `-c <PATH>` — alternative config file
+
+---
+
+## Dependencies (notable)
+- `clap` — CLI parsing
+- `toml` — config/state serialization
+- `regex` + `serde_regex` — ignore patterns
+- `walkdir` — directory traversal
+- `thiserror` — error enum derives
+- `microxdg` — XDG base dir paths
+- `zip` + `aead` — AES-256 encrypted file handling (not 7z)
+- `sealed_test` + `lazy_static` — Rust unit tests
+- `stderrlog` — logging
+- `symlink` — cross-platform symlink management

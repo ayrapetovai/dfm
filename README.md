@@ -389,7 +389,6 @@ source_dir/dot-bashrc.symlink              -- symlink pointer file
 
 ## Limitations
 
-- **Status subcommand**: Not implemented (CLI stub only).
 - **Config `--set` and arrays**: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the TOML file directly.
 - **Dotfiles outside UTF-8 paths**: Only valid UTF-8 paths are supported.
 - **Merge tool**: The merge command is run directly (no shell), so shell features (`|`, `>`, `$VAR`) in `merge_tool_command` are not processed.
