@@ -167,7 +167,6 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
 
 fn default_read_password() -> Result<String, DfmError> {
     let config = rpassword::ConfigBuilder::new()
-         .output_discard()
          .password_feedback_mask('*')
          .build();
 
