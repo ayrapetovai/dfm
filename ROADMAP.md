@@ -1,7 +1,6 @@
 0. Add to read me what utilities are required to use dfm, what are mandatory, and what are optinoal. E. g. optional are 7z, less, git...
 1. Fill the 'Status' paragraph in README.md, now it says that 'status' is not impelemented, but is already.
 2. Add flag --managed to 'status' subcomand, if the flag specifid list only managed filesystem objects.
-3. Analyse why forced encryption does not encrypt files been used in 'add' command.
 4. 'forget' unpulled files does not remove it, in it is encrypted (password prompted), or target is absend the --force must be used.
 5. Check when source files is removed by 'forget' commnd, its parrent directory must alsoe be removed if it is not source director and contained only this file.
 6. Check if runing an external comand in shell to obtain a password is unsecure and reserch how to make it secure.
