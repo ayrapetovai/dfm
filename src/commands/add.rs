@@ -35,6 +35,15 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
 
+    // Compute internal dfm file paths so they can be excluded from traversal.
+    // These files (state, config, target-ignore) are dfm's own files — the user
+    // should never manage them via `add`.
+    let internal_dfm_paths: Vec<PathBuf> = [
+        calc_state_file_path(),
+        calc_config_file_path(),
+        calc_local_ignore_file(),
+    ].into_iter().filter_map(|r| r.ok()).collect();
+
     let paths = match paths {
         Some(p) => p.clone(),
         None => vec![target_dir_abs_path.clone()]
@@ -42,6 +51,11 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
     let traversed_paths = list_directory_or_error(&paths, None, "in targets")?;
     debug!("traversing result is {:?}", traversed_paths);
+
+    // Determine whether the user's input paths include a directory.
+    // During directory traversal, already-managed files are silently skipped
+    // instead of setting `conflict_detected`.
+    let is_dir_traversal = paths.iter().any(|p| p.is_dir());
 
     let target_ignore_file_path = calc_local_ignore_file()?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
@@ -121,6 +135,15 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             } else {
                 debug!("target symlink {:?}\n\tpointee is managed as {:?}", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
             };
+
+            // If the symlink points to a directory, skip adding the pointee as
+            // a regular file — the symlink pointer file has been handled above.
+            if target_symlink_pointee_abs_path.is_dir() {
+                debug!("target symlink {:?} points to directory {:?}, skipping pointee",
+                       target_symlink_abs_path, target_symlink_pointee_abs_path);
+                continue;
+            }
+
             target_symlink_pointee_abs_path
         } else {
             target_path.clone()
@@ -137,6 +160,13 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
         if !target_abs_path.starts_with(&target_dir_abs_path) {
             info!("target {:?} does not reside in target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
+            continue;
+        }
+
+        // Skip internal dfm files (state, config, ignore) — the user should
+        // never manage these via `dfm add`.
+        if internal_dfm_paths.iter().any(|p| *p == target_abs_path) {
+            debug!("target {:?} is an internal dfm file, skipping", target_abs_path);
             continue;
         }
 
@@ -216,11 +246,16 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 CompareByTimestamp::BothModified => {
                     println!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
                         target_abs_path, source_abs_path);
-                    conflict_detected = true;
                     if !force {
                         if *merge {
                             tasks.push(AddTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
                             continue;
+                        }
+                        // When traversing a directory (e.g. `dfm add .`), already-managed
+                        // files are silently skipped.  Only set conflict_detected when the
+                        // user explicitly named this file.
+                        if !is_dir_traversal {
+                            conflict_detected = true;
                         }
                         continue;
                     }
@@ -228,11 +263,13 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 CompareByTimestamp::SourceModified => {
                     println!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
                               source_abs_path, target_abs_path);
-                    conflict_detected = true;
                     if !force {
                         if *merge {
                             tasks.push(AddTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
                             continue;
+                        }
+                        if !is_dir_traversal {
+                            conflict_detected = true;
                         }
                         continue;
                     }

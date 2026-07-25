@@ -158,7 +158,13 @@ pub(crate) fn sync_file_copy(
         error!("failed to set permissions {:?} to {:?}: {}", permissions.mode(), to, e);
     }
 
-    update_sync_state(state, source_file_in_source_dir, from, source_dir_abs_path)?;
+    // `source_file_in_source_dir` is always the source-dir file.  The
+    // "other" file (whichever of `from`/`to` is not the source-dir file)
+    // must be passed as `target_abs` so `update_sync_state` sets its mtime.
+    // In pull: from == source_file_in_source_dir, to = the target file.
+    // In add:  to   == source_file_in_source_dir, from = the target file.
+    let other = if source_file_in_source_dir == from { to } else { from };
+    update_sync_state(state, source_file_in_source_dir, other, source_dir_abs_path)?;
 
     if log_enabled!(log::Level::Trace) {
         let from_meta = from.metadata()?;
