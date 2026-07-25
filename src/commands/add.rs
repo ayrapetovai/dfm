@@ -136,15 +136,15 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 debug!("target symlink {:?}\n\tpointee is managed as {:?}", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
             };
 
-            // If the symlink points to a directory, skip adding the pointee as
-            // a regular file — the symlink pointer file has been handled above.
-            if target_symlink_pointee_abs_path.is_dir() {
-                debug!("target symlink {:?} points to directory {:?}, skipping pointee",
-                       target_symlink_abs_path, target_symlink_pointee_abs_path);
-                continue;
-            }
-
-            target_symlink_pointee_abs_path
+            // The symlink has been handled above (pointer file created or
+            // already exists). Do NOT fall through to also process the
+            // pointee as a regular file — when walking the target directory,
+            // the pointee is discovered independently, and re-processing
+            // it here would produce duplicate output for files that are
+            // already in state.
+            debug!("target symlink {:?} points to {:?}, skipping pointee",
+                   target_symlink_abs_path, target_symlink_pointee_abs_path);
+            continue;
         } else {
             target_path.clone()
         };
@@ -275,7 +275,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     }
                 },
                 CompareByTimestamp::NonModified => {
-                    println!("neither target nor source were modified");
+                    debug!("neither target nor source were modified");
                     // conflict_detected = true;
                     // TODO check if file content is not different
                     if !force {
