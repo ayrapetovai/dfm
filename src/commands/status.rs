@@ -396,17 +396,6 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         print_paged(&output, false)?;
     }
 
-    // ------------------------------------------------------------------
-    // Exit code
-    // ------------------------------------------------------------------
-    let has_conflicts = entries.iter().any(|e| e.code == "MM");
-
-    let exit_code = if has_conflicts { 1 } else { 0 };
-
-    if exit_code != 0 {
-        std::process::exit(exit_code);
-    }
-
     Ok(())
 }
 
@@ -425,7 +414,12 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
     } else {
         out.push_str(&format!("Source: {}\n", source_str));
     }
-    out.push_str(&format!("Target: {}\n{}", target_str, if entries.is_empty() { "" } else { "\n" }));
+    out.push_str(&format!("Target: {}\n", target_str));
+    if entries.is_empty() {
+        out.push_str("All clear.\n");
+    } else {
+        out.push_str("\n");
+    }
 
     // Group entries by code
     let mut merge: Vec<&StatusEntry> = Vec::new();

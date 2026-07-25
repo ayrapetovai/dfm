@@ -270,7 +270,7 @@ On `pull --force`, `NonModified` also copies (overrides the skip).
 
 ### `Status` command
 - Implemented in `src/commands/status.rs`. No longer a stub.
-- Exit codes: 0 = clean, 1 = only `BothModified` (`MM`) produces non-zero. Unmanaged (`??`, `?L`), unpulled (`!?`), and stale patterns (`!P`) no longer produce exit codes 2 or 4.
+
 
 #### Architecture (three phases)
 1. **Phase 1** — Iterate all `state.syncs` entries, compute source→target path, compare timestamps → status code.
