@@ -196,6 +196,118 @@ pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<
     return None;
 }
 
+/// Check if a regex pattern matches a relative path when matching is done
+/// component-wise (between `/` separators) with implicit anchoring at each
+/// component boundary.
+///
+/// * `pattern` — the regex pattern (may contain `/` to span multiple components)
+/// * `relative_path` — path relative to target or source directory
+///   (no leading `/`)
+///
+/// # Matching rules
+///
+/// * The pattern is split on `/` into sub-patterns.
+/// * The path is split on `/` into components.
+/// * Each sub-pattern is tested against a single component.
+/// * If the sub-pattern doesn't already have `^` or `$` anchors, it is
+///   implicitly anchored at both ends (`^(?:…)$`) so it must match the
+///   entire component. If it does have anchors, they are respected as-is.
+/// * A single sub-pattern matches when any path component matches.
+/// * Multiple sub-patterns match when adjacent path components match each
+///   sub-pattern in order (sliding window).
+///
+/// # Examples
+///
+/// | Pattern | Relative path | Matches? |
+/// |---|---|---|
+/// | `.*abc\.c` | `dir/abc.c` | ✅ — component `abc.c` |
+/// | `.*abc\.c` | `dir/the-abc.c` | ✅ — component `the-abc.c` |
+/// | `abc\.c` | `dir/abc.c` | ✅ — exactly component `abc.c` |
+/// | `abc\.c` | `dir/the-abc.c` | ❌ — not exact |
+/// | `.*abc/def.*` | `1abc/define/123` | ✅ — adjacent `1abc`+`define` |
+/// | `.*abc/def.*` | `abc/something/define` | ❌ — not adjacent |
+pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bool {
+    let components: Vec<&str> = relative_path.split('/').collect();
+    let sub_patterns: Vec<&str> = pattern.split('/').collect();
+
+    if sub_patterns.is_empty() {
+        return false;
+    }
+
+    // Anchor the sub-pattern to match the entire component UNLESS it already
+    // has explicit anchors (^ or $).
+    let anchored = |p: &str| -> String {
+        if p.starts_with('^') || p.ends_with('$') {
+            p.to_string()
+        } else {
+            format!("^(?:{})$", p)
+        }
+    };
+
+    if sub_patterns.len() == 1 {
+        // Single sub-pattern: test each component
+        if let Ok(re) = Regex::new(&anchored(sub_patterns[0])) {
+            for comp in &components {
+                if re.is_match(comp) {
+                    return true;
+                }
+            }
+        }
+        false
+    } else {
+        // Multiple sub-patterns: try sliding window of adjacent components
+        if sub_patterns.len() > components.len() {
+            return false;
+        }
+        let sub_res: Vec<Option<Regex>> = sub_patterns
+            .iter()
+            .map(|p| Regex::new(&anchored(p)).ok())
+            .collect();
+        if sub_res.iter().any(|r| r.is_none()) {
+            return false;
+        }
+        for window in components.windows(sub_patterns.len()) {
+            let mut all_match = true;
+            for (i, comp) in window.iter().enumerate() {
+                if let Some(ref re) = sub_res[i] {
+                    if !re.is_match(comp) {
+                        all_match = false;
+                        break;
+                    }
+                } else {
+                    all_match = false;
+                    break;
+                }
+            }
+            if all_match {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Version of `check_path_matches_regex` that uses component-wise matching
+/// (path between `/` separators) instead of full-path substring matching.
+///
+/// `haystack` should be a path **relative** to the directory whose ignore
+/// file is being checked (target or source).
+pub fn check_path_matches_regex_component_wise(
+    regex_set: &RegexSet,
+    haystack: &PathBuf,
+) -> Option<String> {
+    let haystack_str = haystack.to_str().unwrap();
+    if !regex_set.matches(haystack_str).matched_any() {
+        return None;
+    }
+    for pattern in regex_set.patterns() {
+        if pattern_matches_path_components(pattern, haystack_str) {
+            return Some(pattern.to_owned());
+        }
+    }
+    None
+}
+
 pub fn calc_state_directory_path() -> Result<PathBuf, DfmError> {
     match XDG.state() {
         Ok(path_to_config) => {
@@ -785,4 +897,61 @@ fn test_remove_dots_from_path() {
     assert_eq!(remove_dots_from_path(&PathBuf::from("f/../")), PathBuf::from("."));
     assert_eq!(remove_dots_from_path(&PathBuf::from("./")), PathBuf::from("."));
     assert_eq!(remove_dots_from_path(&PathBuf::from(".")), PathBuf::from("."));
+}
+
+#[test]
+fn test_pattern_matches_path_components_single_component() {
+    // Single sub-pattern, exact match
+    assert!(pattern_matches_path_components(r"abc\.c", "abc.c"));
+    assert!(pattern_matches_path_components(r"abc\.c", "dir/abc.c"));
+    assert!(pattern_matches_path_components(r"abc\.c", "abc.c/file"));
+    // Exact pattern does NOT match a different component
+    assert!(!pattern_matches_path_components(r"abc\.c", "the-abc.c"));
+    assert!(!pattern_matches_path_components(r"abc\.c", "dir/the-abc.c"));
+}
+
+#[test]
+fn test_pattern_matches_path_components_wildcard() {
+    // Wildcard pattern .*abc\.c — matches any component ending with "abc.c"
+    let pat = r".*abc\.c";
+    assert!(pattern_matches_path_components(pat, "abc.c"));
+    assert!(pattern_matches_path_components(pat, "the-abc.c"));
+    assert!(pattern_matches_path_components(pat, "dir/the-abc.c"));
+    assert!(pattern_matches_path_components(pat, "dir/abc.c"));
+    assert!(pattern_matches_path_components(pat, "dir/abc.c/other"));
+    // Does NOT match a component without the suffix
+    assert!(!pattern_matches_path_components(pat, "abc.txt"));
+}
+
+#[test]
+fn test_pattern_matches_path_components_cross_component_match() {
+    let pat = r".*abc/def.*";
+    // Adjacent components match
+    assert!(pattern_matches_path_components(pat, "1abc/define"));
+    assert!(pattern_matches_path_components(pat, "1abc/define/123"));
+    assert!(pattern_matches_path_components(pat, "abc/define"));
+    assert!(pattern_matches_path_components(pat, "hola/1abc/define/123"));
+    // Non-adjacent: "abc" and "define" separated by "something"
+    assert!(!pattern_matches_path_components(pat, "abc/something/define"));
+}
+
+#[test]
+fn test_pattern_matches_path_components_cross_component_exact() {
+    let pat = r"abc/def";
+    assert!(pattern_matches_path_components(pat, "abc/def"));
+    assert!(pattern_matches_path_components(pat, "abc/def/other"));
+    assert!(pattern_matches_path_components(pat, "dir/abc/def"));
+    assert!(!pattern_matches_path_components(pat, "abc/defx"));
+    assert!(!pattern_matches_path_components(pat, "xabc/def"));
+}
+
+#[test]
+fn test_pattern_matches_path_components_empty_pattern() {
+    assert!(!pattern_matches_path_components("", "anything"));
+}
+
+#[test]
+fn test_pattern_matches_path_components_too_many_subpatterns() {
+    // 3 sub-patterns but only 2 components → no match
+    assert!(!pattern_matches_path_components(r"a/b/c", "a/b"));
 }

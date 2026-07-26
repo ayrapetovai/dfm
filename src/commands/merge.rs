@@ -148,7 +148,8 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
             continue;
         }
 
-        if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, target_abs) {
+        let target_rel = file_path_relative_to(target_abs, &target_dir_abs_path);
+        if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel) {
             info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs, pattern, target_ignore_file_path);
             continue;
         }

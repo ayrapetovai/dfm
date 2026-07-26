@@ -7,7 +7,6 @@ use std::io::Write;
 
 use colored::Colorize;
 use log::{debug, info};
-use regex::Regex;
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
@@ -87,7 +86,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         let is_managed_symlink = source_rel.ends_with(&settings.symlink_postfix);
 
         // Check ignore patterns
-        if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_abs) {
+        if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_rel)) {
             let code = if is_managed_symlink { "!L" } else { "!!" };
             entries.push(StatusEntry {
                 code,
@@ -236,7 +235,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
             }
 
             // Check ignore patterns
-            if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, target_abs) {
+            if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&rel_str)) {
                 if *all || *ignored {
                     entries.push(StatusEntry {
                         code: "!L",
@@ -281,7 +280,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         }
 
         // Check ignore
-        if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, target_abs) {
+        if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&rel_str)) {
             if *all || *ignored {
                 entries.push(StatusEntry {
                     code: "!!",
@@ -305,35 +304,37 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
     // ------------------------------------------------------------------
     let mut stale_patterns: Vec<String> = Vec::new();
 
-    // Build a flat list of all paths we've seen (for pattern matching)
-    let all_paths: Vec<PathBuf> = {
+    // Build a flat list of all relative paths (for component-wise pattern matching)
+    let all_relative_paths: Vec<String> = {
         let mut p = Vec::new();
-        // Add all traversed target files
-        p.extend(traversed_target.iter().cloned());
-        // Add all target paths from state entries (even if they don't exist on disk)
+        // Add all traversed target files (as relative to target dir)
+        for abs in &traversed_target {
+            if abs.to_str().is_some() {
+                let rel = file_path_relative_to(abs, &target_dir_abs);
+                if let Some(rs) = rel.to_str() {
+                    p.push(rs.to_string());
+                }
+            }
+        }
+        // Add all target paths from state entries (already relative)
         for entry in &entries {
             if entry.code != "!?" {
-                let tp = PathBuf::from_iter([target_dir_abs.to_str().unwrap(), &entry.path]);
-                p.push(tp);
+                p.push(entry.path.clone());
             }
         }
         p
     };
 
     for pattern_str in target_ignore_regex.patterns() {
-        if let Ok(re) = Regex::new(pattern_str) {
-            let mut matched_any = false;
-            for p in &all_paths {
-                if let Some(s) = p.to_str() {
-                    if re.is_match(s) {
-                        matched_any = true;
-                        break;
-                    }
-                }
+        let mut matched_any = false;
+        for rel_path in &all_relative_paths {
+            if pattern_matches_path_components(pattern_str, rel_path) {
+                matched_any = true;
+                break;
             }
-            if !matched_any {
-                stale_patterns.push(pattern_str.to_string());
-            }
+        }
+        if !matched_any {
+            stale_patterns.push(pattern_str.to_string());
         }
     }
 

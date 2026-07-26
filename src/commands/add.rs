@@ -95,7 +95,8 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 .ok_or_else(|| DfmError::InvalidInput("path has no file name".into()))?);
             let target_symlink_abs_path = target_symlink_abs_path;
 
-            if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_symlink_abs_path) {
+            let symlink_rel = file_path_relative_to(&target_symlink_abs_path, &target_dir_abs_path);
+            if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &symlink_rel) {
                 info!("target symlink {:?} is ignored by regex /{}/ in file {:?}", target_symlink_abs_path, pattern, target_ignore_file_path);
                 continue;
             }
@@ -172,7 +173,8 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             continue;
         }
 
-        if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_abs_path) {
+        let target_rel = file_path_relative_to(&target_abs_path, &target_dir_abs_path);
+        if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel) {
             println!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
             continue;
         }

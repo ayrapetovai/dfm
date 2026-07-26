@@ -115,7 +115,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             let target_file_abs_path = remove_dots_from_path(&target_file_abs_path);
             debug!("inferred target {:?}", target_file_abs_path);
 
-            if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_file_abs_path) {
+            if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_file_rel_to_target_dir)) {
                 info!("target {:?} is ignored by regex /{}/ in file {:?}", target_file_abs_path, pattern, target_ignore_file_path);
                 continue;
             }
@@ -165,7 +165,8 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             target_abs_path
         };
 
-        if let Some(pattern) = check_path_matches_regex(&target_ignore_regex, &target_abs_path) {
+        let target_rel_path = file_path_relative_to(&target_abs_path, &target_dir_abs_path);
+        if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel_path) {
             info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
             continue; // ok
         }

@@ -1,9 +1,20 @@
+CONTENT="$(uuid)"
+NEW_CONTENT="$(uuid)"
 dfm init dotfiles
 
 # --- setup: add a file and ignore it ---
-echo "content" > file.txt
+write "$CONTENT" file.txt
 dfm add file.txt
+assert_source file.txt
 dfm ignore file.txt
+
+write "$NEW_CONTENT" "$PWD/dotfiles/file.txt"
+
+dfm pull
+assert_content_eq "file.txt" "$CONTENT"
+
+dfm pull file.txt
+assert_content_eq "file.txt" "$CONTENT"
 
 # --- case 1: pull without args (traverses source dir) ---
 # The ignored file should NOT be restored
