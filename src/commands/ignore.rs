@@ -24,8 +24,8 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     debug!("ignore paths {:?}, patterns {:?}, dry-run {}", paths, patterns, dry_run);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
-    let target_ignore_file_path = calc_local_ignore_file()?;
-    let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
+    let local_ignore_file_path = calc_local_ignore_file()?;
+    let target_ignore_regex = load_ignore_regex(&local_ignore_file_path)?;
 
     let source_ignore_file_path = calc_source_ignore_file(&source_dir_abs_path)?;
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
@@ -88,12 +88,12 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         }
 
         if abs_path.starts_with(&target_dir_abs_path) {
-            let rel_path = file_path_relative_to(&abs_path, &target_ignore_file_path);
+            let rel_path = file_path_relative_to(&abs_path, &local_ignore_file_path);
             if target_ignore_regex.matches(rel_path.to_str().unwrap()).matched_any() {
                 info!("target path {:?} is ignored already", path);
                 continue;
             } else {
-                debug!("adding path {:?} to target ignore file {:?}", path, target_ignore_file_path);
+                debug!("adding path {:?} to target ignore file {:?}", path, local_ignore_file_path);
                 target_ignore_paths.push(path);
                 continue;
             }
@@ -134,12 +134,12 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         info!("dry run specified, no changes will be made");
     }
 
-    debug!("::ignore procedure begins");
+    debug!("adding ignore records to local ignore file {:?}", local_ignore_file_path);
 
     if !target_ignore_paths.is_empty() {
         let mut target_ignore_file = open_or_create_target_ignore_file()?;
         for ignore_path in target_ignore_paths {
-            info!("add path {:?} to {:?}", ignore_path, target_ignore_file_path);
+            info!("add path {:?} to {:?}", ignore_path, local_ignore_file_path);
             if dry_run {
                 continue;
             }
@@ -155,7 +155,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     if !target_ignore_regexps.is_empty() {
         let mut target_ignore_file = open_or_create_target_ignore_file()?;
         for pattern in target_ignore_regexps {
-            info!("add regex /{}/ to {:?}", pattern, target_ignore_file_path);
+            info!("add regex /{}/ to {:?}", pattern, local_ignore_file_path);
             if dry_run {
                 continue;
             }

@@ -197,12 +197,14 @@ enum Command {
         dry_run: bool,
     },
 
-    /// Ignore a file when processing other subcommands (doe not delete target of source file).
+    /// Ignore a file when processing other subcommands (does not delete target of source file).
     #[command(arg_required_else_help = true)]
     Ignore {
+        /// Ignore files.
         #[arg(num_args = 0.., value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
 
+        /// Add an ignore regular expression
         #[arg(long, short = 'p', num_args = 0.., value_name = "REGEXP")]
         patterns: Option<Vec<String>>,
 
