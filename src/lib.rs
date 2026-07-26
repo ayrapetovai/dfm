@@ -245,15 +245,36 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
     };
 
     if sub_patterns.len() == 1 {
-        // Single sub-pattern: test each component
-        if let Ok(re) = Regex::new(&anchored(sub_patterns[0])) {
-            for comp in &components {
-                if re.is_match(comp) {
-                    return true;
+        let sub = sub_patterns[0];
+        // A leading glob (.* or ^) means "match at any depth".
+        // Without it, only match a root-level file (exactly 1 component
+        // after stripping a leading "./").
+        let has_left_glob = sub.starts_with(".*") || sub.starts_with('^');
+        if has_left_glob {
+            // Wildcard at left — test every component
+            if let Ok(re) = Regex::new(&anchored(sub)) {
+                for comp in &components {
+                    if re.is_match(comp) {
+                        return true;
+                    }
                 }
             }
+            false
+        } else {
+            // No wildcard at left — only root-level match (1 component)
+            // Strip leading "./" which represents current directory / root.
+            let path = relative_path.strip_prefix("./").unwrap_or(relative_path);
+            let depth: Vec<&str> = path.split('/').collect();
+            if depth.len() == 1 {
+                if let Ok(re) = Regex::new(&anchored(sub)) {
+                    re.is_match(depth[0])
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
         }
-        false
     } else {
         // Multiple sub-patterns: try sliding window of adjacent components
         if sub_patterns.len() > components.len() {
@@ -901,13 +922,17 @@ fn test_remove_dots_from_path() {
 
 #[test]
 fn test_pattern_matches_path_components_single_component() {
-    // Single sub-pattern, exact match
+    // Single sub-pattern, exact match — root level only
     assert!(pattern_matches_path_components(r"abc\.c", "abc.c"));
-    assert!(pattern_matches_path_components(r"abc\.c", "dir/abc.c"));
-    assert!(pattern_matches_path_components(r"abc\.c", "abc.c/file"));
+    assert!(pattern_matches_path_components(r"abc\.c", "./abc.c"));
+    // No left glob → must NOT match subpath components
+    assert!(!pattern_matches_path_components(r"abc\.c", "dir/abc.c"));
+    assert!(!pattern_matches_path_components(r"abc\.c", "abc.c/file"));
     // Exact pattern does NOT match a different component
     assert!(!pattern_matches_path_components(r"abc\.c", "the-abc.c"));
     assert!(!pattern_matches_path_components(r"abc\.c", "dir/the-abc.c"));
+    // With a left glob it matches at any depth
+    assert!(pattern_matches_path_components(r".*abc\.c", "dir/abc.c"));
 }
 
 #[test]
@@ -943,6 +968,14 @@ fn test_pattern_matches_path_components_cross_component_exact() {
     assert!(pattern_matches_path_components(pat, "dir/abc/def"));
     assert!(!pattern_matches_path_components(pat, "abc/defx"));
     assert!(!pattern_matches_path_components(pat, "xabc/def"));
+}
+
+#[test]
+fn test_pattern_does_not_match_subpath_components() {
+    let pat = r"file\.txt";
+    assert!(pattern_matches_path_components(pat, "./file.txt"));
+    assert!(pattern_matches_path_components(pat, "file.txt"));
+    assert!(!pattern_matches_path_components(pat, "abc/file.txt"));
 }
 
 #[test]
