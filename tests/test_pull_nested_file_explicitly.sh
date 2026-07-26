@@ -1,5 +1,5 @@
 CONTENT="$(uuid)"
-dfm init dotfile
+dfm init dotfiles
 mkdir -p "$PWD/dir1/dir2"
 write "$CONTENT" "$PWD/dir1/dir2/file.txt"
 dfm add dir1

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use log::{debug, error, info, warn};
 use regex::RegexSet;
+use walkdir::WalkDir;
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
@@ -288,6 +289,37 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
             let source_file_abs_path = filepath_in_source_dir(&settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
             if source_file_abs_path.exists() {
+                if source_file_abs_path.is_dir() {
+                    // Source is a directory — walk it recursively to find all files
+                    // and create individual pull tasks for each.
+                    for entry in WalkDir::new(&source_file_abs_path)
+                        .follow_links(false)
+                        .follow_root_links(false)
+                    {
+                        let entry = entry.map_err(|e| {
+                            let msg = e.to_string();
+                            let inner = e.into_io_error()
+                                .unwrap_or_else(|| std::io::Error::other(msg));
+                            DfmError::Io(inner)
+                        })?;
+                        if entry.file_type().is_dir() {
+                            continue;
+                        }
+                        let source_file = entry.path().to_path_buf();
+                        let relative = source_file
+                            .strip_prefix(&source_file_abs_path)
+                            .map_err(|e| DfmError::Other(e.to_string()))?;
+                        let target_file = target_abs_path.join(relative);
+                        info!("source {:?} will be copied\n\tto the target {:?}", source_file, target_file);
+                        if *target_must_be_symlink {
+                            tasks.push(PullTask::CreateOrUpdateSymlink(target_file, source_file.to_str().unwrap().to_owned()));
+                        } else {
+                            tasks.push(PullTask::Copy(target_file, source_file));
+                        }
+                    }
+                    continue; // success
+                }
+
                 info!("source {:?} will be copied\n\tto the target {:?}", source_file_abs_path, target_abs_path);
                 if *target_must_be_symlink {
                     tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_owned()));
