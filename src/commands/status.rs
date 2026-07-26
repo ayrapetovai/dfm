@@ -482,7 +482,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
         // then ith group is the last to be printed
         let is_last = group_order.iter()
             .skip(i + 1)
-            .any(|&se| !se);
+            .all(|&se| se);
         group_lastness.push(is_last);
     }
 
