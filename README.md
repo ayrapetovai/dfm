@@ -1,4 +1,8 @@
-![image info](https://img.shields.io/badge/status-not%20ready-red)
+```
+╔══════════════════════════════════════════════════════╗
+║          ☯ Vibecoded with OpenWork ☯                ║
+╚══════════════════════════════════════════════════════╝
+```
 # Dotfile Manager (dfm)
 
 A CLI tool to manage dotfiles: keep copies of configuration files from your home directory (**target**) inside a version-controlled **source** directory, and synchronize changes between them safely.
