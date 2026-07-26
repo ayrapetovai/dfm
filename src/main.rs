@@ -184,7 +184,7 @@ enum Command {
     },
 
     // must check conflicts
-    /// Remove file from management (does not delete the file).
+    /// Remove file from management (does not delete target file).
     Forget {
         paths: Option<Vec<PathBuf>>,
 
@@ -197,7 +197,7 @@ enum Command {
         dry_run: bool,
     },
 
-    /// Ignore a file when processing other subcommands.
+    /// Ignore a file when processing other subcommands (doe not delete target of source file).
     #[command(arg_required_else_help = true)]
     Ignore {
         #[arg(num_args = 0.., value_name = "PATH")]
