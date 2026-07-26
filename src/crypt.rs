@@ -43,31 +43,27 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
         return Ok(pw);
     }
 
-    let shell_env = "SHELL";
-    let shell_env_value = if envmnt::exists(shell_env) {
-        Some(envmnt::get_any(&vec![shell_env], ""))
-    } else {
-        None
-    };
-
     debug!("get password command is set to {:?}", settings.obtain_password_shell_command);
-    debug!("shell {:?}", shell_env_value);
 
     print!(": ");
     std::io::stdout().flush().unwrap();
 
     let password = if let Some(get_password_command) = settings.obtain_password_shell_command.clone() &&
-            !get_password_command.is_empty() &&
-            let Some(shell) = shell_env_value {
+            !get_password_command.is_empty() {
         debug!("launching get password program");
 
-        // FIXME looks very unsecure
-        let child = Command::new(shell)
-            .args(["-c", get_password_command.as_str()])
-            .stdin(Stdio::inherit())
+        // Pipe the command to `sh` stdin instead of using `$SHELL -c` so the
+        // command text does not appear in the process listing (`ps aux`).
+        let mut child = Command::new("sh")
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(get_password_command.as_bytes())?;
+        }
+        // stdin is dropped here → pipe closes → sh reads EOF and exits
 
         let output = child.wait_with_output()?;
         if !output.status.success() {

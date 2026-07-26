@@ -36,7 +36,7 @@ git push
 | — | Core functionality | Add, pull, forget, merge, status, purge all work out of the box. |
 | `less` (or `$PAGER`) | Paged `status` output | Default pager is `less -FRSX`. Falls back to plain stdout if unavailable. |
 | `git` | Git-info line in `status` output | Shows branch and dirty state of the source directory. Silently skipped if the source directory is not a git repository. |
-| `$SHELL` | `obtain_password_shell_command` | Used to run the configured shell command for encryption passwords. Falls back to interactive password prompt when unset. |
+| `sh` (POSIX) | `obtain_password_shell_command` | The command is piped to `sh` stdin (not exposed in `ps`). Falls back to interactive password prompt when unset. |
 | A merge tool (`vimdiff` by default) | `merge` subcommand | Configured via `merge_tool_command`. Any command that accepts `{target}`, `{source}`, `{result}` placeholders works (e.g., `vimdiff`, `nvim -d`, `meld`). |
 | `7z` (p7zip) | Manual decryption of `.encrypted` files | Encrypted files are standard AES-128 ZIP archives and can be decrypted with any compatible tool. `7z` is recommended in the documentation. |
 
@@ -412,7 +412,7 @@ Sensitive files can be stored in AES-encrypted ZIP archives. Files matching `for
 
 ### Obtaining a password
 
-When `obtain_password_shell_command` is set (non-empty), dfm runs it via `$SHELL -c <command>` and reads the password from stdout. Example:
+When `obtain_password_shell_command` is set (non-empty), dfm pipes the command to `sh` stdin and reads the password from stdout. The command is **not** passed as a `-c` argument, so it does not appear in the process listing (`ps aux`). Example:
 
 ```bash
 # Config
