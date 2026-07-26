@@ -312,7 +312,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         p.extend(traversed_target.iter().cloned());
         // Add all target paths from state entries (even if they don't exist on disk)
         for entry in &entries {
-            if entry.code != "!?" && entry.code != "!!" {
+            if entry.code != "!?" {
                 let tp = PathBuf::from_iter([target_dir_abs.to_str().unwrap(), &entry.path]);
                 p.push(tp);
             }
