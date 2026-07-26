@@ -101,7 +101,11 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             }
 
             let target_symlink_pointee_rel_path = fs::read_link(&target_symlink_abs_path)?;
-            let target_symlink_pointee_abs_path = fs::canonicalize(&target_symlink_pointee_rel_path)?;
+            let target_symlink_pointee_abs_path = fs::canonicalize(&target_symlink_pointee_rel_path)
+                .map_err(|e| DfmError::Other(format!(
+                    "Symlink {:?} points to {:?} which does not exist: {}",
+                    target_symlink_abs_path, target_symlink_pointee_rel_path, e
+                )))?;
             debug!("target symlink {:?}\n\tpoints to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
             let source_symlink_file_abs_path = filepath_in_source_dir(

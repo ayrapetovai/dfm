@@ -175,7 +175,11 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
         if target_abs_path.exists() {
             if target_abs_path.is_symlink() {
-                let target_symlink_followed_abs_path = fs::canonicalize(&target_abs_path)?;
+                let target_symlink_followed_abs_path = fs::canonicalize(&target_abs_path)
+                    .map_err(|e| DfmError::Other(format!(
+                        "Target symlink {:?} is broken (points to non-existent path): {}",
+                        target_abs_path, e
+                    )))?;
 
                 let source_file_abs_path = filepath_in_source_dir(&settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
                 if target_symlink_followed_abs_path == source_file_abs_path {

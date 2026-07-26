@@ -394,7 +394,10 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
             println!("{} {}", entry.code, entry.path);
         }
     } else {
-        let output = format_default(&filtered, &stale_patterns, git_info.as_deref(), &target_dir_abs, &source_dir_abs);
+        let has_managed = entries.iter().any(|e| matches!(
+            e.code, "--" | "MM" | "M " | " M" | "NM" | "!?" | "LL"
+        ));
+        let output = format_default(&filtered, &stale_patterns, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
         print_paged(&output, false)?;
     }
 
@@ -405,7 +408,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
 // Default categorized output
 // ---------------------------------------------------------------------------
 
-fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &PathBuf, source_dir_abs: &PathBuf) -> String {
+fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &PathBuf, source_dir_abs: &PathBuf, has_managed: bool) -> String {
     let mut out = String::new();
 
     // Header — replace home directory prefix with ~
@@ -418,7 +421,11 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
     }
     out.push_str(&format!("Target: {}\n", target_str));
     if entries.is_empty() {
-        out.push_str("All clear.\n");
+        if has_managed {
+            out.push_str("All clear.\n");
+        } else {
+            out.push_str("No files managed.\n");
+        }
     } else {
         out.push_str("\n");
     }
