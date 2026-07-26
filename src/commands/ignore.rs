@@ -1,5 +1,7 @@
+use std::env;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use log::{debug, error, info};
 use regex::Regex;
 
@@ -55,7 +57,20 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
 
     for path in traversed_paths {
         debug!("check path {:?}", path);
-        let abs_path = fs::canonicalize(path)?;
+        let (abs_path, canonicalize_failed) = match fs::canonicalize(path) {
+            Ok(p) => (p, false),
+            Err(_) => {
+                // File doesn't exist on disk (e.g., unpulled managed file).
+                // Build a conceptual absolute path so starts_with checks work.
+                let p = PathBuf::from(path);
+                let abs = if p.is_relative() {
+                    env::current_dir()?.join(&p)
+                } else {
+                    p
+                };
+                (abs, true)
+            }
+        };
 
         // TODO check if file to be ignored is already added to source then
         //  report error, ignore is failed.
@@ -82,6 +97,12 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
                 target_ignore_paths.push(path);
                 continue;
             }
+        }
+
+        if canonicalize_failed {
+            return Err(DfmError::InvalidInput(format!(
+                "path {:?} does not exist", path
+            )));
         }
 
         debug!("path {:?} was not processed", path);
