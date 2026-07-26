@@ -1,6 +1,5 @@
 For each task of this list which supposues createion of a test file or changing code, check if the test file already exists.
 
-5. There is a bug, to test it I wrote test file 'tests/tests/test_pull_nested_file_explicitly.sh'. This bug must be fixed.
 6. Add to README.md what utilities are required to use dfm, what are mandatory, and what are optinoal. E. g. optional are 7z, less, git...
 7. Fill the 'Status' paragraph in README.md, now it says that 'status' is not impelemented, but is already.
 8. Add flag --managed to 'status' subcomand, if the flag specifid list only managed filesystem objects.

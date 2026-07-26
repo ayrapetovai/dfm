@@ -321,5 +321,6 @@ fn main_logic() -> Result<(), dfm::DfmError> {
 fn main() {
     if let Err(e) = main_logic() {
         eprintln!("{:?}", e);
+        std::process::exit(1);
     }
 }
