@@ -299,7 +299,73 @@ Before removing the source directory, `purge` checks for un-pulled changes (sour
 
 ### 2.10 `status`
 
-> **Not yet implemented.** Defined in the CLI parser but currently returns `"not implemented yet"`.
+Show the current state of managed files, unmanaged files, and ignore patterns.
+
+```bash
+dfm status [--all] [--short] [--porcelain]
+           [--conflicted] [--modified] [--unmanaged] [--unpulled] [--ignored]
+           [--ignored-patterns] [--unused-patterns]
+```
+
+By default, status prints a categorized report grouped by state:
+
+```
+Up to date:
+  --  .bashrc
+  --  .config/git/config
+
+Modified:
+  MM  .ssh/config          (both target and source modified)
+
+Unmanaged:
+  ?L  .some_symlink        (symlink, not tracked)
+  ??  temp.txt             (regular file, not tracked)
+
+Ignore patterns:
+  /\.swp$/
+  *.log
+```
+
+#### Output formats
+
+| Flag | Description |
+|---|---|
+| *(default)* | Grouped human-readable report with sections, paged through `$PAGER` (default `less`). |
+| `-s`, `--short` | One line per entry: `<code> <path>` (no headers, no pager). |
+| `--porcelain` | Tab-separated: `<code>\t<path>` (stable, machine-readable, no pager). |
+
+#### Status codes
+
+| Code | Meaning |
+|---|---|
+| `--` | Up to date — target and source are synchronized. |
+| `MM` | **BothModified** — both target and source were modified since last sync (conflict). |
+| `M ` | Target modified — only the target was changed since last sync. |
+| ` M` | Source modified — only the source was changed since last sync. |
+| `NM` | **NeverSynchronized** — no sync time recorded, or the target is missing while the source exists. |
+| `!?` | Missing target — the managed file's target path does not exist but the source does (unpulled). |
+| `??` | Unmanaged — regular file exists in the target directory but is not tracked. |
+| `?L` | Unmanaged symlink — symlink exists in the target directory but is not tracked. |
+| `LL` | Managed symlink — symlink tracked via a `.symlink` pointer file. |
+| `!!` | Ignored — file matches an ignore pattern. |
+| `!L` | Ignored symlink — symlink matches an ignore pattern. |
+
+Codes are two characters: the first represents the **target** side, the second represents the **source** side. A space (` `) means "no change" on that side.
+
+#### Filter flags
+
+| Flag | Shows only |
+|---|---|
+| `-a`, `--all` | Include up-to-date (`--`) and managed-symlink (`LL`) entries (hidden by default). |
+| `-c`, `--conflicted` | Entries with `MM` (BothModified). |
+| `-m`, `--modified` | Entries where target or source was modified. |
+| `-U`, `--unmanaged` | Untracked files (`??`, `?L`). |
+| `-p`, `--unpulled` | Source-only entries (source modified, target missing). |
+| `-i`, `--ignored` | Ignored files (`!!`, `!L`). |
+| `-l`, `--ignored-patterns` | List active ignore patterns (no file entries). |
+| `-u`, `--unused-patterns` | List ignore patterns that match no files. |
+
+Without any filter flag, the default output shows: modified entries, unmanaged entries, and up-to-date entries are **hidden** (use `--all` to see them).
 
 ---
 
