@@ -3,14 +3,20 @@ To execute tests without debug output run:
 ```shell
 ./launcher.sh
 ```
-To execute tsts with debug output run:
+To execute tests with debug output run:
 
 ```shell
 ./launcher.sh -x
 ```
 
-To run a specific test run:
+For a specific test run:
 
 ```shell
-./launcher test_file_name.sh
+./launcher.sh test_file_name.sh
 ```
+For a specific test with debug output run:
+
+```shell
+./launcher.sh -x test_file_name.sh
+```
+
