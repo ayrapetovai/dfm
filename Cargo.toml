@@ -7,7 +7,6 @@ edition = "2024"
 [dependencies]
 microxdg = "0.2.0"
 clap = { version = "4.6.4", features = ["cargo", "derive"] }
-clap_mangen = "0.3.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_regex = "1.2.0"
 toml = "1.1.3"
@@ -22,12 +21,17 @@ rpassword = "7.5.4"
 thiserror = "2"
 aead = "0.6.1"
 once_cell = "1.21.4"
-sealed_test = "1.1.0"
 lazy_static = "1.4"
 zip = { version="8.6.0", default-features = false, features=["bzip2", "aes-crypto"] }
 colored = "3"
 
+[dev-dependencies]
+sealed_test = "1.1.0"
+clap_mangen = "0.3.0"
+
 [profile.release]
 panic = "abort"
-opt-level = "s"
+opt-level = "z"
 lto = "fat"
+codegen-units = 1
+strip = true
