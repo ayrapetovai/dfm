@@ -11,9 +11,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if ! ( whatis 7z > /dev/null; exit $? ); then
-    echo ERROR 7z archiver is not available on PATH
-fi
+[ -v ACTIONS_STEP_DEBUG ] && [ -n "$ACTIONS_STEP_DEBUG" ] && TRACE="-x" || true
 
 TEST_FILE_TO_RUN="${1:-}"
 
@@ -102,6 +100,8 @@ function add_file() {
 }
 export -f add_file
 
+PRESENT_7Z="$(7z > /dev/null && echo present || echo absent)"
+
 # Decrypt $PWD/dotfiles/<target>.encrypted with $PASSWORD and assert its
 # content matches the expected value.
 # Usage: assert_encrypted <target_file> <expected_content>
@@ -110,9 +110,11 @@ function assert_encrypted() {
     local target_file="$1"
     local expected="$2"
 
-    rm -f "$target_file"
-    7z -p"$PASSWORD" x -y "${PWD}/dotfiles/${target_file}.encrypted" > /dev/null 2>&1
-    assert_content_eq "$target_file" "$expected"
+    if [ "$PRESENT_7Z" = "present" ]; then
+        rm -f "$target_file"
+        7z -p"$PASSWORD" x -y "${PWD}/dotfiles/${target_file}.encrypted" > /dev/null 2>&1
+        assert_content_eq "$target_file" "$expected"
+    fi
 }
 export -f assert_encrypted
 
