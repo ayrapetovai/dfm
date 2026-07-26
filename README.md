@@ -37,7 +37,7 @@ git push
 | `less` (or `$PAGER`) | Paged `status` output | Default pager is `less -FRSX`. Falls back to plain stdout if unavailable. |
 | `git` | Git-info line in `status` output | Shows branch and dirty state of the source directory. Silently skipped if the source directory is not a git repository. |
 | `$SHELL` | `obtain_password_shell_command` | Used to run the configured shell command for encryption passwords. Falls back to interactive password prompt when unset. |
-| A merge tool (`vimdiff` by default) | `--merge` / `merge` command | Configured via `merge_tool_command`. Any command that accepts `{target}`, `{source}`, `{result}` placeholders works (e.g., `vimdiff`, `nvim -d`, `meld`). |
+| A merge tool (`vimdiff` by default) | `merge` subcommand | Configured via `merge_tool_command`. Any command that accepts `{target}`, `{source}`, `{result}` placeholders works (e.g., `vimdiff`, `nvim -d`, `meld`). |
 | `7z` (p7zip) | Manual decryption of `.encrypted` files | Encrypted files are standard AES-128 ZIP archives and can be decrypted with any compatible tool. `7z` is recommended in the documentation. |
 
 ---
@@ -114,15 +114,14 @@ dfm init <PATH> [TARGET]
 Copy files from the target directory to the source directory.
 
 ```bash
-dfm add [PATH...] [--merge] [--force] [--symlink] [--encrypt] [--dry-run]
+dfm add [PATH...] [--force] [--symlink] [--encrypt] [--dry-run]
 ```
 
 - `PATH...` — files or directories to add. Omitting traverses the entire target directory (respecting ignore rules).
-- Each file is compared against its source counterpart using [conflict detection](#5-conflict-detection). Only safe copies proceed automatically; conflicts require `--force` or `--merge`.
+- Each file is compared against its source counterpart using [conflict detection](#5-conflict-detection). Only safe copies proceed automatically; conflicts require `--force`.
 
 | Flag | Description |
-|---|---|
-| `-m`, `--merge` | On conflict, run the three-way merge tool instead of aborting. |
+|---|---|---|
 | `-f`, `--force` | Overwrite source files on conflict. |
 | `-s`, `--symlink` | Move the file to the source directory and replace the target with a symlink. |
 | `-e`, `--encrypt` | Encrypt the file before storing in the source directory. |
@@ -145,15 +144,14 @@ When traversed paths include symlinks, `add` resolves each symlink using these r
 Copy files from the source directory to the target directory.
 
 ```bash
-dfm pull [PATH...] [--merge] [--force] [--symlink] [--dry-run]
+dfm pull [PATH...] [--force] [--symlink] [--dry-run]
 ```
 
 - `PATH...` — files or directories in the *source* directory. Omitting pulls all files from the source directory.
 - You may also pass a target-directory path; the corresponding source path is computed automatically.
 
 | Flag | Description |
-|---|---|
-| `-m`, `--merge` | On conflict, run the three-way merge tool instead of aborting. |
+|---|---|---|
 | `-f`, `--force` | Overwrite target files on conflict. |
 | `-s`, `--symlink` | Create symlinks in the target directory pointing to source files. |
 | `-n`, `--dry-run` | Check without making changes. |
@@ -449,12 +447,12 @@ The algorithm:
 | Condition | Result | `add` behavior | `pull` behavior |
 |---|---|---|---|
 | TF mtime == sync == SF mtime | **NonModified** | Skip (or copy with `--force`) | Skip (or copy with `--force`) |
-| TF mtime == sync < SF mtime | **SourceModified** | Overwrite source (conflict); `--merge` runs merge tool | Copy source → target (safe) |
-| TF mtime > sync == SF mtime | **TargetModified** | Copy target → source (safe) | Overwrite target (conflict); `--merge` runs merge tool |
-| TF mtime > sync < SF mtime | **BothModified** | Conflict; `--merge` runs merge tool | Conflict; `--merge` runs merge tool |
+| TF mtime == sync < SF mtime | **SourceModified** | Overwrite source (conflict) | Copy source → target (safe) |
+| TF mtime > sync == SF mtime | **TargetModified** | Copy target → source (safe) | Overwrite target (conflict) |
+| TF mtime > sync < SF mtime | **BothModified** | Conflict; `dfm merge` to resolve | Conflict; `dfm merge` to resolve |
 | No sync time recorded | **NeverSynchronized** | Require `--force` | Require `--force` |
 
-For encrypted source files, the conflict check is performed against the encrypted file's mtime; decryption is only scheduled when safe (or forced/merged).
+For encrypted source files, the conflict check is performed against the encrypted file's mtime; decryption is only scheduled when safe (or forced). The `dfm merge` subcommand also handles encrypted sources by decrypting, merging, and re-encrypting the result.
 
 ---
 

@@ -9,13 +9,12 @@ use regex::RegexSet;
 
 use dfm::*;
 use crate::{Args, Command};
-use super::{sync_file_copy, resolve_dry_run, require_force, run_merge,
+use super::{sync_file_copy, resolve_dry_run, require_force,
             update_sync_state, remove_sync_state, get_sync_time, list_directory_or_error};
 
 pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
         paths,
-        merge,
         force,
         symlink,
         encrypt,
@@ -26,7 +25,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
     let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
-    debug!("add paths {:?}, merge {}, force {}, symlink {}, encrypt {}", paths, merge, force, symlink, encrypt);
+    debug!("add paths {:?}, force {}, symlink {}, encrypt {}", paths, force, symlink, encrypt);
 
     if *symlink && *encrypt {
         error!("Cannot encrypt source for symlink target");
@@ -66,7 +65,6 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         CopyEncryptedFile(PathBuf, PathBuf),
         CreateSymlinkFilePointer(PathBuf, PathBuf, String),
         CopyAndSymlink(PathBuf, PathBuf),
-        Merge(PathBuf, PathBuf),
     }
 
     let mut tasks: Vec<AddTask> = Vec::new();
@@ -247,10 +245,6 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     println!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
                         target_abs_path, source_abs_path);
                     if !force {
-                        if *merge {
-                            tasks.push(AddTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
-                            continue;
-                        }
                         // When traversing a directory (e.g. `dfm add .`), already-managed
                         // files are silently skipped.  Only set conflict_detected when the
                         // user explicitly named this file.
@@ -264,10 +258,6 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     println!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
                               source_abs_path, target_abs_path);
                     if !force {
-                        if *merge {
-                            tasks.push(AddTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
-                            continue;
-                        }
                         if !is_dir_traversal {
                             conflict_detected = true;
                         }
@@ -363,13 +353,6 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     .to_path_buf();
                 let link_target = file_path_relative_to(&source_file, &target_parent);
                 symlink::symlink_file(&link_target, &target_file)?;
-            },
-            AddTask::Merge(source, target) => {
-                info!("merge source {:?} and target {:?}", source, target);
-                if dry_run {
-                    continue;
-                }
-                run_merge(settings, &source, &target, state, &source_dir_abs_path)?;
             },
             AddTask::CopyEncryptedFile(target_file, source_file) => {
                 info!("copy encrypted target {:?} to source {:?}", target_file, source_file);

@@ -1,4 +1,6 @@
-# dfm add --merge --dry-run must not call the merge tool.
+# dfm merge --dry-run must not call the merge tool.
+# (The --merge flag has been removed from `add`; use --dry-run
+# on the standalone `merge` subcommand instead.)
 
 CONTENT="$(uuid)"
 MODIFIED="$(uuid)"
@@ -18,12 +20,12 @@ assert_source "file.txt"
 write "$MODIFIED" file.txt
 write "$CONTENT" "$PWD/dotfiles/file.txt"
 
-# Act: dry-run add --merge — the merge tool must never run
-dfm add --merge --dry-run file.txt
+# Act: dry-run merge — the merge tool must never run
+dfm merge --dry-run file.txt
 
 # Assert: sentinel file must not exist
 assert_fail test -f "$SENTINEL"
 
 # Also test the global --dry-run flag (-n)
-dfm add --merge -n file.txt
+dfm merge -n file.txt
 assert_fail test -f "$SENTINEL"

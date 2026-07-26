@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::{sync_file_copy, resolve_dry_run, require_force, run_merge,
+use super::{sync_file_copy, resolve_dry_run, require_force,
             update_sync_state, get_sync_time, source_rel_to_target_rel,
             list_directory_or_error};
 
@@ -16,27 +16,20 @@ enum PullTask {
     Copy(PathBuf, PathBuf),
     CreateOrUpdateSymlink(PathBuf, String),
     Decrypt(PathBuf, PathBuf),
-    Merge(PathBuf, PathBuf),
 }
 
 /// Handle the encrypted-source timestamp comparison for pull.
-/// Pushes a `Decrypt` or `Merge` task as appropriate.
-/// Returns an error via `require_force` if force is needed but not set.
+/// Pushes a `Decrypt` task or returns an error via `require_force`.
 fn handle_encrypted_timestamps(
     cmp: CompareByTimestamp,
     source_abs: &PathBuf,
     target_abs: &PathBuf,
-    merge: bool,
     force: bool,
     tasks: &mut Vec<PullTask>,
 ) -> Result<(), DfmError> {
     match cmp {
         CompareByTimestamp::BothModified => {
             warn!("both target and encrypted source {:?} were modified, merge needed", source_abs);
-            if merge {
-                tasks.push(PullTask::Merge(source_abs.clone(), target_abs.clone()));
-                return Ok(());
-            }
             require_force(force, "target and encrypted source have conflicting modifications")?;
             tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
         },
@@ -50,10 +43,6 @@ fn handle_encrypted_timestamps(
         },
         CompareByTimestamp::TargetModified => {
             warn!("target was modified, pulling encrypted source will overwrite those changes");
-            if merge {
-                tasks.push(PullTask::Merge(source_abs.clone(), target_abs.clone()));
-                return Ok(());
-            }
             require_force(force, "target was modified")?;
             tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
         },
@@ -76,7 +65,6 @@ fn handle_encrypted_timestamps(
 pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Pull {
         paths,
-        merge,
         force,
         symlink: target_must_be_symlink,
         dry_run,
@@ -86,7 +74,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
     let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
-    debug!("pull paths {:?}, merge {}, force {}, dry-run {}", paths, merge, force, dry_run);
+    debug!("pull paths {:?}, force {}, dry-run {}", paths, force, dry_run);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
 
@@ -168,7 +156,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                     get_sync_time(state, &source_file_abs_path, &source_dir_abs_path),
                 )?;
 
-                handle_encrypted_timestamps(cmp, &source_file_abs_path, &target_file_abs_path, *merge, *force, &mut tasks)?;
+                    handle_encrypted_timestamps(cmp, &source_file_abs_path, &target_file_abs_path, *force, &mut tasks)?;
                 continue;
             }
             // TODO check if the pointee of the symlink also is under management and needs to be pulled.
@@ -235,7 +223,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                         get_sync_time(state, &source_encrypted_abs_path, &source_dir_abs_path),
                     )?;
 
-                    handle_encrypted_timestamps(cmp, &source_encrypted_abs_path, &target_abs_path, *merge, *force, &mut tasks)?;
+                    handle_encrypted_timestamps(cmp, &source_encrypted_abs_path, &target_abs_path, *force, &mut tasks)?;
                     continue; // either skipped or task pushed, proceed to next file
                 }
                 info!("target {:?} is unmanaged,\n\tno source {:?} found, skipping...", target_abs_path, source_abs_path);
@@ -248,10 +236,6 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
             match cmp {
                 CompareByTimestamp::BothModified => {
-                    if *merge {
-                        tasks.push(PullTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
-                        continue;
-                    }
                     warn!("both source and target was modified, merge needed");
                     require_force(*force, "target and source have conflicting modifications")?;
                 },
@@ -264,10 +248,6 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                     }
                 },
                 CompareByTimestamp::TargetModified => {
-                    if *merge {
-                        tasks.push(PullTask::Merge(source_abs_path.clone(), target_abs_path.clone()));
-                        continue;
-                    }
                     warn!("target was modified, pulling source will overwrite those changes");
                     require_force(*force, "target was modified")?;
                 },
@@ -415,13 +395,6 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                 dfm::crypt::read_zip_file(settings, source_file, target_file)?;
 
                 update_sync_state(state, source_file, target_file, &source_dir_abs_path)?;
-            },
-            PullTask::Merge(source, target) => {
-                info!("merge source {:?} and target {:?}", source, target);
-                if dry_run {
-                    continue;
-                }
-                run_merge(settings, source, target, state, &source_dir_abs_path)?;
             },
         }
     }

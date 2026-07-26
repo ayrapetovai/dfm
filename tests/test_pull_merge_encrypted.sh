@@ -1,5 +1,7 @@
-# dfm pull --merge with encrypted sources: decrypts before merging,
-# then writes the merged result to the target.
+# `dfm merge` with encrypted sources: decrypts before merging,
+# then writes the merged result to both target and source.
+# (The --merge flag has been removed from `pull`; use the standalone
+# `merge` subcommand instead.)
 
 PASSWORD="$(uuid)"
 ORIGINAL="$(uuid)"
@@ -13,7 +15,7 @@ dfm config --set obtain_password_shell_command "echo -n $PASSWORD"
 write "$MERGED" "$PWD/expected_merged"
 dfm config --set merge_tool_command "cp $PWD/expected_merged {result}"
 
-# Scenario 1: BothModified — pull --merge decrypts encrypted source
+# Scenario 1: BothModified — dfm merge decrypts encrypted source
 # and merges into the target
 write "$ORIGINAL" secret.txt
 dfm add --encrypt secret.txt
@@ -32,13 +34,13 @@ dfm add --encrypt --force new_version.txt
 mv "$PWD/dotfiles/new_version.txt.encrypted" "$PWD/dotfiles/secret.txt.encrypted"
 rm -f new_version.txt
 
-# BothModified — pull --merge should decrypt source, run merge tool, copy result to target
-dfm pull --merge secret.txt
+# BothModified — dfm merge should decrypt source, run merge tool, copy result to both
+dfm merge secret.txt
 
 # merge tool wrote $MERGED to {result}, result goes to both target and source
 assert_content_eq "secret.txt" "$MERGED"
 
-# Scenario 2: TargetModified — pull --merge resolves via merge tool
+# Scenario 2: TargetModified — pull fails without --force, overwrites with --force
 write "$ORIGINAL" secret.txt
 dfm add --encrypt --force secret.txt
 assert_encrypted "secret.txt" "$ORIGINAL"
@@ -50,17 +52,22 @@ assert_content_eq "secret.txt" "$ORIGINAL"
 # modify only the target (source is unchanged)
 write "$MODIFIED" secret.txt
 
-dfm pull --merge secret.txt
+# pull without --force must fail
+assert_fail dfm pull secret.txt 2>/dev/null
 
-# merge tool wrote $MERGED to {result}, which is copied to both target and source
-assert_content_eq "secret.txt" "$MERGED"
+# pull with --force must overwrite target with decrypted source
+dfm pull --force secret.txt
+assert_content_eq "secret.txt" "$ORIGINAL"
 
 # Scenario 3: merge tool fails — error
 write "$ORIGINAL" secret.txt
 dfm add --encrypt --force secret.txt
 rm secret.txt
 dfm pull
+
+# modify both to create BothModified
 write "$MODIFIED" secret.txt
+touch "$PWD/dotfiles/secret.txt.encrypted"
 
 dfm config --set merge_tool_command "false"
-assert_fail dfm pull --merge secret.txt 2>/dev/null
+assert_fail dfm merge secret.txt 2>/dev/null

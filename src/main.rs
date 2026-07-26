@@ -86,10 +86,6 @@ enum Command {
         #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
 
-        /// Run merge tool on conflicts.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
-        merge: bool,
-
         /// Overwrite source file on conflict and add symlinks.
         #[arg(long, short = 'f', num_args = 0, default_value_t = false)]
         force: bool,
@@ -115,10 +111,6 @@ enum Command {
         /// If omitted - pull all files in the source directory.
         #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
-
-        /// Run merge tool on conflicts.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
-        merge: bool,
 
         /// Overwrite target file on conflict.
         #[arg(long, short, num_args = 0, default_value_t = false)]

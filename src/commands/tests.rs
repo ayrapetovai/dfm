@@ -98,7 +98,6 @@ fn create_add_command(file_name: Option<&str>) -> Args {
             } else {
                 None
             },
-            merge: false,
             force: false,
             symlink: false,
             encrypt: false,
