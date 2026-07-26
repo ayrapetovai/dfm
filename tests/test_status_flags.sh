@@ -40,3 +40,12 @@ dfm status --unmanaged 2>/dev/null | grep -q "unmanaged.txt"
 
 # --- test --all ---
 dfm status --all 2>/dev/null | grep -qF -- "--  uptodate.txt"
+
+# --- test --managed ---
+# Shows managed files (both.txt, target_only.txt, source_mod.txt, uptodate.txt)
+dfm status --managed 2>/dev/null | grep -q "both.txt"
+dfm status --managed 2>/dev/null | grep -q "target_only.txt"
+dfm status --managed 2>/dev/null | grep -q "source_mod.txt"
+dfm status --managed 2>/dev/null | grep -q "uptodate.txt"
+# Should NOT show unmanaged
+! dfm status --managed 2>/dev/null | grep -q "unmanaged.txt"

@@ -39,6 +39,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         conflicted,
         modified,
         unmanaged,
+        managed,
         unpulled,
         ignored,
         ignored_patterns,
@@ -364,10 +365,11 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         if *conflicted && e.code != "MM" { return false; }
         if *modified && !e.code.contains('M') { return false; }
         if *unmanaged && e.code != "??" && e.code != "?L" { return false; }
+        if *managed && e.code != "--" && e.code != "MM" && e.code != "M " && e.code != " M" && e.code != "NM" && e.code != "!?" && e.code != "LL" { return false; }
         if *unpulled && e.code != "!?" { return false; }
         if *ignored && e.code != "!!" && e.code != "!L" { return false; }
         if !*all && !*ignored && (e.code == "!!" || e.code == "!L") { return false; }
-        if !*all && (e.code == "--" || e.code == "LL") { return false; }
+        if !*all && !*managed && (e.code == "--" || e.code == "LL") { return false; }
         true
     }).collect();
 

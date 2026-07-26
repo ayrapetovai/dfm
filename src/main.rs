@@ -159,6 +159,10 @@ enum Command {
         #[arg(long, short = 'U', num_args = 0, default_value_t = false)]
         unmanaged: bool,
 
+        /// Only managed entries (inverse of --unmanaged).
+        #[arg(long, short = 'M', num_args = 0, default_value_t = false)]
+        managed: bool,
+
         /// Only unpulled entries (source-only).
         #[arg(long, short = 'p', num_args = 0, default_value_t = false)]
         unpulled: bool,

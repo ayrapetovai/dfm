@@ -303,7 +303,7 @@ Show the current state of managed files, unmanaged files, and ignore patterns.
 
 ```bash
 dfm status [--all] [--short] [--porcelain]
-           [--conflicted] [--modified] [--unmanaged] [--unpulled] [--ignored]
+           [--conflicted] [--modified] [--unmanaged] [--managed] [--unpulled] [--ignored]
            [--ignored-patterns] [--unused-patterns]
 ```
 
@@ -360,6 +360,7 @@ Codes are two characters: the first represents the **target** side, the second r
 | `-c`, `--conflicted` | Entries with `MM` (BothModified). |
 | `-m`, `--modified` | Entries where target or source was modified. |
 | `-U`, `--unmanaged` | Untracked files (`??`, `?L`). |
+| `-M`, `--managed` | Tracked entries only (inverse of `--unmanaged`). Implies `--all` for managed files. |
 | `-p`, `--unpulled` | Source-only entries (source modified, target missing). |
 | `-i`, `--ignored` | Ignored files (`!!`, `!L`). |
 | `-l`, `--ignored-patterns` | List active ignore patterns (no file entries). |
