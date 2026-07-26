@@ -121,7 +121,7 @@ dfm add [PATH...] [--force] [--symlink] [--encrypt] [--dry-run]
 - Each file is compared against its source counterpart using [conflict detection](#5-conflict-detection). Only safe copies proceed automatically; conflicts require `--force`.
 
 | Flag | Description |
-|---|---|---|
+|---|---|
 | `-f`, `--force` | Overwrite source files on conflict. |
 | `-s`, `--symlink` | Move the file to the source directory and replace the target with a symlink. |
 | `-e`, `--encrypt` | Encrypt the file before storing in the source directory. |
@@ -151,7 +151,7 @@ dfm pull [PATH...] [--force] [--symlink] [--dry-run]
 - You may also pass a target-directory path; the corresponding source path is computed automatically.
 
 | Flag | Description |
-|---|---|---|
+|---|---|
 | `-f`, `--force` | Overwrite target files on conflict. |
 | `-s`, `--symlink` | Create symlinks in the target directory pointing to source files. |
 | `-n`, `--dry-run` | Check without making changes. |
