@@ -1,6 +1,5 @@
 For each task of this list which supposues createion of a test file or changing code, check if the test file already exists.
 
-6. Add to README.md what utilities are required to use dfm, what are mandatory, and what are optinoal. E. g. optional are 7z, less, git...
 7. Fill the 'Status' paragraph in README.md, now it says that 'status' is not impelemented, but is already.
 8. Add flag --managed to 'status' subcomand, if the flag specifid list only managed filesystem objects.
 9. Impelement feature: 'forget' unpulled files does not remove it, if it is encrypted (password prompted), or target is absent, the --force must be used.
