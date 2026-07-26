@@ -82,21 +82,51 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
         let target_abs_path_res = fs::canonicalize(&target_path);
         if target_abs_path_res.is_err() {
-            // we are given a path in source dir
+            // target does not exist — try to find the source (plain, encrypted, or symlink pointer)
             if target_path.is_symlink() {
                 debug!("symlink {:?} is broken: {:?}", target_path, target_abs_path_res);
                 continue; // error
             }
 
+            // Case 1: user provided a source-dir path
             let source_file_abs_path = PathBuf::from_iter(vec![&source_dir_abs_path, &target_path]);
             if source_file_abs_path.exists() {
                 info!("source {:?} will be removed", source_file_abs_path);
                 tasks.push(ForgetTask::Delete(source_file_abs_path));
                 continue; // success
-            } else {
-                info!("source {:?} does not exist, skipping...", source_file_abs_path);
-                continue; // success?
             }
+
+            // Case 2: user provided a target-dir path — compute source via filepath_in_source_dir
+            let target_abs_path = PathBuf::from_iter(vec![&target_dir_abs_path, &target_path]);
+            let target_abs_path = remove_dots_from_path(&target_abs_path);
+
+            let plain_source = filepath_in_source_dir(
+                &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
+                &target_abs_path, None,
+            );
+            let encrypted_source = filepath_in_source_dir(
+                &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
+                &target_abs_path, Some(&settings.encrypted_postfix),
+            );
+            let symlink_source = filepath_in_source_dir(
+                &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
+                &target_abs_path, Some(&settings.symlink_postfix),
+            );
+
+            let source_abs_path = if plain_source.exists() {
+                plain_source
+            } else if encrypted_source.exists() {
+                encrypted_source
+            } else if symlink_source.exists() {
+                symlink_source
+            } else {
+                info!("source for {:?} does not exist, skipping...", target_path);
+                continue;
+            };
+
+            info!("source {:?} will be removed", source_abs_path);
+            tasks.push(ForgetTask::Delete(source_abs_path));
+            continue;
         } else {
             let target_abs_path = target_abs_path_res?; // safe
             if target_abs_path.starts_with(&source_dir_abs_path) {
