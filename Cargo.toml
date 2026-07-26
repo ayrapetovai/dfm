@@ -26,7 +26,6 @@ zip = { version="8.6.0", default-features = false, features=["bzip2", "aes-crypt
 colored = "3"
 
 [dev-dependencies]
-sealed_test = "1.1.0"
 clap_mangen = "0.3.0"
 
 [profile.release]

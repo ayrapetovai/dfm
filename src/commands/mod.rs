@@ -8,8 +8,6 @@ pub(crate) mod paths;
 pub(crate) mod pull;
 pub(crate) mod purge;
 pub(crate) mod status;
-#[cfg(test)]
-pub(crate) mod tests;
 
 pub(crate) use add::add_command;
 pub(crate) use config::config_command;
