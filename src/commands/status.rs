@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -461,18 +461,56 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
         }
         out.push_str(&format!("{}:\n", header));
 
+        // Group by first path component so we can collapse directories with ≥2 entries.
+        let mut groups: BTreeMap<&str, Vec<&&StatusEntry>> = BTreeMap::new();
+        for item in items {
+            let key = match item.path.find('/') {
+                Some(pos) => &item.path[..pos],
+                None => &item.path[..],
+            };
+            groups.entry(key).or_default().push(item);
+        }
+
+        // Build the final display list (collapsed + individual entries).
+        struct DispLine {
+            code: &'static str,
+            path: String,
+            pattern: Option<String>,
+        }
+        let mut display: Vec<DispLine> = Vec::new();
+
+        for (_key, g) in &groups {
+            let has_nested = g.iter().any(|item| item.path.contains('/'));
+            if g.len() >= 2 && has_nested {
+                // Collapse: show directory/* instead of every file inside it
+                display.push(DispLine {
+                    code: g[0].code,
+                    path: format!("{}/*", _key),
+                    pattern: None,
+                });
+            } else {
+                for item in g {
+                    display.push(DispLine {
+                        code: item.code,
+                        path: item.path.clone(),
+                        pattern: item.matched_pattern.clone(),
+                    });
+                }
+            }
+        }
+
         // Align parenthesised patterns (matched_pattern) so '(' starts at the same column.
-        let max_path_len = items
+        let max_path_len = display
             .iter()
-            .filter_map(|item| item.matched_pattern.as_ref().map(|_| item.path.len()))
+            .filter_map(|d| d.pattern.as_ref().map(|_| d.path.len()))
             .max()
             .unwrap_or(0);
 
-        for item in items {
-            if let Some(ref pat) = item.matched_pattern {
-                out.push_str(&format!("  {}  {:<max_width$}  ({})\n", item.code, item.path, pat, max_width = max_path_len));
+        for d in &display {
+            if let Some(ref pat) = d.pattern {
+                out.push_str(&format!("  {}  {:<max_width$}  ({})\n", d.code, d.path, pat, max_width = max_path_len));
             } else {
-                out.push_str(&format!("  {}  {}\n", item.code, item.path));
+                out.push_str(&format!("  {}  {}\n", d.code, d.path));
             }
         }
         // Do not print after the last group in list as 'ls -lR' shell command
