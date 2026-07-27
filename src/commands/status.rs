@@ -461,43 +461,74 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
         }
         out.push_str(&format!("{}:\n", header));
 
-        // Group by first path component so we can collapse directories with ≥2 entries.
-        let mut groups: BTreeMap<&str, Vec<&&StatusEntry>> = BTreeMap::new();
-        for item in items {
-            let key = match item.path.find('/') {
-                Some(pos) => &item.path[..pos],
-                None => &item.path[..],
+        // Build display paths, then iteratively collapse the deepest shared
+        // directory up to the root.
+        let mut paths: Vec<(&'static str, String, Option<String>)> = items.iter()
+            .map(|item| (item.code, item.path.clone(), item.matched_pattern.clone()))
+            .collect();
+
+        loop {
+            // Count all ancestor directories (not just immediate parents)
+            // so that e.g. snap/dir1/b.txt and snap/a.txt both contribute to "snap".
+            let mut ancestor_counts: BTreeMap<String, usize> = BTreeMap::new();
+            for (_, path, _) in &paths {
+                let parts: Vec<&str> = path.split('/').collect();
+                let mut prefix = String::new();
+                for (i, part) in parts.iter().enumerate() {
+                    if *part == "*" {
+                        break; // don't go through a wildcard marker
+                    }
+                    if i > 0 {
+                        prefix.push('/');
+                    }
+                    prefix.push_str(part);
+                    // This ancestor has something deeper beneath it
+                    if i + 1 < parts.len() {
+                        *ancestor_counts.entry(prefix.clone()).or_default() += 1;
+                    }
+                }
+            }
+
+            // Find the deepest ancestor with ≥2 children.
+            let to_collapse: Option<String> = ancestor_counts
+                .into_iter()
+                .filter(|(_, count)| *count >= 2)
+                .max_by_key(|(prefix, _)| prefix.matches('/').count())
+                .map(|(prefix, _)| prefix);
+
+            let Some(collapsed_dir) = to_collapse else {
+                break;
             };
-            groups.entry(key).or_default().push(item);
+
+            // Rebuild paths: replace every entry under collapsed_dir with a
+            // single collapsed_dir/* entry.
+            let mut next = Vec::new();
+            let mut collapsed_added = false;
+            let dir_prefix = format!("{}/", collapsed_dir);
+
+            for (code, path, pattern) in &paths {
+                if path == &collapsed_dir || path.starts_with(&dir_prefix) {
+                    if !collapsed_added {
+                        next.push((*code, format!("{}/*", collapsed_dir), None));
+                        collapsed_added = true;
+                    }
+                    continue;
+                }
+                next.push((*code, path.clone(), pattern.clone()));
+            }
+
+            paths = next;
         }
 
-        // Build the final display list (collapsed + individual entries).
+        // Build the final display list.
         struct DispLine {
             code: &'static str,
             path: String,
             pattern: Option<String>,
         }
-        let mut display: Vec<DispLine> = Vec::new();
-
-        for (_key, g) in &groups {
-            let has_nested = g.iter().any(|item| item.path.contains('/'));
-            if g.len() >= 2 && has_nested {
-                // Collapse: show directory/* instead of every file inside it
-                display.push(DispLine {
-                    code: g[0].code,
-                    path: format!("{}/*", _key),
-                    pattern: None,
-                });
-            } else {
-                for item in g {
-                    display.push(DispLine {
-                        code: item.code,
-                        path: item.path.clone(),
-                        pattern: item.matched_pattern.clone(),
-                    });
-                }
-            }
-        }
+        let display: Vec<DispLine> = paths.into_iter()
+            .map(|(code, path, pattern)| DispLine { code, path, pattern })
+            .collect();
 
         // Align parenthesised patterns (matched_pattern) so '(' starts at the same column.
         let max_path_len = display
