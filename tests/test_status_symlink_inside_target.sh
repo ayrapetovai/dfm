@@ -19,6 +19,6 @@ assert $? = 0
 rm link-to-file.txt file.txt
 
 dfm pull
-assert_contant_eq file.txt "$CONTENT"
+assert_content_eq file.txt "$CONTENT"
 assert_content_eq link-to-file.txt "$CONTENT"
 assert -L link-to-file.txt

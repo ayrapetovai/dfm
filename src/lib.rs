@@ -246,9 +246,7 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
 
     if sub_patterns.len() == 1 {
         let sub = sub_patterns[0];
-        // A leading glob (.* or ^) means "match at any depth".
-        // Without it, only match a root-level file (exactly 1 component
-        // after stripping a leading "./").
+        // A leading glob (.* or ^) means "match any component at any depth".
         let has_left_glob = sub.starts_with(".*") || sub.starts_with('^');
         if has_left_glob {
             // Wildcard at left — test every component
@@ -261,15 +259,22 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
             }
             false
         } else {
-            // No wildcard at left — only root-level match (1 component)
-            // Strip leading "./" which represents current directory / root.
-            let path = relative_path.strip_prefix("./").unwrap_or(relative_path);
-            let depth: Vec<&str> = path.split('/').collect();
-            if depth.len() == 1 {
-                if let Ok(re) = Regex::new(&anchored(sub)) {
-                    re.is_match(depth[0])
+            // No wildcard at left — match any component that is NOT the last
+            // component (i.e., a directory prefix). A root-level path
+            // (single component, possibly prefixed with "./") always matches.
+            if let Ok(re) = Regex::new(&anchored(sub)) {
+                // Skip a leading "." component ("./file.txt" → "file.txt")
+                let comps: &[&str] = if components.first() == Some(&".") {
+                    &components[1..]
                 } else {
-                    false
+                    &components[..]
+                };
+                if comps.len() == 1 {
+                    // Root-level: match the single component
+                    re.is_match(comps[0])
+                } else {
+                    // Match any component except the last (filename) one
+                    comps[..comps.len() - 1].iter().any(|c| re.is_match(c))
                 }
             } else {
                 false
@@ -922,12 +927,12 @@ fn test_remove_dots_from_path() {
 
 #[test]
 fn test_pattern_matches_path_components_single_component() {
-    // Single sub-pattern, exact match — root level only
+    // Single sub-pattern, exact match — root level always matches
     assert!(pattern_matches_path_components(r"abc\.c", "abc.c"));
     assert!(pattern_matches_path_components(r"abc\.c", "./abc.c"));
-    // No left glob → must NOT match subpath components
+    // No left glob — matches a directory component but NOT the last (file) component
     assert!(!pattern_matches_path_components(r"abc\.c", "dir/abc.c"));
-    assert!(!pattern_matches_path_components(r"abc\.c", "abc.c/file"));
+    assert!(pattern_matches_path_components(r"abc\.c", "abc.c/file"));
     // Exact pattern does NOT match a different component
     assert!(!pattern_matches_path_components(r"abc\.c", "the-abc.c"));
     assert!(!pattern_matches_path_components(r"abc\.c", "dir/the-abc.c"));

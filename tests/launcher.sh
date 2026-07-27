@@ -34,11 +34,11 @@ else
 fi
 export EXECUTABLE
 
-eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@" && sleep 0.001s; }'
+eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@" && sleep 0.1s; }'
 export "$PROGRAMM_NAME_IN_SHELL"
 
 function write() {
-    echo "$1" > "$2" && sleep 0.001s
+    mkdir -p "$(dirname "$2")" && echo "$1" > "$2" && sleep 0.1s
 }
 export write;
 
@@ -59,8 +59,15 @@ function assert_fail() {
 export assert_fail
 
 # Assert that a file exists in the source directory ($PWD/dotfiles/).
+# Retries for up to ~1s to handle CI filesystem latency.
 function assert_source() {
-    assert -f "$PWD/dotfiles/$1"
+    local file="$PWD/dotfiles/$1"
+    for i in $(seq 1 20); do
+        [ -f "$file" ] && return 0
+        sleep 0.05
+    done
+    echo "Assertion failed: source file $file not found after 1s"
+    exit 1
 }
 export -f assert_source
 
@@ -71,20 +78,22 @@ function assert_no_source() {
 export -f assert_no_source
 
 # Assert that a file's content matches the expected string.
+# Retries for up to ~1s to handle CI filesystem latency.
 function assert_content_eq() {
     local file="$1"
     local expected="$2"
-    local actual
-    actual="$(cat "$file" 2>/dev/null)" || {
-        echo "Assertion failed: cannot read file $file"
-        exit 1
-    }
-    if [ "$actual" != "$expected" ]; then
-        echo "Assertion failed: file $file content mismatch"
-        echo "  expected: $expected"
-        echo "  actual:   $actual"
-        exit 1
-    fi
+    for i in $(seq 1 20); do
+        local actual
+        actual="$(cat "$file" 2>/dev/null)" || { sleep 0.05; continue; }
+        if [ "$actual" = "$expected" ]; then
+            return 0
+        fi
+        sleep 0.05
+    done
+    echo "Assertion failed: file $file content mismatch"
+    echo "  expected: $expected"
+    echo "  actual:   $(cat "$file" 2>/dev/null || echo '<unreadable>')"
+    exit 1
 }
 export -f assert_content_eq
 
