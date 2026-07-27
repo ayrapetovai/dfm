@@ -460,9 +460,17 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
             return;
         }
         out.push_str(&format!("{}:\n", header));
+
+        // Align parenthesised patterns (matched_pattern) so '(' starts at the same column.
+        let max_path_len = items
+            .iter()
+            .filter_map(|item| item.matched_pattern.as_ref().map(|_| item.path.len()))
+            .max()
+            .unwrap_or(0);
+
         for item in items {
             if let Some(ref pat) = item.matched_pattern {
-                out.push_str(&format!("  {}  {}  ({})\n", item.code, item.path, pat));
+                out.push_str(&format!("  {}  {:<max_width$}  ({})\n", item.code, item.path, pat, max_width = max_path_len));
             } else {
                 out.push_str(&format!("  {}  {}\n", item.code, item.path));
             }
