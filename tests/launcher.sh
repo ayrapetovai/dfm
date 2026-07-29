@@ -2,16 +2,14 @@
 
 set -euP
 
-TRACE=""
+QUIET=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        -x) TRACE="-x"; shift ;;
+        -q) QUIET="1"; shift ;;
         --) shift; break ;;
         *) break ;;
     esac
 done
-
-[ -v ACTIONS_STEP_DEBUG ] && [ -n "$ACTIONS_STEP_DEBUG" ] && TRACE="-x" || true
 
 TEST_FILE_TO_RUN="${1:-}"
 
@@ -158,10 +156,18 @@ FAILED_COUNTER=0
 
 run_test() {
     local test_file="$1"
-    if [ -n "$TRACE" ]; then
-        ( set -eEu $TRACE; source "$test_file" )
-    else
+    if [ -n "$QUIET" ]; then
         ( set -eEu; source "$test_file" ) > /dev/null 2>&1
+    else
+        local tmp; tmp=$(mktemp)
+        if ( set -eEu -x; source "$test_file" ) >"$tmp" 2>&1; then
+            rm -f "$tmp"
+            return 0
+        else
+            cat "$tmp"
+            rm -f "$tmp"
+            return 1
+        fi
     fi
 }
 
