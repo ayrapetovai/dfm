@@ -1,8 +1,10 @@
-1. The function 'calc_local_ignore_file' must depend on where state directory is located. This must fix that integraion tests change
-file '~/.local/state/dfm/ignore_file' during the test run.
-2. The temporary directory for merging regular and encrypted files must be creted in /tmp directory, not in source directory.
-3. When pulling file taht was 'dfm ignore'd and that was pulled earlier, the corresponging target file must not be changed.
-7. launcher.sh must output debug log of test case it failes nad must not output debut logs if the case scrypt did not failed. This meens that
-launcher must rerun test with TRACE set to '-x' specificaly for this failed scrypt.
+2. When do force forget on a file what was changed in target directory, the dfm printf information as thought it is not about to delete file from source directory.
+3. When pulling file that was pulled and then 'ignore'd , the corresponging target file must not be changed.
+7. launcher.sh must output debug log (as flag -x do) of test case it failes and must not output debug logs if the case scrypt did not failed.
 8. in integration tests the command 'uuid' is used, it is absent in github's CI, so the CI fails to biuld the project, the 7z command also is absent at the CI. Replace uuid with some custom function to generate little random text.
+9. If file.txt was added, then removed from target, the ignored, then pulled with --force, then dfm must copy the file from source to target, and remove the file's regex from ignore_file.
+10. If file.txt was added, then the pattern was removed from ignore_file by command 'dfm ignore -r file.txt' then next dfm pull must copy the file.txt from the source to target. The problem is that if the file contains some puncuation like '.' or '[', then in the ignore_file it becomes escaped with one slash \ , and if user forgets to pass exactly the same string, they will not match.
+11. Create file.txt, add it to source, ignore it, the remove 'dfm ignore -r file.txt' must remove file.txt from ignore_file in XDF_STATE_HOME/dfm.
+12. dfm merge command with parameter (path) must run a merge tool, and do 3-way merge as thought there was a conflic BothModified.
+13. Currently in the state file there are fields in each registration record: secs_since_epoch and nanos_since_epoch. They ocupy too much space, rename them to uts (unix time seconds) and utn (unix time nanos), the renaming in mapped struct in rust code is unessasery, just map thoese fields to the shorter names.
 
