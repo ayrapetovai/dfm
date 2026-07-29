@@ -13,15 +13,19 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     let Command::Ignore {
         paths,
         patterns,
+        remove,
         dry_run,
-        ..
     } = &args.command else {
         return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `ignore`", args.command)));
     };
 
     let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
-    debug!("ignore paths {:?}, patterns {:?}, dry-run {}", paths, patterns, dry_run);
+    debug!("ignore paths {:?}, patterns {:?}, remove {:?}, dry-run {}", paths, patterns, remove, dry_run);
+
+    if let Some(records) = remove {
+        return remove_ignore_records(records, dry_run);
+    }
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
     let local_ignore_file_path = calc_local_ignore_file()?;
@@ -183,5 +187,49 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         }
     }
 
+    Ok(())
+}
+
+fn remove_ignore_records(records: &[String], dry_run: bool) -> Result<(), DfmError> {
+    let ignore_file_path = calc_local_ignore_file()?;
+
+    if !ignore_file_path.exists() {
+        info!("ignore file {:?} does not exist, nothing to remove", ignore_file_path);
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&ignore_file_path)?;
+    let lines: Vec<&str> = content.lines().collect();
+    let mut removed = Vec::new();
+    let remaining: Vec<String> = lines
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || records.iter().any(|r| r.as_str() == trimmed) {
+                if !trimmed.is_empty() {
+                    removed.push(trimmed.to_string());
+                }
+                false
+            } else {
+                true
+            }
+        })
+        .map(|l| l.to_string())
+        .collect();
+
+    if removed.is_empty() {
+        info!("no matching records found in ignore file");
+        return Ok(());
+    }
+
+    if dry_run {
+        info!("dry run specified, would remove {} record(s) from {:?}: {:?}",
+              removed.len(), ignore_file_path, removed);
+        return Ok(());
+    }
+
+    fs::write(&ignore_file_path, remaining.join("\n"))?;
+    info!("removed {} record(s) from {:?}: {:?}",
+          removed.len(), ignore_file_path, removed);
     Ok(())
 }

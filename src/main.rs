@@ -208,6 +208,10 @@ enum Command {
         #[arg(long, short = 'p', num_args = 0.., value_name = "REGEXP")]
         patterns: Option<Vec<String>>,
 
+        /// Remove records from the target ignore file.
+        #[arg(long, short = 'r', num_args = 1.., required = false, value_name = "RECORD")]
+        remove: Option<Vec<String>>,
+
         /// Run only checks, no changes will be made to filesystem.
         #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
         dry_run: bool,
