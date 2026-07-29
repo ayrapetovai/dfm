@@ -5,6 +5,23 @@ use std::path::PathBuf;
 use log::{debug, error, info};
 use regex::Regex;
 
+/// Ensure that FILE (opened in append mode) starts writing on a fresh line —
+/// if the file is non-empty and does not end with `\n`, write one first.
+fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(path)?;
+    if !content.is_empty() && !content.ends_with('\n') {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(path)?;
+        writeln!(f)?;
+    }
+    Ok(())
+}
+
 use dfm::*;
 use crate::{Args, Command, DfmError};
 use super::resolve_dry_run;
@@ -141,6 +158,9 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     debug!("adding ignore records to local ignore file {:?}", local_ignore_file_path);
 
     if !target_ignore_paths.is_empty() {
+        if !dry_run {
+            ensure_trailing_newline(&local_ignore_file_path)?;
+        }
         let mut target_ignore_file = open_or_create_target_ignore_file()?;
         for ignore_path in target_ignore_paths {
             info!("add path {:?} to {:?}", ignore_path, local_ignore_file_path);
@@ -157,6 +177,9 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     }
 
     if !target_ignore_regexps.is_empty() {
+        if !dry_run {
+            ensure_trailing_newline(&local_ignore_file_path)?;
+        }
         let mut target_ignore_file = open_or_create_target_ignore_file()?;
         for pattern in target_ignore_regexps {
             info!("add regex /{}/ to {:?}", pattern, local_ignore_file_path);
@@ -172,6 +195,9 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     }
 
     if !source_ignore_paths.is_empty() {
+        if !dry_run {
+            ensure_trailing_newline(&source_ignore_file_path)?;
+        }
         let mut source_ignore_file = open_or_create_file(&source_ignore_file_path)?;
         for ignore_path in source_ignore_paths {
             info!("add path {:?} to {:?}", ignore_path, source_ignore_file_path);
