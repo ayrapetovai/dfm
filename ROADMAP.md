@@ -1,4 +1,3 @@
-2. When do force forget on a file what was changed in target directory, the dfm printf information as thought it is not about to delete file from source directory.
 3. When pulling file that was pulled and then 'ignore'd , the corresponging target file must not be changed.
 7. launcher.sh must output debug log (as flag -x do) of test case it failes and must not output debug logs if the case scrypt did not failed.
 8. in integration tests the command 'uuid' is used, it is absent in github's CI, so the CI fails to biuld the project, the 7z command also is absent at the CI. Replace uuid with some custom function to generate little random text.

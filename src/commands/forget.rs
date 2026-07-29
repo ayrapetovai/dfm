@@ -188,23 +188,32 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
                 let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt)?;
                 if CompareByTimestamp::SourceModified == cmp {
-                    // source was modified and if we remove it then we will lose the modifications
-                    warn!("source {:?}, was modified, run with --force", source_abs_path);
+                    if *force {
+                        info!("source {:?} was modified, removing source", source_abs_path);
+                    } else {
+                        warn!("source {:?} was modified, use --force to remove", source_abs_path);
+                    }
                     error_messages.push("source was modified");
                     tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                     continue; // error
                 }
 
                 if CompareByTimestamp::BothModified == cmp {
-                    // source was modified and if we remove it then we will lose the modifications
-                    warn!("source {:?} and target {:?}, both were modified, run with --force", source_abs_path, target_abs_path);
+                    if *force {
+                        info!("source {:?} and target {:?} were both modified, removing source", source_abs_path, target_abs_path);
+                    } else {
+                        warn!("source {:?} and target {:?} were both modified, use --force to remove", source_abs_path, target_abs_path);
+                    }
                     error_messages.push("source and target were modified");
                     tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                     continue; // error
                 }
                 if CompareByTimestamp::TargetModified == cmp {
-                    // source was modified and if we remove it then we will lose the modifications
-                    warn!("target {:?}, was modified, run with --force", target_abs_path);
+                    if *force {
+                        info!("target {:?} was modified, removing source", target_abs_path);
+                    } else {
+                        warn!("target {:?} was modified, use --force to remove", target_abs_path);
+                    }
                     error_messages.push("target was modified");
                     tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                     continue; // error
