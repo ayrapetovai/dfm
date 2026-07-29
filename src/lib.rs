@@ -79,14 +79,14 @@ pub struct StateObject {
     pub syncs: HashMap<String, SystemTime>,
 }
 
-static STATE_DIRECTORY_NAME_IN_XDG_STATE: &str = "./dfm";
+static STATE_DIRECTORY_NAME_IN_XDG_STATE: &str = "dfm";
 static STATE_FILE_NAME_IN_XDG_STATE: &str = "state.toml";
 
 static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
 static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "config.toml";
 
 static IGNORE_FILE_NAME_IN_XDG_STATE : &str = "ignore_file";
-static IGNORE_FILE_NAME_IN_SOURCE_DIR: &str = "./.dfm_ignore_file";
+static IGNORE_FILE_NAME_IN_SOURCE_DIR: &str = ".dfm_ignore_file";
 
 lazy_static! {
     // file name must be relative to target directory
