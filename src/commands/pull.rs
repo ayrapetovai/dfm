@@ -93,6 +93,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
     let mut tasks: Vec<PullTask> = vec![];
     let mut error_list = vec![];
+    let mut patterns_to_remove: Vec<String> = vec![];
 
     for path in traversed_paths.iter() {
         debug!("checking {:?}", path);
@@ -116,8 +117,13 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             debug!("inferred target {:?}", target_file_abs_path);
 
             if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_file_rel_to_target_dir)) {
-                info!("target {:?} is ignored by regex /{}/ in file {:?}", target_file_abs_path, pattern, target_ignore_file_path);
-                continue;
+                if *force {
+                    info!("target {:?} is ignored, --force overrides, will remove /{}/ from ignore file", target_file_abs_path, pattern);
+                    patterns_to_remove.push(pattern);
+                } else {
+                    info!("target {:?} is ignored by regex /{}/ in file {:?}", target_file_abs_path, pattern, target_ignore_file_path);
+                    continue;
+                }
             }
 
             if !target_file_abs_path.exists() && source_file_abs_path.exists() {
@@ -167,8 +173,13 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
         let target_rel_path = file_path_relative_to(&target_abs_path, &target_dir_abs_path);
         if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel_path) {
-            info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
-            continue; // ok
+            if *force {
+                info!("target {:?} is ignored, --force overrides, will remove /{}/ from ignore file", target_abs_path, pattern);
+                patterns_to_remove.push(pattern);
+            } else {
+                info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
+                continue; // ok
+            }
         }
 
         // encrypted source files handled in source-traversal path (above)
@@ -403,5 +414,22 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             },
         }
     }
+
+    if !dry_run && !patterns_to_remove.is_empty() {
+        let ignore_file_path = calc_local_ignore_file()?;
+        if ignore_file_path.exists() {
+            let content = fs::read_to_string(&ignore_file_path)?;
+            let remaining: Vec<&str> = content.lines()
+                .filter(|line| {
+                    let trimmed = line.trim();
+                    trimmed.is_empty() || !patterns_to_remove.iter().any(|p| p == trimmed)
+                })
+                .collect();
+            let new_content = remaining.join("\n");
+            fs::write(&ignore_file_path, new_content)?;
+            info!("removed {} pattern(s) from ignore file", patterns_to_remove.len());
+        }
+    }
+
     Ok(())
 }
