@@ -104,7 +104,12 @@ function add_file() {
 }
 export -f add_file
 
-PRESENT_7Z="$(7z > /dev/null && echo present || echo absent)"
+# Stub for uuid command for CI
+if command -v uuid > /dev/null 2>&1; then
+  function uuid() {
+    cat /proc/sys/kernel/random/uuid
+  }
+fi
 
 # Decrypt $PWD/dotfiles/<target>.encrypted with $PASSWORD and assert its
 # content matches the expected value.
@@ -114,10 +119,12 @@ function assert_encrypted() {
     local target_file="$1"
     local expected="$2"
 
-    if [ "$PRESENT_7Z" = "present" ]; then
+    if command -v 7z > /dev/null 2>&1; then
         rm -f "$target_file"
         7z -p"$PASSWORD" x -y "${PWD}/dotfiles/${target_file}.encrypted" > /dev/null 2>&1
         assert_content_eq "$target_file" "$expected"
+    else
+      return 0
     fi
 }
 export -f assert_encrypted
