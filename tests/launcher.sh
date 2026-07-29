@@ -34,11 +34,11 @@ else
 fi
 export EXECUTABLE
 
-eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@" && sleep 0.1s; }'
+eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@" && sleep 0.002s; }'
 export "$PROGRAMM_NAME_IN_SHELL"
 
 function write() {
-    mkdir -p "$(dirname "$2")" && echo "$1" > "$2" && sleep 0.1s
+    mkdir -p "$(dirname "$2")" && echo "$1" > "$2" && sleep 0.002
 }
 export write;
 
@@ -47,6 +47,7 @@ function assert() {
         echo "Assertion failed"
         exit 1
     fi
+    return 0
 }
 export assert
 
@@ -62,10 +63,7 @@ export assert_fail
 # Retries for up to ~1s to handle CI filesystem latency.
 function assert_source() {
     local file="$PWD/dotfiles/$1"
-    for i in $(seq 1 20); do
-        [ -f "$file" ] && return 0
-        sleep 0.05
-    done
+    [ -f "$file" ] && return 0
     echo "Assertion failed: source file $file not found after 1s"
     exit 1
 }
@@ -82,14 +80,11 @@ export -f assert_no_source
 function assert_content_eq() {
     local file="$1"
     local expected="$2"
-    for i in $(seq 1 20); do
-        local actual
-        actual="$(cat "$file" 2>/dev/null)" || { sleep 0.05; continue; }
-        if [ "$actual" = "$expected" ]; then
-            return 0
-        fi
-        sleep 0.05
-    done
+    local actual
+    actual="$(cat "$file" 2>/dev/null)"
+    if [ "$actual" = "$expected" ]; then
+        return 0
+    fi
     echo "Assertion failed: file $file content mismatch"
     echo "  expected: $expected"
     echo "  actual:   $(cat "$file" 2>/dev/null || echo '<unreadable>')"
@@ -137,6 +132,10 @@ if [ -n "$TEST_FILE_TO_RUN" ]; then
 fi
 
 export HOME="$TMP_HOME"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_STATE_HOME="$HOME/.local/state"
 cd $HOME
 
 TEST_CASES=$(find "$TESTS_DIR" -type f -name 'test*.sh' -printf "%p\n")
