@@ -205,7 +205,9 @@ fn remove_ignore_records(records: &[String], dry_run: bool) -> Result<(), DfmErr
         .iter()
         .filter(|line| {
             let trimmed = line.trim();
-            if trimmed.is_empty() || records.iter().any(|r| r.as_str() == trimmed) {
+            if trimmed.is_empty() || records.iter().any(|r| {
+                r.as_str() == trimmed || regex::escape(r.as_str()) == trimmed
+            }) {
                 if !trimmed.is_empty() {
                     removed.push(trimmed.to_string());
                 }
