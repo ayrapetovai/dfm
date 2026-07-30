@@ -90,6 +90,13 @@ function assert_content_eq() {
 }
 export -f assert_content_eq
 
+# Stub for uuid command for CI
+if command -v uuid > /dev/null 2>&1; then
+  function uuid() {
+    cat /proc/sys/kernel/random/uuid
+  }
+fi
+
 # Create a file with optional content, add it under management,
 # verify it landed in source, and echo the content for later use.
 function add_file() {
@@ -101,13 +108,6 @@ function add_file() {
     echo "$content"
 }
 export -f add_file
-
-# Stub for uuid command for CI
-if command -v uuid > /dev/null 2>&1; then
-  function uuid() {
-    cat /proc/sys/kernel/random/uuid
-  }
-fi
 
 # Decrypt $PWD/dotfiles/<target>.encrypted with $PASSWORD and assert its
 # content matches the expected value.
