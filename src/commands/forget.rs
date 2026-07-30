@@ -1,13 +1,20 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
 use super::{resolve_dry_run, require_force, get_sync_time, remove_sync_state,
             source_rel_to_target_rel, list_directory_or_error,
             msg_dry_run, msg_nothing_to_do};
+
+fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String {
+    let rel = file_path_relative_to(source_abs, source_dir_abs);
+    let rel = remove_dots_from_path(&rel);
+    rel.to_str().unwrap().to_string()
+}
 
 pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Forget {
@@ -25,6 +32,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
 
+    let forget_all = paths.is_none();
     let paths = match paths {
         Some(p) => p.clone(),
         None => vec![target_dir_abs_path.clone()]
@@ -33,13 +41,13 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
     let traversed_paths = list_directory_or_error(&paths, None, "in targets")?;
     debug!("traversing result is {:?}", traversed_paths);
 
-    #[derive(Debug)]
     enum ForgetTask {
         Delete(PathBuf),
+        RemoveState(String),
     }
 
     let mut tasks: Vec<ForgetTask> = Vec::new();
-    let mut error_messages = vec![];
+    let mut error_messages: Vec<String> = vec![];
 
     debug!("::check state procedure begins");
 
@@ -74,7 +82,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                     } else {
                         info!("specify --force to delete source {:?}", source_symlink_file_abs_path);
                     }
-                    continue; // success
+                    continue;
                 }
             } else {
                 debug!("symlink {:?}\n\tdoes not have source symlink file {:?}, skipping...", target_abs_path, source_symlink_file_abs_path);
@@ -83,21 +91,18 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
         let target_abs_path_res = fs::canonicalize(&target_path);
         if target_abs_path_res.is_err() {
-            // target does not exist — try to find the source (plain, encrypted, or symlink pointer)
             if target_path.is_symlink() {
                 debug!("symlink {:?} is broken: {:?}", target_path, target_abs_path_res);
-                continue; // error
+                continue;
             }
 
-            // Case 1: user provided a source-dir path
             let source_file_abs_path = PathBuf::from_iter(vec![&source_dir_abs_path, &target_path]);
             if source_file_abs_path.exists() {
                 info!("source {:?} will be removed", source_file_abs_path);
                 tasks.push(ForgetTask::Delete(source_file_abs_path));
-                continue; // success
+                continue;
             }
 
-            // Case 2: user provided a target-dir path — compute source via filepath_in_source_dir
             let target_abs_path = PathBuf::from_iter(vec![&target_dir_abs_path, &target_path]);
             let target_abs_path = remove_dots_from_path(&target_abs_path);
 
@@ -129,7 +134,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
             tasks.push(ForgetTask::Delete(source_abs_path));
             continue;
         } else {
-            let target_abs_path = target_abs_path_res?; // safe
+            let target_abs_path = target_abs_path_res?;
             if target_abs_path.starts_with(&source_dir_abs_path) {
                 let source_abs_path = target_abs_path;
                 debug!("target {:?} resides in source directory", source_abs_path);
@@ -151,7 +156,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                         if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
                             info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_symlink_abs_path, target_symlink_pointee_path.to_str().unwrap());
                             tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
-                            continue; // success
+                            continue;
                         } else {
                             info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_symlink_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
                             if *force {
@@ -159,13 +164,13 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                             } else {
                                 info!("specify --force to delete source {:?}", source_symlink_file_abs_path);
                             }
-                            continue; // success
+                            continue;
                         }
                     }
                 } else {
                     info!("source {:?} will be removed", source_abs_path);
                     tasks.push(ForgetTask::Delete(source_abs_path));
-                    continue; // success
+                    continue;
                 }
             } else if target_abs_path.starts_with(&target_dir_abs_path) {
                 debug!("target {:?} resides in target directory", target_abs_path);
@@ -179,7 +184,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                     encrypted_source
                 } else {
                     info!("source for {:?} does not exist, skipping...", target_abs_path);
-                    continue; // success
+                    continue;
                 };
 
                 let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
@@ -188,41 +193,90 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                 if CompareByTimestamp::SourceModified == cmp {
                     if *force {
                         info!("source {:?} was modified, removing source", source_abs_path);
+                        tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                     } else {
                         warn!("source {:?} was modified, use --force to remove", source_abs_path);
+                        error_messages.push("source was modified".into());
                     }
-                    error_messages.push("source was modified");
-                    tasks.push(ForgetTask::Delete(source_abs_path.clone()));
-                    continue; // error
+                    continue;
                 }
 
                 if CompareByTimestamp::BothModified == cmp {
                     if *force {
                         info!("source {:?} and target {:?} were both modified, removing source", source_abs_path, target_abs_path);
+                        tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                     } else {
                         warn!("source {:?} and target {:?} were both modified, use --force to remove", source_abs_path, target_abs_path);
+                        error_messages.push("source and target were modified".into());
                     }
-                    error_messages.push("source and target were modified");
-                    tasks.push(ForgetTask::Delete(source_abs_path.clone()));
-                    continue; // error
+                    continue;
                 }
                 if CompareByTimestamp::TargetModified == cmp {
                     if *force {
                         info!("target {:?} was modified, removing source", target_abs_path);
+                        tasks.push(ForgetTask::Delete(source_abs_path.clone()));
                     } else {
                         warn!("target {:?} was modified, use --force to remove", target_abs_path);
+                        error_messages.push("target was modified".into());
                     }
-                    error_messages.push("target was modified");
-                    tasks.push(ForgetTask::Delete(source_abs_path.clone()));
-                    continue; // error
+                    continue;
                 }
                 info!("source {:?} will be removed", source_abs_path);
                 tasks.push(ForgetTask::Delete(source_abs_path));
-                continue; // success
+                continue;
             } else {
                 warn!("target {:?}\n\tresides outside the target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
                 continue;
             }
+        }
+    }
+
+    // Build set of state keys already covered by tasks
+    let mut processed_keys: HashSet<String> = HashSet::new();
+    for task in &tasks {
+        match task {
+            ForgetTask::Delete(source_abs) => {
+                processed_keys.insert(source_to_state_key(source_abs, &source_dir_abs_path));
+            },
+            ForgetTask::RemoveState(key) => {
+                processed_keys.insert(key.clone());
+            },
+        }
+    }
+
+    // Process state entries not covered by the traversal (orphaned / unpulled).
+    // Only run when no explicit paths were given ("forget all" mode).
+    let orphan_keys: Vec<String> = if forget_all {
+        state.syncs.keys()
+            .filter(|k| !processed_keys.contains(k.as_str()))
+            .cloned()
+            .collect()
+    } else {
+        vec![]
+    };
+    for key in orphan_keys {
+        let source_abs = PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), &key]);
+        let source_abs = remove_dots_from_path(&source_abs);
+
+        if source_abs.exists() {
+            let sync_time = &state.syncs[&key];
+            let source_meta = source_abs.metadata()?;
+            let source_mtime = source_meta.modified()?;
+            if source_mtime > sync_time.0 {
+                if *force {
+                    info!("source {:?} was modified, removing with --force", key);
+                    tasks.push(ForgetTask::Delete(source_abs));
+                } else {
+                    warn!("source {:?} was modified, use --force to remove", key);
+                    error_messages.push(format!("source {:?} was modified", key));
+                }
+            } else {
+                info!("source {:?} will be removed", source_abs);
+                tasks.push(ForgetTask::Delete(source_abs));
+            }
+        } else {
+            info!("source for {:?} does not exist, removing state entry", key);
+            tasks.push(ForgetTask::RemoveState(key));
         }
     }
 
@@ -241,40 +295,66 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
     debug!("::remove procedure begins, {} tasks", tasks.len());
 
-    for task in tasks.iter() {
+    // Phase 1: Delete source files (best-effort, never abort mid-phase)
+    let mut delete_errors: Vec<(String, String)> = Vec::new();
+    for task in &tasks {
+        let ForgetTask::Delete(source_file) = task else { continue; };
+        info!("delete {:?}", source_file);
+        if dry_run {
+            continue;
+        }
+        if let Err(e) = fs::remove_file(source_file) {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                debug!("{:?} was already removed, skipping", source_file);
+            } else {
+                warn!("failed to delete {:?}: {}", source_file, e);
+                delete_errors.push((source_file.to_str().unwrap().to_string(), e.to_string()));
+            }
+        }
+    }
+
+    // Phase 2: Remove state entries for all processed files (infallible)
+    for task in &tasks {
         match task {
             ForgetTask::Delete(source_file) => {
-                info!("delete {:?}", source_file);
-                if dry_run {
-                    continue;
-                }
-
-                // fs::remove_file does not follow links, it deletes the specified file
-                // even it is a symlink
-                if let Err(e) = fs::remove_file(&source_file) {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        debug!("{:?} was already removed, skipping", source_file);
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-                remove_sync_state(state, &source_file, &source_dir_abs_path);
-
-                let mut parent_opt = source_file.parent();
-                while let Some(dir) = parent_opt {
-                    parent_opt = dir.parent();
-                    if dir != source_dir_abs_path && dir.starts_with(&source_dir_abs_path) && dir.read_dir()?.next().is_none() {
-                        info!("removing empty directory {:?}", dir);
-                        if let Err(e) = fs::remove_dir(dir) {
-                            return Err(e.into());
-                        }
-                    } else {
-                        trace!("removing stopped at {:?}", dir);
-                        break;
-                    }
-                }
+                remove_sync_state(state, source_file, &source_dir_abs_path);
+            },
+            ForgetTask::RemoveState(key) => {
+                state.syncs.remove(key);
             },
         }
     }
+
+    // Phase 3: Clean up empty parent directories (best-effort)
+    for task in &tasks {
+        let ForgetTask::Delete(source_file) = task else { continue; };
+        if dry_run {
+            continue;
+        }
+        let mut parent_opt = source_file.parent();
+        while let Some(dir) = parent_opt {
+            parent_opt = dir.parent();
+            if dir != source_dir_abs_path && dir.starts_with(&source_dir_abs_path) {
+                let mut read_dir_entries = match dir.read_dir() {
+                    Ok(entries) => entries,
+                    Err(_) => break,
+                };
+                if read_dir_entries.next().is_none() {
+                    if let Err(e) = fs::remove_dir(dir) {
+                        warn!("failed to remove empty directory {:?}: {}", dir, e);
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    if !delete_errors.is_empty() {
+        error!("some source files could not be deleted: {:?}", delete_errors);
+    }
+
     Ok(())
 }

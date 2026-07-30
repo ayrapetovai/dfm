@@ -425,7 +425,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
     out.push_str(&format!("Target: {}\n", target_str));
     if entries.is_empty() {
         if has_managed {
-            out.push_str("All clear.\n");
+            out.push_str("All up-to-date.\n");
         } else {
             out.push_str("No files managed.\n");
         }
