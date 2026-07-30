@@ -73,6 +73,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
     let mut conflict_detected = false;
     let mut error_messages = vec![];
+    let mut patterns_to_remove: Vec<String> = vec![];
 
     for target_path in traversed_paths.iter() {
         debug!("checking {:?}", target_path);
@@ -174,8 +175,13 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
         let target_rel = file_path_relative_to(&target_abs_path, &target_dir_abs_path);
         if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel) {
-            warn!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
-            continue;
+            if *force {
+                info!("target {:?} is ignored, --force overrides, will remove /{}/ from ignore file", target_abs_path, pattern);
+                patterns_to_remove.push(pattern);
+            } else {
+                warn!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
+                continue;
+            }
         }
 
         let to_be_encrypted_regex_set = RegexSet::new(settings.force_encryption_for.iter().map(|r| r.as_str().to_owned())).unwrap();
@@ -392,5 +398,21 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             },
         }
     }
+
+    if !dry_run && !patterns_to_remove.is_empty() {
+        let ignore_file_path = calc_local_ignore_file()?;
+        if ignore_file_path.exists() {
+            let content = fs::read_to_string(&ignore_file_path)?;
+            let remaining: Vec<&str> = content.lines()
+                .filter(|line| {
+                    let trimmed = line.trim();
+                    trimmed.is_empty() || !patterns_to_remove.iter().any(|p| p == trimmed)
+                })
+                .collect();
+            fs::write(&ignore_file_path, remaining.join("\n"))?;
+            info!("removed {} pattern(s) from ignore file", patterns_to_remove.len());
+        }
+    }
+
     Ok(())
 }
