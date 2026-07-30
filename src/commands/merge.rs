@@ -36,6 +36,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
     };
 
     let dry_run = resolve_dry_run(*dry_run, args.dry_run);
+    let paths_provided = paths.is_some();
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
 
@@ -155,7 +156,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
         }
 
         let cmp = compare_files_by_timestamps(target_abs, source_abs, Some(sync_time))?;
-        if !matches!(cmp, CompareByTimestamp::BothModified) {
+        if !matches!(cmp, CompareByTimestamp::BothModified) && !paths_provided {
             debug!("{:?} is not BothModified, skipping", source_abs);
             continue;
         }
