@@ -257,8 +257,12 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                 // fs::remove_file does not follow links, it deletes the specified file
                 // even it is a symlink
                 if let Err(e) = fs::remove_file(&source_file) {
-                    error!("failed to remove file {:?}: {}", source_file, e);
-                    return Err(e.into());
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        debug!("{:?} was already removed, skipping", source_file);
+                    } else {
+                        error!("failed to remove file {:?}: {}", source_file, e);
+                        return Err(e.into());
+                    }
                 }
                 remove_sync_state(state, &source_file, &source_dir_abs_path);
 
