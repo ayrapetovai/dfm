@@ -75,7 +75,7 @@ git push
 | **Source directory** | A directory (typically under version control) that stores copies of managed files. |
 | **Target file (TF)** | A managed file inside the target directory. |
 | **Source file (SF)** | The backing copy inside the source directory. |
-| **State file** | A TOML file (`state.toml`) that stores synchronization timestamps. |
+| **State file** | A TOML file (`state.toml`) that maps each managed file to a `"<seconds>;<nanos>"` sync timestamp. |
 | **Sync time** | The timestamp recorded when a target→source (add) or source→target (pull) copy completed. Used for conflict detection. |
 
 ### Path mapping
@@ -179,14 +179,15 @@ dfm pull [PATH...] [--force] [--symlink] [--dry-run]
 
 ### 2.4 `merge`
 
-Run the three-way merge tool on files that have been modified in both target and source (**BothModified**).
+Run the three-way merge tool on conflicting files.
 
 ```bash
 dfm merge [PATH...]
 ```
 
-- `PATH...` — optional paths to filter which files to merge. Pass a target path or a source path; the corresponding counter-part is resolved automatically.
-- Without arguments, scans all entries in the state file for `BothModified` files.
+- `PATH...` — optional paths to force-merge regardless of conflict state. Pass a target path or a source path; the corresponding counter-part is resolved automatically.
+- Without arguments, scans all entries in the state file for `BothModified` files only.
+- With a path given, merges the file even if only one side was modified — useful for resolving a `M ` or ` M` state proactively.
 - Skips symlinks and files matching the target ignore pattern.
 
 The merge tool is configured by the `merge_tool_command` setting (default: `vimdiff {target} {result} {source}`). The placeholders are:
@@ -465,7 +466,7 @@ For encrypted source files, the conflict check is performed against the encrypte
 ```
 $XDG_CONFIG_HOME/dfm/config.toml         -- user config
 ~/.dfm.toml                               -- fallback config (if XDG path absent)
-$XDG_STATE_HOME/dfm/state.toml            -- sync timestamps
+$XDG_STATE_HOME/dfm/state.toml            -- sync timestamps (`"<secs>;<nanos>"` per file)
 $XDG_STATE_HOME/dfm/ignore_file           -- target-side ignore patterns
 source_dir/.dfm_root                       -- source directory marker
 source_dir/.dfm_ignore_file                -- source-side ignore patterns
