@@ -91,7 +91,7 @@ function assert_content_eq() {
 export -f assert_content_eq
 
 # Stub for uuid command for CI
-if command -v uuid > /dev/null 2>&1; then
+if ! command -v uuid > /dev/null 2>&1; then
   function uuid() {
     cat /proc/sys/kernel/random/uuid
   }
