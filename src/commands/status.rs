@@ -122,7 +122,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         } else if target_exists && !source_exists {
             ("NM", target_rel.clone())
         } else if target_exists && source_exists {
-            let cmp = compare_files_by_timestamps(&target_abs, &source_abs, Some(sync_time))?;
+            let cmp = compare_files_by_timestamps(&target_abs, &source_abs, Some(&**sync_time))?;
             match cmp {
                 CompareByTimestamp::BothModified => ("MM", target_rel.red().to_string()),
                 CompareByTimestamp::TargetModified => ("M ", target_rel.yellow().to_string()),

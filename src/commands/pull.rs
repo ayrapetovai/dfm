@@ -159,7 +159,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
                 let cmp = compare_files_by_timestamps(
                     &target_file_abs_path, &source_file_abs_path,
-                    get_sync_time(state, &source_file_abs_path, &source_dir_abs_path),
+                    get_sync_time(state, &source_file_abs_path, &source_dir_abs_path).map(|st| &**st),
                 )?;
 
                     handle_encrypted_timestamps(cmp, &source_file_abs_path, &target_file_abs_path, *force, &mut tasks)?;
@@ -236,7 +236,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
                     let cmp = compare_files_by_timestamps(
                         &target_abs_path, &source_encrypted_abs_path,
-                        get_sync_time(state, &source_encrypted_abs_path, &source_dir_abs_path),
+                        get_sync_time(state, &source_encrypted_abs_path, &source_dir_abs_path).map(|st| &**st),
                     )?;
 
                     handle_encrypted_timestamps(cmp, &source_encrypted_abs_path, &target_abs_path, *force, &mut tasks)?;
@@ -248,7 +248,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
             let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
 
-            let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt)?;
+            let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt.map(|st| &**st))?;
 
             match cmp {
                 CompareByTimestamp::BothModified => {

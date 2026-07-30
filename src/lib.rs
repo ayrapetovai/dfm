@@ -76,7 +76,7 @@ impl From<regex::Error> for DfmError {
 pub struct StateObject {
     pub source_directory: PathBuf,
     pub target_directory: PathBuf,
-    pub syncs: HashMap<String, SystemTime>,
+    pub syncs: HashMap<String, SyncTime>,
 }
 
 static STATE_DIRECTORY_NAME_IN_XDG_STATE: &str = "dfm";
@@ -100,6 +100,36 @@ impl StateObject {
            target_directory,
            syncs: HashMap::new()
        }
+    }
+}
+
+/// Wrapper around `SystemTime` that serialises as `"<secs>;<nanos>"`.
+#[derive(Clone, Debug)]
+pub struct SyncTime(pub SystemTime);
+
+impl std::ops::Deref for SyncTime {
+    type Target = SystemTime;
+    fn deref(&self) -> &SystemTime { &self.0 }
+}
+
+impl Serialize for SyncTime {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let dur = self.0.duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| serde::ser::Error::custom("timestamp is before UNIX epoch"))?;
+        let line = format!("{};{}", dur.as_secs(), dur.subsec_nanos());
+        s.serialize_str(&line)
+    }
+}
+
+impl<'de> Deserialize<'de> for SyncTime {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let line = <String as Deserialize>::deserialize(d)?;
+        let (secs, nanos) = line.split_once(';')
+            .ok_or_else(|| serde::de::Error::custom("expected \"<secs>;<nanos>\""))?;
+        let secs: u64 = secs.parse().map_err(serde::de::Error::custom)?;
+        let nanos: u32 = nanos.parse().map_err(serde::de::Error::custom)?;
+        let dur = std::time::Duration::new(secs, nanos);
+        Ok(SyncTime(SystemTime::UNIX_EPOCH + dur))
     }
 }
 

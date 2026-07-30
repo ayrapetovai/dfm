@@ -186,7 +186,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
                 let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
 
-                let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt)?;
+                let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt.map(|st| &**st))?;
                 if CompareByTimestamp::SourceModified == cmp {
                     if *force {
                         info!("source {:?} was modified, removing source", source_abs_path);

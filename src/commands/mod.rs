@@ -40,7 +40,7 @@ pub(crate) fn get_sync_time<'a>(
     state: &'a StateObject,
     path: &PathBuf,
     source_dir: &PathBuf,
-) -> Option<&'a SystemTime> {
+) -> Option<&'a SyncTime> {
     let rel = file_path_relative_to(path, source_dir);
     let rel = remove_dots_from_path(&rel);
     state.syncs.get(rel.to_str().unwrap())
@@ -68,7 +68,7 @@ pub(crate) fn update_sync_state(
     let sync_creation = SystemTime::now();
     let source_rel_path = file_path_relative_to(source_abs, source_dir_abs);
     let source_rel_path = remove_dots_from_path(&source_rel_path);
-    state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), sync_creation);
+    state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), SyncTime(sync_creation));
     let ft = FileTime::from_system_time(sync_creation);
     set_file_mtime(target_abs, ft)?;
     set_file_mtime(source_abs, ft)?;

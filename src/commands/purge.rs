@@ -40,7 +40,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
                     let source_path = PathBuf::from(&source_dir_abs_path).join(rel_path);
                     if let Ok(meta) = source_path.metadata() {
                         if let Ok(mtime) = meta.modified() {
-                            if mtime > *sync_time {
+                            if mtime > sync_time.0 {
                                 modified_paths.push(rel_path.clone());
                             }
                         }

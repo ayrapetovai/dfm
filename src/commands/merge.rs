@@ -77,7 +77,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
                 let inferred_target_abs = remove_dots_from_path(&inferred_target_abs);
 
                 if let Some(sync_time) = state.syncs.get(source_rel_str) {
-                    candidates.push((source_abs, inferred_target_abs, *sync_time));
+                    candidates.push((source_abs, inferred_target_abs, sync_time.0.clone()));
                 } else {
                     warn!("{:?} is not in the state file, skipping...", source_rel);
                 }
@@ -106,9 +106,9 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
                         PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), &state_key])
                     };
                     let source_abs = remove_dots_from_path(&source_abs);
-                    let sync_time = state.syncs[&state_key];
+                    let sync_time = &state.syncs[&state_key];
 
-                    candidates.push((source_abs, target_abs, sync_time));
+                    candidates.push((source_abs, target_abs, sync_time.0.clone()));
                 } else {
                     warn!("{:?} is not in the state file, skipping...", target_abs);
                 }
@@ -128,7 +128,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
             let target_abs = PathBuf::from_iter([target_dir_abs_path.to_str().unwrap(), &target_rel]);
             let target_abs = remove_dots_from_path(&target_abs);
 
-            candidates.push((source_abs, target_abs, *sync_time));
+            candidates.push((source_abs, target_abs, sync_time.0.clone()));
         }
     }
 
