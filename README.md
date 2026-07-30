@@ -126,7 +126,7 @@ dfm add [PATH...] [--force] [--symlink] [--encrypt] [--dry-run]
 
 | Flag | Description |
 |---|---|
-| `-f`, `--force` | Overwrite source files on conflict. |
+| `-f`, `--force` | Overwrite source files on conflict. Also bypasses ignore patterns (the matching pattern is removed from the ignore file on success). |
 | `-s`, `--symlink` | Move the file to the source directory and replace the target with a symlink. |
 | `-e`, `--encrypt` | Encrypt the file before storing in the source directory. |
 | `-n`, `--dry-run` | Check without making changes. |
@@ -156,7 +156,7 @@ dfm pull [PATH...] [--force] [--symlink] [--dry-run]
 
 | Flag | Description |
 |---|---|
-| `-f`, `--force` | Overwrite target files on conflict. |
+| `-f`, `--force` | Overwrite target files on conflict. Also bypasses ignore patterns (the matching pattern is removed from the ignore file on success). |
 | `-s`, `--symlink` | Create symlinks in the target directory pointing to source files. |
 | `-n`, `--dry-run` | Check without making changes. |
 
@@ -345,7 +345,7 @@ Ignore patterns:
 | `MM` | **BothModified** — both target and source were modified since last sync (conflict). |
 | `M ` | Target modified — only the target was changed since last sync. |
 | ` M` | Source modified — only the source was changed since last sync. |
-| `NM` | **NeverSynchronized** — no sync time recorded, or the target is missing while the source exists. |
+| `NM` | **NeverSynchronized** — both target and source exist but have never been synchronized. |
 | `!?` | Missing target — the managed file's target path does not exist but the source does (unpulled). |
 | `??` | Unmanaged — regular file exists in the target directory but is not tracked. |
 | `?L` | Unmanaged symlink — symlink exists in the target directory but is not tracked. |
@@ -359,7 +359,7 @@ Codes are two characters: the first represents the **target** side, the second r
 
 | Flag | Shows only |
 |---|---|
-| `-a`, `--all` | Include up-to-date (`--`) and managed-symlink (`LL`) entries (hidden by default). |
+| `-a`, `--all` | Show all entries, including up-to-date (`--`), managed-symlink (`LL`), and ignored (`!!`, `!L`) — all of which are hidden by default. |
 | `-c`, `--conflicted` | Entries with `MM` (BothModified). |
 | `-m`, `--modified` | Entries where target or source was modified. |
 | `-U`, `--unmanaged` | Untracked files (`??`, `?L`). |
@@ -369,7 +369,7 @@ Codes are two characters: the first represents the **target** side, the second r
 | `-l`, `--ignored-patterns` | List active ignore patterns (no file entries). |
 | `-u`, `--unused-patterns` | List ignore patterns that match no files. |
 
-Without any filter flag, the default output shows: modified entries, unmanaged entries, and up-to-date entries are **hidden** (use `--all` to see them).
+Without any filter flag, the default output shows: modified entries and unmanaged entries. Up-to-date (`--`, `LL`) and ignored (`!!`, `!L`) entries are **hidden** (use `--all` to see them).
 
 ---
 
