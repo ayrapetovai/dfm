@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use log::{debug, error, info};
+use log::{debug, info};
 use regex::Regex;
 
 /// Ensure that FILE (opened in append mode) starts writing on a fresh line —
@@ -24,7 +24,7 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::resolve_dry_run;
+use super::{resolve_dry_run, msg_dry_run, msg_nothing_to_do};
 
 pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     let Command::Ignore {
@@ -134,8 +134,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     if let Some(patterns_args) = patterns  {
         for pattern in patterns_args {
             if let Err(e) = Regex::new(pattern) {
-                error!("argument is invalid, {}", e);
-                return Err(DfmError::other(e));
+                return Err(DfmError::other(format!("invalid regex pattern: {}", e)));
             }
 
             debug!("adding regex /{}/", pattern);
@@ -147,12 +146,12 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         source_ignore_paths.is_empty() &&
         target_ignore_regexps.is_empty()
     {
-        info!("nothing to do");
+        info!("{}", msg_nothing_to_do());
         return Ok(());
     }
 
     if dry_run {
-        info!("dry run specified, no changes will be made");
+        info!("{}", msg_dry_run());
     }
 
     debug!("adding ignore records to local ignore file {:?}", local_ignore_file_path);
@@ -170,7 +169,6 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
 
             let escaped_path_str = regex::escape(ignore_path.to_str().unwrap());
             if let Err(e) = writeln!(target_ignore_file, "{}", escaped_path_str) {
-                error!("failed write path to file: {}", e);
                 return Err(e.into());
             }
         }
@@ -188,7 +186,6 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
             }
 
             if let Err(e) = writeln!(target_ignore_file, "{}", pattern) {
-                error!("failed write regex to file: {}", e);
                 return Err(e.into());
             }
         }
@@ -207,7 +204,6 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
 
             let escaped_path_str = regex::escape(ignore_path.to_str().unwrap());
             if let Err(e) = writeln!(source_ignore_file, "{}", escaped_path_str) {
-                error!("failed write path to file: {}", e);
                 return Err(e.into());
             }
         }

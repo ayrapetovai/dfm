@@ -2,11 +2,11 @@ use std::{env, fs};
 use std::io::Write;
 use std::path::PathBuf;
 
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, trace, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::resolve_dry_run;
+use super::{resolve_dry_run, msg_dry_run, msg_nothing_to_do};
 
 pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     let Command::Init {
@@ -100,13 +100,13 @@ pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
         }
     }
 
-    if dry_run {
-        info!("dry run specified, no changes will be made");
+    if tasks.is_empty() {
+        info!("{}", msg_nothing_to_do());
+        return Ok(());
     }
 
-    if tasks.is_empty() {
-        info!("nothing to do");
-        return Ok(());
+    if dry_run {
+        info!("{}", msg_dry_run());
     }
 
     debug!("::init procedure begins, {} tasks", tasks.len());
@@ -138,7 +138,6 @@ pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
 
                 for ignore_file_record in ignore_file_records {
                     if let Err(e) = writeln!(source_ignore_file, "{}", regex::escape(ignore_file_record)) {
-                        error!("failed write path to file: {}", e);
                         return Err(e.into());
                     } else {
                         debug!("source ignore file: added record {}", ignore_file_record);

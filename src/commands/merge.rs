@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use log::{debug, info, warn};
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::{run_merge, source_rel_to_target_rel, resolve_dry_run};
+use super::{run_merge, source_rel_to_target_rel, resolve_dry_run, msg_dry_run};
 
 /// Look up a source-relative path in state, trying known postfixes.
 /// Returns the matching state key (which may include encrypted/symlink postfix).
@@ -41,7 +41,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
 
     if dry_run {
-        info!("dry run specified, no changes will be made");
+        info!("{}", msg_dry_run());
     }
 
     let target_ignore_file_path = calc_local_ignore_file()?;

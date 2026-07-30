@@ -11,7 +11,6 @@ use std::time::SystemTime;
 
 use envmnt::ExpandOptions;
 use log::{debug, trace};
-use log::error;
 use microxdg::Xdg;
 use regex::{Regex, RegexSet};
 use serde::Deserialize;
@@ -137,23 +136,17 @@ static XDG : Lazy<Xdg> = Lazy::new(|| Xdg::new().expect("XDG directories must be
 
 pub fn calc_local_ignore_file() -> Result<PathBuf, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
-     return match XDG.state_file(&state_file_name) {
+     match XDG.state_file(&state_file_name) {
         Ok(p) => Ok(p),
-        Err(e) => {
-            error!("failed to find local ignore file: {}", e);
-            return Err(DfmError::other(e));
-        }
-    };
+        Err(e) => Err(DfmError::other(e)),
+    }
 }
 
 pub fn open_or_create_target_ignore_file() -> Result<File, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
     let p = match XDG.state_file(&state_file_name) {
         Ok(p) => p,
-        Err(e) => {
-            error!("failed to find local ignore file: {}", e);
-            return Err(DfmError::other(e));
-        }
+        Err(e) => return Err(DfmError::other(e)),
     };
     Ok(OpenOptions::new()
         .write(true)
@@ -375,13 +368,10 @@ pub fn calc_state_directory_path() -> Result<PathBuf, DfmError> {
 
 pub fn calc_state_file_path() -> Result<PathBuf, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, STATE_FILE_NAME_IN_XDG_STATE);
-    return match XDG.state_file(&state_file_name) {
+    match XDG.state_file(&state_file_name) {
         Ok(p) => Ok(p),
-        Err(e) => {
-            error!("failed to find state file: {}", e);
-            return Err(DfmError::other(e));
-        }
-    };
+        Err(e) => Err(DfmError::other(e)),
+    }
 }
 
 pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, DfmError> {
@@ -735,7 +725,6 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
 
 pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf), DfmError> {
     if settings.source_dir.trim().is_empty() {
-        error!("failed to read source directory path, does config file present on path {}?", "<todo>");
         return Err(DfmError::other("failed to read source path from the config file: empty string"));
     }
 
@@ -756,10 +745,7 @@ pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf),
 
     let source_dir_abs_path = match PathBuf::from_str(source_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
-        Err(e) => {
-            error!("source directory path is bad {}", e);
-            return Err(DfmError::other(e));
-        }
+        Err(e) => return Err(DfmError::other(e)),
     };
 
     return Ok((target_dir_abs_path, source_dir_abs_path));
@@ -779,7 +765,7 @@ pub fn list_directory(paths: &[PathBuf], filter_regexp_opt: Option<&RegexSet>) -
             return match dir_entry.path().to_str() {
                 Some(p) => if let Some(regex) = filter_regexp_opt {
                     let matched = regex.is_match(p);
-                    trace!("{} {}", p, if !matched { "❌" } else { "✔️" });
+                    trace!("{} matched={}", p, matched);
                     matched
                 } else {
                     true
@@ -838,24 +824,18 @@ pub enum CompareByTimestamp {
 pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &PathBuf, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, DfmError> {
     let target_file_meta = match target_abs_path.metadata() {
         Ok(m) => m,
-        Err(e) => {
-            error!("failed to read target {:?} metadata, {}", target_abs_path, e);
-            return Err(DfmError::Io(e));
-        }
+        Err(e) => return Err(DfmError::Io(e)),
     };
 
     let source_file_meta = match source_abs_path.metadata() {
         Ok(m) => m,
-        Err(e) => {
-            error!("failed to read source {:?} metadata, {}", source_abs_path, e);
-            return Err(DfmError::Io(e));
-        }
+        Err(e) => return Err(DfmError::Io(e)),
     };
 
     let source_file_synced = match sync_time_opt {
         Some(t) => *t,
         None => {
-            debug!("synchronization time is no available for target {:?}\n\tand source {:?}",
+            debug!("synchronization time is not available for target {:?}\n\tand source {:?}",
                 target_abs_path, source_abs_path);
             return Ok(CompareByTimestamp::NeverSynchronized);
         }

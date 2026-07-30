@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use regex::RegexSet;
 use walkdir::WalkDir;
 
@@ -9,7 +9,7 @@ use dfm::*;
 use crate::{Args, Command, DfmError};
 use super::{sync_file_copy, resolve_dry_run, require_force,
             update_sync_state, get_sync_time, source_rel_to_target_rel,
-            list_directory_or_error};
+            list_directory_or_error, msg_dry_run, msg_nothing_to_do};
 
 #[derive(Debug)]
 enum PullTask {
@@ -195,7 +195,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
                 let source_file_abs_path = filepath_in_source_dir(&settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
                 if target_symlink_followed_abs_path == source_file_abs_path {
-                    println!("target symlink {:?}\t\npoints to the source file {:?}, skipping...", target_abs_path, source_file_abs_path);
+                    info!("target symlink {:?}\n\tpoints to the source file {:?}, skipping...", target_abs_path, source_file_abs_path);
                     error_list.push(format!("target {:?} is a valid symlink", target_abs_path));
                     continue; // success
                 }
@@ -252,7 +252,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
             match cmp {
                 CompareByTimestamp::BothModified => {
-                    warn!("both source and target was modified, merge needed");
+                    warn!("both source and target were modified, merge needed");
                     require_force(*force, "target and source have conflicting modifications")?;
                 },
                 CompareByTimestamp::NonModified => {
@@ -347,19 +347,16 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
     }
 
     if !error_list.is_empty() {
-        for error_string in &error_list {
-            warn!("error: {:?}", error_string);
-        }
         require_force(*force, "improper operation")?;
     }
 
     if tasks.is_empty() {
-        info!("nothing to do");
+        info!("{}", msg_nothing_to_do());
         return Ok(());
     }
 
     if dry_run {
-        info!("dry run specified, no changes will be made");
+        info!("{}", msg_dry_run());
     }
 
     debug!("::copy procedure begins, {} tasks", tasks.len());
@@ -386,10 +383,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                             info!("target symlink {:?} does not exist", target_symlink_file_path);
                             // is ok
                         },
-                        _ => {
-                            error!("failed to remove symlink {:?}: {}", target_symlink_file_path, e);
-                            return Err(e.into());
-                        }
+                        _ => return Err(e.into()),
                     }
                 }
                 let points_to = if points_to.starts_with("./") {

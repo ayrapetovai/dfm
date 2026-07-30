@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use log::{debug, error};
+use log::{debug, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
@@ -22,7 +22,7 @@ pub fn config_command(args: &Args, path_to_config_file: &PathBuf) -> Result<(), 
                         println!("{}", v);
                     },
                     None => {
-                        error!("parameter {} is not found", param_name);
+                        warn!("parameter {} is not found", param_name);
                     }
                 }
             } else {

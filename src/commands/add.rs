@@ -10,7 +10,8 @@ use regex::RegexSet;
 use dfm::*;
 use crate::{Args, Command};
 use super::{sync_file_copy, resolve_dry_run, require_force,
-            update_sync_state, remove_sync_state, get_sync_time, list_directory_or_error};
+            update_sync_state, remove_sync_state, get_sync_time,
+            list_directory_or_error, msg_dry_run, msg_nothing_to_do};
 
 pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
@@ -28,8 +29,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
     debug!("add paths {:?}, force {}, symlink {}, encrypt {}", paths, force, symlink, encrypt);
 
     if *symlink && *encrypt {
-        error!("Cannot encrypt source for symlink target");
-        return Err(DfmError::other("wrong arguments"));
+        return Err(DfmError::other("--symlink and --encrypt are mutually exclusive"));
     }
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
@@ -81,9 +81,8 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             debug!("target {:?} is a symlink", target_path);
 
             if *encrypt {
-                error!("Cannot encrypt source for symlink target");
                 error_messages.push(format!("Target {:?} is a symlink, encryption is impossible", target_path));
-                continue; // error
+                continue;
             }
 
             let current_dir = env::current_dir()?;
@@ -175,7 +174,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
         let target_rel = file_path_relative_to(&target_abs_path, &target_dir_abs_path);
         if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel) {
-            println!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
+            warn!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
             continue;
         }
 
@@ -199,18 +198,18 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
                 match cmp {
                     CompareByTimestamp::BothModified => {
-                        println!("both target {:?} and plain source {:?} were modified, encryption would delete plain source changes",
-                            target_abs_path, regular_source_abs_path);
                         conflict_detected = true;
                         if !force {
+                            warn!("both target {:?} and plain source {:?} were modified, encryption would delete plain source changes",
+                                target_abs_path, regular_source_abs_path);
                             continue;
                         }
                     },
                     CompareByTimestamp::SourceModified => {
-                        println!("plain source {:?} was modified, encryption would discard those changes",
-                            regular_source_abs_path);
                         conflict_detected = true;
                         if !force {
+                            warn!("plain source {:?} was modified, encryption would discard those changes",
+                                regular_source_abs_path);
                             continue;
                         }
                     },
@@ -248,9 +247,9 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             // conflict cases
             match cmp {
                 CompareByTimestamp::BothModified => {
-                    println!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
-                        target_abs_path, source_abs_path);
                     if !force {
+                        warn!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
+                            target_abs_path, source_abs_path);
                         // When traversing a directory (e.g. `dfm add .`), already-managed
                         // files are silently skipped.  Only set conflict_detected when the
                         // user explicitly named this file.
@@ -261,9 +260,9 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     }
                 },
                 CompareByTimestamp::SourceModified => {
-                    println!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source.",
-                              source_abs_path, target_abs_path);
                     if !force {
+                        warn!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source",
+                              source_abs_path, target_abs_path);
                         if !is_dir_traversal {
                             conflict_detected = true;
                         }
@@ -279,7 +278,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     }
                 },
                 CompareByTimestamp::TargetModified => {
-                    println!("only target {:?} was modified, no conflicts", target_abs_path);
+                    info!("only target {:?} was modified, no conflicts", target_abs_path);
                 },
                 CompareByTimestamp::NeverSynchronized => {
                     if !force {
@@ -296,7 +295,6 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         }
 
         if *symlink && (encrypt || source_is_encrypted) {
-            error!("Cannot combine --symlink with encryption for {:?}", target_abs_path);
             error_messages.push(format!("Target {:?} is encrypted but --symlink was requested", target_abs_path));
         } else if encrypt || source_is_encrypted {
             tasks.push(AddTask::CopyEncryptedFile(target_abs_path, source_abs_path));
@@ -314,19 +312,18 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         require_force(*force, "error occurred")?;
     }
 
-    if dry_run {
-        info!("dry run specified, no changes will be made");
-    }
-
     if conflict_detected {
-        // require_force ensures we only error without --force
         require_force(*force, "conflicts")?;
         warn!("conflicts detected, proceeding with --force");
     }
 
     if tasks.is_empty() {
-        info!("nothing to do");
+        info!("{}", msg_nothing_to_do());
         return Ok(());
+    }
+
+    if dry_run {
+        info!("{}", msg_dry_run());
     }
 
     debug!("::copy procedure begins, {} tasks", tasks.len());

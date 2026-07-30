@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use log::{debug, error, info};
+use log::{debug, info};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::resolve_dry_run;
+use super::{resolve_dry_run, msg_dry_run};
 
 pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &PathBuf) -> Result<(), DfmError> {
     let Command::Purge {
@@ -28,7 +28,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
         path_to_config_file, state_directory_path, source_dir_abs_path, keep_source, keep_config_file, force);
 
     if dry_run {
-        info!("dry run specified, no changes will be made");
+        info!("{}", msg_dry_run());
     }
 
     // Check for un-pulled source changes before deleting the source directory
@@ -47,13 +47,10 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
                     }
                 }
                 if !modified_paths.is_empty() {
-                    error!("source directory contains files with un-pulled changes:");
-                    for path in &modified_paths {
-                        error!("  {:?}", path);
-                    }
-                    return Err(DfmError::Other(
-                        "use --force to purge despite un-pulled changes".into()
-                    ));
+                    return Err(DfmError::Other(format!(
+                        "source directory contains files with un-pulled changes: {:?}. Use --force to purge",
+                        modified_paths
+                    )));
                 }
             }
         }
@@ -72,7 +69,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
 
     if !keep_source {
         if !source_dir_abs_path.exists() {
-            info!("source does not exits");
+            info!("source does not exist");
         } else {
             if !dry_run {
                 fs::remove_dir_all(source_dir_abs_path.clone())?;

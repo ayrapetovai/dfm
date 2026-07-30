@@ -108,6 +108,20 @@ pub(crate) fn list_directory_or_error(
 }
 
 // ---------------------------------------------------------------------------
+// Shared message templates
+// ---------------------------------------------------------------------------
+
+/// Message printed when --dry-run is active.
+pub(crate) fn msg_dry_run() -> &'static str {
+    "dry run specified, no changes will be made"
+}
+
+/// Message printed when there is nothing to do.
+pub(crate) fn msg_nothing_to_do() -> &'static str {
+    "nothing to do"
+}
+
+// ---------------------------------------------------------------------------
 // Shared --dry-run / --force helpers
 // ---------------------------------------------------------------------------
 

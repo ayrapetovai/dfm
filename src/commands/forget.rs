@@ -1,12 +1,13 @@
 use std::fs;
 use std::path::PathBuf;
 
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, trace, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
 use super::{resolve_dry_run, require_force, get_sync_time, remove_sync_state,
-            source_rel_to_target_rel, list_directory_or_error};
+            source_rel_to_target_rel, list_directory_or_error,
+            msg_dry_run, msg_nothing_to_do};
 
 pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Forget {
@@ -144,10 +145,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                     if target_symlink_abs_path.exists() {
                         let target_symlink_pointee_path = match fs::read_link(&target_symlink_abs_path) {
                             Ok(p) => p,
-                            Err(e) => {
-                                error!("failed to read symlink {:?}: {}", target_symlink_abs_path, e);
-                                return Err(e.into());
-                            }
+                            Err(e) => return Err(e.into()),
                         };
                         let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
                         if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
@@ -229,19 +227,16 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
     }
 
     if !error_messages.is_empty() {
-        for error_message in &error_messages {
-            error!("{}", error_message);
-        }
         require_force(*force, "forget failed")?;
     }
 
     if tasks.is_empty() {
-        info!("nothing to do");
+        info!("{}", msg_nothing_to_do());
         return Ok(());
     }
 
     if dry_run {
-        info!("dry run specified, no changes will be made");
+        info!("{}", msg_dry_run());
     }
 
     debug!("::remove procedure begins, {} tasks", tasks.len());
@@ -260,7 +255,6 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                     if e.kind() == std::io::ErrorKind::NotFound {
                         debug!("{:?} was already removed, skipping", source_file);
                     } else {
-                        error!("failed to remove file {:?}: {}", source_file, e);
                         return Err(e.into());
                     }
                 }
@@ -272,7 +266,6 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
                     if dir != source_dir_abs_path && dir.starts_with(&source_dir_abs_path) && dir.read_dir()?.next().is_none() {
                         info!("removing empty directory {:?}", dir);
                         if let Err(e) = fs::remove_dir(dir) {
-                            error!("failed to remove parent directory {:?}: {}", dir, e);
                             return Err(e.into());
                         }
                     } else {
