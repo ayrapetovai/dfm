@@ -101,16 +101,16 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         let source_exists = source_abs.exists();
 
         if is_managed_symlink {
-            // Managed symlink: use LL (both exist) or standard missing-file codes
-            let code = if target_exists && source_exists {
-                "LL"
-            } else if !target_exists && source_exists {
-                "!?"
-            } else if target_exists && !source_exists {
-                "NM"
-            } else {
-                debug!("status: stale state entry {:?}, both sides missing", source_rel);
+            // Managed symlink: present if source pointer file exists
+            if !source_exists {
+                state_keys.remove(source_rel);
+                debug!("status: stale state entry {:?}, source symlink missing", source_rel);
                 continue;
+            }
+            let code = if target_exists {
+                "LL"
+            } else {
+                "!?"
             };
             entries.push(StatusEntry { code, path: target_rel.clone(), matched_pattern: None });
             continue;
@@ -120,7 +120,9 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         let (code, path) = if !target_exists && source_exists {
             ("!?", target_rel.clone())
         } else if target_exists && !source_exists {
-            ("NM", target_rel.clone())
+            state_keys.remove(source_rel);
+            debug!("status: stale state entry {:?}, source missing", source_rel);
+            continue;
         } else if target_exists && source_exists {
             let cmp = compare_files_by_timestamps(&target_abs, &source_abs, Some(&**sync_time))?;
             match cmp {
@@ -131,7 +133,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
                 CompareByTimestamp::NeverSynchronized => ("NM", target_rel.clone()),
             }
         } else {
-            // Both sides missing — stale state entry, skip
+            state_keys.remove(source_rel);
             debug!("status: stale state entry {:?}, both sides missing", source_rel);
             continue;
         };
@@ -449,7 +451,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
             "?L" => unmanaged.push(e),
             "!?" => unpulled.push(e),
             "!!" | "!L" => ignored.push(e),
-            "--" | "LL" => uptodate.push(e),
+            "--" | "LL" | "NM" => uptodate.push(e),
             _ => {}
         }
     }
