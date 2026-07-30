@@ -80,10 +80,10 @@ git push
 
 ### Path mapping
 
-File names starting with `.` in the target directory are stored with a **dot prefix** in the source directory (default: `dot-`). This keeps hidden files visible in the source tree.
+File names starting with `.` in the target directory are stored with a **dot prefix** in the source directory (default: `dot_`). This keeps hidden files visible in the source tree.
 
-- Target `~/.bashrc` → Source `source_dir/dot-bashrc`
-- Target `~/.config/foo.conf` → Source `source_dir/dot-config/foo.conf`
+- Target `~/.bashrc` → Source `source_dir/dot_bashrc`
+- Target `~/.config/foo.conf` → Source `source_dir/dot_config/foo.conf`
 
 The dot prefix and other postfixes are configurable (see [Configuration](#3-configuration)).
 
@@ -382,7 +382,7 @@ The config file is read from `$XDG_CONFIG_HOME/dfm/config.toml` (or `~/.dfm.toml
 ```toml
 source_dir = "/path/to/dotfiles"
 target_dir = "/home/user"
-dot_prefix = "dot-"
+dot_prefix = "dot_"
 symlink_postfix = ".symlink"
 encrypted_postfix = ".encrypted"
 manage_symlinks = true
@@ -470,9 +470,9 @@ $XDG_STATE_HOME/dfm/state.toml            -- sync timestamps (`"<secs>;<nanos>"`
 $XDG_STATE_HOME/dfm/ignore_file           -- target-side ignore patterns
 source_dir/.dfm_root                       -- source directory marker
 source_dir/.dfm_ignore_file                -- source-side ignore patterns
-source_dir/dot-bashrc                      -- managed copy of ~/.bashrc
-source_dir/dot-bashrc.encrypted            -- encrypted managed copy
-source_dir/dot-bashrc.symlink              -- symlink pointer file
+source_dir/dot_bashrc                      -- managed copy of ~/.bashrc
+source_dir/dot_bashrc.encrypted            -- encrypted managed copy
+source_dir/dot_bashrc.symlink              -- symlink pointer file
 ```
 
 ---
