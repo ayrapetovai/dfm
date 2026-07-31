@@ -2,6 +2,7 @@ mod commands;
 
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
+use log::warn;
 
 use dfm::*;
 
@@ -248,17 +249,35 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         return Err(dfm::DfmError::other(e));
     }
 
-    let path_to_state_file = calc_state_file_path()?;
-    let state_opt = match read_state(&path_to_state_file) {
-        Ok(s) => Some(s),
-        Err(_) => None
+    let path_to_state_file = match calc_state_file_path() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            warn!("state file path could not be resolved: {}; continuing without state", e);
+            None
+        }
+    };
+    let state_opt = match &path_to_state_file {
+        Some(p) => match read_state(p) {
+            Ok(s) => Some(s),
+            Err(_) => None
+        },
+        None => None
     };
 
     let default_settings = create_default_settings();
-    let path_to_config_file = calc_config_file_path()?;
-    let config_from_file = match read_config(&path_to_config_file) {
-        Ok(c) => Some(c),
-        Err(_) => None
+    let path_to_config_file = match calc_config_file_path() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            warn!("config file path could not be resolved: {}; continuing without config", e);
+            None
+        }
+    };
+    let config_from_file = match &path_to_config_file {
+        Some(p) => match read_config(p) {
+            Ok(c) => Some(c),
+            Err(_) => None
+        },
+        None => None
     };
     let settings =  merge_settings(&default_settings, &config_from_file, state_opt.as_ref());
 
@@ -267,7 +286,10 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             init_command(&settings, &args)
         },
         Command::Config { .. } => {
-            config_command(&args, &path_to_config_file)
+            match &path_to_config_file {
+                Some(p) => config_command(&args, p),
+                None => Err(dfm::DfmError::NotFound("config file path could not be resolved".into()))
+            }
         },
         Command::Purge { .. } => {
             purge_command(&settings, &args, &path_to_config_file)
@@ -278,7 +300,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             }
             let mut state = state_opt.unwrap();
             add_command(&settings, &args, &mut state)?;
-            write_state(&path_to_state_file, &state)
+            write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
         Command::Pull { .. } => {
             if state_opt.is_none() {
@@ -286,7 +308,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             }
             let mut state = state_opt.unwrap();
             pull_command(&settings, &args, &mut state)?;
-            write_state(&path_to_state_file, &state)
+            write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
         Command::Forget { .. } => {
             if state_opt.is_none() {
@@ -294,7 +316,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             }
             let mut state = state_opt.unwrap();
             let result = forget_command(&settings, &args, &mut state);
-            write_state(&path_to_state_file, &state)?;
+            write_state(path_to_state_file.as_ref().unwrap(), &state)?;
             result
         },
         Command::Ignore { .. } => {
@@ -309,7 +331,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             }
             let mut state = state_opt.unwrap();
             merge_command(&settings, &args, &mut state)?;
-            write_state(&path_to_state_file, &state)
+            write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
         Command::Status { .. } => {
             if state_opt.is_none() {

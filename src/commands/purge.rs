@@ -7,7 +7,7 @@ use dfm::*;
 use crate::{Args, Command, DfmError};
 use super::{resolve_dry_run, msg_dry_run};
 
-pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &PathBuf) -> Result<(), DfmError> {
+pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Option<PathBuf>) -> Result<(), DfmError> {
     let Command::Purge {
         dry_run,
         keep_source,
@@ -19,11 +19,20 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
 
     let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
-    let ref state_directory_path = match calc_state_directory_path() {
-        Ok(path) => path,
-        Err(e) => return Err(e)
+    let state_directory_path = match calc_state_directory_path() {
+        Ok(path) => Some(path),
+        Err(e) => {
+            info!("state directory path could not be resolved: {}; skipping state directory", e);
+            None
+        }
     };
-    let (_, ref source_dir_abs_path) = calc_working_dir_paths(&settings)?;
+    let source_dir_abs_path = match calc_working_dir_paths(&settings) {
+        Ok((_, source)) => Some(source),
+        Err(e) => {
+            info!("source directory path could not be resolved: {}; skipping source directory", e);
+            None
+        }
+    };
     debug!("purge path to config {:?}, state {:?}, source {:?} keep_source {}, keep_config_file {}, force {}",
         path_to_config_file, state_directory_path, source_dir_abs_path, keep_source, keep_config_file, force);
 
@@ -33,11 +42,11 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
 
     // Check for un-pulled source changes before deleting the source directory
     if !*keep_source && !*force {
-        if let Ok(state_path) = calc_state_file_path() {
+        if let (Some(source_dir_abs_path), Ok(state_path)) = (&source_dir_abs_path, calc_state_file_path()) {
             if let Ok(state) = read_state(&state_path) {
                 let mut modified_paths = vec![];
                 for (rel_path, sync_time) in &state.syncs {
-                    let source_path = PathBuf::from(&source_dir_abs_path).join(rel_path);
+                    let source_path = PathBuf::from(source_dir_abs_path).join(rel_path);
                     if let Ok(meta) = source_path.metadata() {
                         if let Ok(mtime) = meta.modified() {
                             if mtime > sync_time.0 {
@@ -56,35 +65,56 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Pat
         }
     }
 
+    let mut errors: Vec<String> = vec![];
+
     if !keep_config_file {
-        if !path_to_config_file.exists() {
-            info!("config file does not exist");
-        } else {
-            if !dry_run {
-                fs::remove_file(path_to_config_file)?;
+        match path_to_config_file {
+            None => info!("config file path could not be resolved; skipping"),
+            Some(path_to_config_file) if !path_to_config_file.exists() => info!("config file does not exist"),
+            Some(path_to_config_file) => {
+                if !dry_run {
+                    if let Err(e) = fs::remove_file(path_to_config_file) {
+                        errors.push(format!("failed to remove config {:?}: {}", path_to_config_file, e));
+                    }
+                }
+                info!("config removed {:?}", path_to_config_file);
             }
-            info!("config removed {:?}", path_to_config_file);
         }
     }
 
     if !keep_source {
-        if !source_dir_abs_path.exists() {
-            info!("source does not exist");
-        } else {
-            if !dry_run {
-                fs::remove_dir_all(source_dir_abs_path.clone())?;
+        match &source_dir_abs_path {
+            None => info!("source directory path could not be resolved; skipping"),
+            Some(source_dir_abs_path) if !source_dir_abs_path.exists() => info!("source does not exist"),
+            Some(source_dir_abs_path) => {
+                if !dry_run {
+                    if let Err(e) = fs::remove_dir_all(source_dir_abs_path) {
+                        errors.push(format!("failed to remove source {:?}: {}", source_dir_abs_path, e));
+                    }
+                }
+                info!("source removed {:?}", source_dir_abs_path);
             }
-            info!("source removed {:?}", source_dir_abs_path);
         }
     }
 
-    if !state_directory_path.exists() {
-        info!("state directory does not exist");
-    } else {
-        if !dry_run {
-            fs::remove_dir_all(state_directory_path)?;
+    match &state_directory_path {
+        None => info!("state directory path could not be resolved; skipping"),
+        Some(state_directory_path) if !state_directory_path.exists() => info!("state directory does not exist"),
+        Some(state_directory_path) => {
+            if !dry_run {
+                if let Err(e) = fs::remove_dir_all(state_directory_path) {
+                    errors.push(format!("failed to remove state {:?}: {}", state_directory_path, e));
+                }
+            }
+            info!("state removed {:?}", state_directory_path);
         }
-        info!("state removed {:?}", state_directory_path);
+    }
+
+    if !errors.is_empty() {
+        return Err(DfmError::Other(format!(
+            "purge failed to remove some paths: {}",
+            errors.join("; ")
+        )));
     }
     Ok(())
 }

@@ -168,7 +168,13 @@ edge cases). Errors with `"timestamps ... inconsistent"` otherwise.
   newline guard (`ensure_trailing_newline`).
 - **`purge [-s] [-c] [-f] [-n]`** — abort (unless `--force`) if source files
   have un-pulled changes (mtime > sync). Removes config (unless `-c`), source
-  dir (unless `-s`), state dir.
+  dir (unless `-s`), state dir. Each component is resolved independently:
+  if the config path, source dir path (comes from the state file), or state
+  dir path cannot be resolved, that component is **skipped with an info log
+  instead of failing the whole command** (removal I/O errors are aggregated
+  and reported at the end). main.rs resolves state & config paths as
+  `Option<PathBuf>` (warn + `None` on failure) so `purge` works even with
+  `$HOME` unset.
 - **`config --get NAME | --set NAME VALUE | --list`** — read/write/list TOML
   properties. `--set` stores all values as strings; array fields
   (`force_encryption_for`) cannot be set via CLI.
