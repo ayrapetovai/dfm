@@ -455,7 +455,7 @@ The algorithm:
 | TF mtime == sync < SF mtime | **SourceModified** | Overwrite source (conflict) | Copy source → target (safe) |
 | TF mtime > sync == SF mtime | **TargetModified** | Copy target → source (safe) | Overwrite target (conflict) |
 | TF mtime > sync < SF mtime | **BothModified** | Conflict; `dfm merge` to resolve | Conflict; `dfm merge` to resolve |
-| No sync time recorded | **NeverSynchronized** | Require `--force` | Require `--force` |
+| No sync time recorded | **NeverSynchronized** | Record sync if content equal; require `--force` otherwise | Require `--force` |
 
 For encrypted source files, the conflict check is performed against the encrypted file's mtime; decryption is only scheduled when safe (or forced). The `dfm merge` subcommand also handles encrypted sources by decrypting, merging, and re-encrypting the result.
 
