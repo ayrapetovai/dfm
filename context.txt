@@ -193,13 +193,15 @@ edge cases). Errors with `"timestamps ... inconsistent"` otherwise.
 
 - `write_zip_file` — single-entry zip, **AES-256** (`AesMode::Aes256`, Bzip2;
   README says AES-128 — wrong), inner name = target-rel path, preserves unix
-  permissions. Prints `file <path> needs an encryption password`.
+  permissions. Prints `file <path> needs an encryption password` to **stderr**.
 - `read_zip_file` — decrypts entry index 0. On `InvalidPassword`, clears the
   cache and re-prompts exactly once (fresh archive opened each attempt).
 - `obtain_password` — caches password in a process-global `Mutex<Option<String>>`.
   If `obtain_password_shell_command` set: pipe the command to `sh` **stdin**
   (not `-c`, so it's invisible in `ps`) and read stdout; else interactive
-  masked prompt (`rpassword`, `*` mask).
+  masked prompt (`rpassword`, `*` mask). The `": "` prompt, the trailing
+  newline, and the `file … needs an encryption password` notices all go to
+  **stderr** so they never mix with stdout program output.
 
 ## Shared helpers (commands/mod.rs)
 

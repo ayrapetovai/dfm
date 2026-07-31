@@ -45,8 +45,8 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 
     debug!("get password command is set to {:?}", settings.obtain_password_shell_command);
 
-    print!(": ");
-    std::io::stdout().flush().unwrap();
+    eprint!(": ");
+    let _ = std::io::stderr().flush();
 
     let password = if let Some(get_password_command) = settings.obtain_password_shell_command.clone() &&
             !get_password_command.is_empty() {
@@ -75,8 +75,7 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
     } else {
         debug!("using default procedure to get password");
         let pwd = default_read_password()?;
-        println!();
-        std::io::stdout().flush().unwrap();
+        eprintln!();
         pwd
     };
 
@@ -98,7 +97,7 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
     let target_dir_path = PathBuf::from(&settings.target_dir);
     let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
 
-    println!("file {:?} needs an encryption password", inner_name);
+    eprintln!("file {:?} needs an encryption password", inner_name);
 
     let password = obtain_password(settings)?;
     let inner_name_str = inner_name.to_str()
@@ -134,7 +133,7 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
 
     let target_dir_path = PathBuf::from(&settings.target_dir);
     let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
-    println!("file {:?} needs an encryption password", inner_name);
+    eprintln!("file {:?} needs an encryption password", inner_name);
 
     loop {
         let password = obtain_password(settings)?;
