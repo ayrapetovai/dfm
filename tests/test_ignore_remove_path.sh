@@ -11,7 +11,7 @@ write "content" file.txt
 dfm ignore file.txt
 
 # postcondition: escaped path is present in the ignore file
-grep -qF 'file\.txt' "$TARGET_IGNORE"
+assert_succ grep -qF 'file\.txt' "$TARGET_IGNORE"
 
 # try to add — should be ignored
 dfm add file.txt

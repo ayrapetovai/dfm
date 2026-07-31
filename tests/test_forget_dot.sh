@@ -16,9 +16,9 @@ dfm add root-b.txt
 dfm add sub/dir/nested.txt
 
 # confirm state entries exist
-grep -Fq '"root-a.txt" = ' "$STATE_FILE"
-grep -Fq '"root-b.txt" = ' "$STATE_FILE"
-grep -Fq '"sub/dir/nested.txt" = ' "$STATE_FILE"
+assert_succ grep -Fq '"root-a.txt" = ' "$STATE_FILE"
+assert_succ grep -Fq '"root-b.txt" = ' "$STATE_FILE"
+assert_succ grep -Fq '"sub/dir/nested.txt" = ' "$STATE_FILE"
 
 dfm forget .
 

@@ -10,7 +10,7 @@ dfm forget file2.txt
 assert_source "file1.txt"
 assert_source "d/file3.txt"
 
-grep -q "file1.txt" ./.local/state/dfm/state.toml
-grep -q "d/file3.txt" ./.local/state/dfm/state.toml
+assert_succ grep -q "file1.txt" ./.local/state/dfm/state.toml
+assert_succ grep -q "d/file3.txt" ./.local/state/dfm/state.toml
 assert_fail grep -q "file2.txt" ./.local/state/dfm/state.toml
 

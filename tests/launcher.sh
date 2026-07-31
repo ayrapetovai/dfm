@@ -49,6 +49,14 @@ function assert() {
 }
 export assert
 
+function assert_succ() {
+    if ! "$@"; then
+        echo "Assertion failed"
+        exit 1
+    fi
+}
+export assert_succ
+
 function assert_fail() {
     if "$@"; then
         echo "Assertion failed"

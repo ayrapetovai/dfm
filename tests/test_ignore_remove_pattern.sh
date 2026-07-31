@@ -9,7 +9,7 @@ TARGET_IGNORE="$HOME/.local/state/dfm/ignore_file"
 dfm ignore --patterns '\.txt$'
 
 # postcondition: pattern is present in the ignore file
-grep -qF '\.txt$' "$TARGET_IGNORE"
+assert_succ grep -qF '\.txt$' "$TARGET_IGNORE"
 
 # try to add a .txt file — should be silently ignored
 write "content" notes.txt
@@ -32,7 +32,7 @@ assert_source "notes.txt"
 write "content" data.txt
 dfm add data.txt
 dfm ignore data.txt
-grep -qF 'data\.txt' "$TARGET_IGNORE"
+assert_succ grep -qF 'data\.txt' "$TARGET_IGNORE"
 
 # remove by unescaped path — must match the escaped line in the file
 dfm ignore --remove "data.txt"
@@ -46,7 +46,7 @@ assert_source "data.txt"
 write "content" "my.config"
 dfm add "my.config"
 dfm ignore "my.config"
-grep -qF 'my\.config' "$TARGET_IGNORE"
+assert_succ grep -qF 'my\.config' "$TARGET_IGNORE"
 
 # remove by unescaped name with dot
 dfm ignore --remove "my.config"
@@ -58,7 +58,7 @@ assert_source "my.config"
 write "content" "lib[1].so"
 dfm add "lib[1].so"
 dfm ignore "lib[1].so"
-grep -qF 'lib\[1\]\.so' "$TARGET_IGNORE"
+assert_succ grep -qF 'lib\[1\]\.so' "$TARGET_IGNORE"
 
 # remove by unescaped name with brackets and dot
 dfm ignore --remove "lib[1].so"

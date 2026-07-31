@@ -15,4 +15,4 @@ SIZE_AFTER=$(wc -c < "$TARGET_IGNORE")
 assert "$SIZE_BEFORE" = "$SIZE_AFTER"
 
 # postcondition: pattern is still present
-grep -qF '\.txt$' "$TARGET_IGNORE"
+assert_succ grep -qF '\.txt$' "$TARGET_IGNORE"

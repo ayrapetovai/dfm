@@ -10,8 +10,8 @@ printf 'existing\\.pattern' > "$TARGET_IGNORE"
 dfm ignore file.txt
 LINE_COUNT=$(wc -l < "$TARGET_IGNORE")
 assert "2" = "$LINE_COUNT"
-grep -qF 'existing\.pattern' "$TARGET_IGNORE"
-grep -qF 'file\.txt' "$TARGET_IGNORE"
+assert_succ grep -qF 'existing\.pattern' "$TARGET_IGNORE"
+assert_succ grep -qF 'file\.txt' "$TARGET_IGNORE"
 
 # --- case 2: append regex pattern after file without trailing newline ---
 rm -f "$TARGET_IGNORE"
@@ -19,8 +19,8 @@ printf 'existing\\.pattern' > "$TARGET_IGNORE"
 dfm ignore --patterns '\.log$'
 LINE_COUNT=$(wc -l < "$TARGET_IGNORE")
 assert "2" = "$LINE_COUNT"
-grep -qF 'existing\.pattern' "$TARGET_IGNORE"
-grep -qF '\.log$' "$TARGET_IGNORE"
+assert_succ grep -qF 'existing\.pattern' "$TARGET_IGNORE"
+assert_succ grep -qF '\.log$' "$TARGET_IGNORE"
 
 # --- case 3: append path after file that already ends with newline (regression) ---
 rm -f "$TARGET_IGNORE"
