@@ -783,7 +783,16 @@ impl ProgressLine {
     }
 
     /// Replace the current progress line with `text`, overwriting in place.
+    ///
+    /// No-op when info-level logging is enabled (`-v > 1`): stderrlog maps
+    /// `-v 2`/`-v 3` to `log::LevelFilter::Info`/`Debug`, and that log output
+    /// would interleave with the self-overwriting progress line, producing
+    /// garbled terminal output. Errors and warnings (`-v 0`/`-v 1`) never
+    /// spam mid-operation, so progress stays rendered there.
     pub fn set(&mut self, text: &str) {
+        if log::max_level() >= log::LevelFilter::Info {
+            return;
+        }
         use std::io::Write;
         let mut stderr = std::io::stderr();
         let _ = write!(stderr, "\r{}", text);

@@ -210,7 +210,10 @@ edge cases). Errors with `"timestamps ... inconsistent"` otherwise.
 - `report_progress(progress, done, total)` + `ProgressLine` (lib.rs) — single
   self-overwriting stderr line for bulk loops; `list_directory` also reports
   traversal progress every 500 entries. Progress bypasses the `log` crate so
-  it shows at `-v 0`.
+  it shows at `-v 0`/`-v 1`, but is **suppressed at `-v > 1`**: the single
+  gate lives in `ProgressLine::set`, which no-ops when
+  `log::max_level() >= LevelFilter::Info` (stderrlog maps `-v 2`→Info,
+  `-v 3`→Debug), so progress cannot interleave with verbose logging.
 - `msg_dry_run()` / `msg_nothing_to_do()`.
 
 ## Key gotchas / conventions

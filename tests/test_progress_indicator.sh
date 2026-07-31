@@ -16,8 +16,8 @@ for i in $(seq 1 600); do
     write "content $i" "file_$i.txt"
 done
 
-# progress is visible at every verbosity level, including -v 0 and the default
-for V in 0 1 2; do
+# progress is visible at -v 0 and the default (-v 1)
+for V in 0 1; do
     OUTPUT="$(capture -v $V add)"
 
     # analysis-loop heartbeat fires periodically
@@ -29,6 +29,24 @@ for V in 0 1 2; do
     # traversal heartbeat fires once 500 entries are visited
     if ! echo "$OUTPUT" | grep -q "traversing... 500 entries visited"; then
         echo "Assertion failed: no traversal progress heartbeat at -v $V"
+        exit 1
+    fi
+done
+
+# at -v > 1 progress must NOT be shown (verbose logging would interleave
+# with the self-overwriting progress line). Exact progress substrings are
+# matched ("processed " / "traversing... ") so debug log lines like
+# "traversing result is [...]" do not cause false positives.
+for V in 2 3; do
+    OUTPUT="$(capture -v $V add)"
+
+    if echo "$OUTPUT" | grep -qF "processed "; then
+        echo "Assertion failed: analysis-loop progress heartbeat shown at -v $V"
+        exit 1
+    fi
+
+    if echo "$OUTPUT" | grep -qF "traversing... "; then
+        echo "Assertion failed: traversal progress heartbeat shown at -v $V"
         exit 1
     fi
 done
