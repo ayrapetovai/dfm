@@ -250,8 +250,19 @@ pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<
 /// | `.*abc/def.*` | `1abc/define/123` | ✅ — adjacent `1abc`+`define` |
 /// | `.*abc/def.*` | `abc/something/define` | ❌ — not adjacent |
 pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bool {
-    let components: Vec<&str> = relative_path.split('/').collect();
-    let sub_patterns: Vec<&str> = pattern.split('/').collect();
+    // A trailing '/' in either the pattern or the path (e.g. "dirname/") yields
+    // an empty trailing segment that can never match a real component, making
+    // patterns like "dirname/" dead. Drop trailing empties so "dirname/"
+    // behaves like "dirname".
+    let mut components: Vec<&str> = relative_path.split('/').collect();
+    while components.last() == Some(&"") {
+        components.pop();
+    }
+
+    let mut sub_patterns: Vec<&str> = pattern.split('/').collect();
+    while sub_patterns.last() == Some(&"") {
+        sub_patterns.pop();
+    }
 
     if sub_patterns.is_empty() {
         return false;
@@ -1068,4 +1079,44 @@ fn test_pattern_matches_path_components_empty_pattern() {
 fn test_pattern_matches_path_components_too_many_subpatterns() {
     // 3 sub-patterns but only 2 components → no match
     assert!(!pattern_matches_path_components(r"a/b/c", "a/b"));
+}
+
+#[test]
+fn test_pattern_matches_path_components_trailing_slash_pattern() {
+    // Trailing '/' must be treated the same as no slash: "dirname/" ignores
+    // the dirname directory and everything inside it.
+    assert!(pattern_matches_path_components("dirname/", "dirname/a.txt"));
+    assert!(pattern_matches_path_components("dirname/", "a/dirname/b.txt"));
+    assert!(pattern_matches_path_components("dirname/", "dirname"));
+    assert!(!pattern_matches_path_components("dirname/", "other.txt"));
+    assert!(!pattern_matches_path_components("dirname/", "the-dirname"));
+    assert!(pattern_matches_path_components("a/b/", "x/a/b/f"));
+    assert!(pattern_matches_path_components("a/b/", "/a/b"));
+    assert!(pattern_matches_path_components("a/b/", "a/b"));
+}
+
+#[test]
+fn test_pattern_matches_path_components_trailing_slash_equivalence() {
+    // With and without trailing '/' must behave identically.
+    let no_slash = "dirname";
+    let with_slash = "dirname/";
+    for rel in ["dirname/a.txt", "a/dirname/b.txt", "dirname", "other.txt", "x/dirname/y"] {
+        assert_eq!(
+            pattern_matches_path_components(no_slash, rel),
+            pattern_matches_path_components(with_slash, rel),
+            "trailing slash changed matching for {:?}",
+            rel
+        );
+    }
+}
+
+#[test]
+fn test_pattern_matches_path_components_trailing_slash_path() {
+    // A relative path with a trailing '/' is normalized the same way.
+    assert!(pattern_matches_path_components("dirname", "dirname/"));
+    // A bare no-left-glob pattern does not match the final (file) position,
+    // so "a/dirname/" (dirname as last element) does not match — same as
+    // the no-slash form.
+    assert!(!pattern_matches_path_components("dirname/", "a/dirname/"));
+    assert!(!pattern_matches_path_components("abc\\.c", "the-abc.c/"));
 }

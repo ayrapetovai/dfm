@@ -89,8 +89,10 @@ tests/test_*.sh      140 shell integration tests
   component at any depth; **without** a left-glob it only matches *directory*
   components (root-level always matches) — so `abc\.c` ignores `dir/` but not
   `dir/abc.c` as a file. Multi-part patterns match adjacent components
-  (sliding window). `check_path_matches_regex` (old full-path substring) is
-  still used for `force_encryption_for` only.
+  (sliding window). Trailing-empty segments (from a trailing `/` in a pattern
+  or path) are dropped before matching, so `dirname/` ≡ `dirname`.
+  `check_path_matches_regex` (old full-path substring) is still used for
+  `force_encryption_for` only.
 
 ## Conflict detection (`compare_files_by_timestamps`)
 
