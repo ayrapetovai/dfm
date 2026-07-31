@@ -8,7 +8,7 @@ use dfm::*;
 use crate::{Args, Command, DfmError};
 use super::{resolve_dry_run, require_force, get_sync_time, remove_sync_state,
             source_rel_to_target_rel, list_directory_or_error,
-            msg_dry_run, msg_nothing_to_do};
+            msg_dry_run, msg_nothing_to_do, report_progress};
 
 fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String {
     let rel = file_path_relative_to(source_abs, source_dir_abs);
@@ -51,7 +51,9 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
     debug!("::check state procedure begins");
 
-    for target_path in traversed_paths.iter() {
+    let mut progress = ProgressLine::new();
+    for (i, target_path) in traversed_paths.iter().enumerate() {
+        report_progress(&mut progress, i + 1, traversed_paths.len());
         debug!("checking {:?}", target_path);
 
         if target_path.is_symlink() {
@@ -230,6 +232,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
             }
         }
     }
+    progress.clear();
 
     // Build set of state keys already covered by tasks
     let mut processed_keys: HashSet<String> = HashSet::new();
@@ -254,7 +257,9 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
     } else {
         vec![]
     };
-    for key in orphan_keys {
+    let orphan_total = orphan_keys.len();
+    for (i, key) in orphan_keys.into_iter().enumerate() {
+        report_progress(&mut progress, i + 1, orphan_total);
         let source_abs = PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), &key]);
         let source_abs = remove_dots_from_path(&source_abs);
 
@@ -279,6 +284,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
             tasks.push(ForgetTask::RemoveState(key));
         }
     }
+    progress.clear();
 
     if !error_messages.is_empty() {
         require_force(*force, "forget failed")?;

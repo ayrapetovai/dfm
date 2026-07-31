@@ -10,7 +10,7 @@ use log::{debug, info};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::{source_rel_to_target_rel, list_directory_or_error};
+use super::{source_rel_to_target_rel, list_directory_or_error, report_progress};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,7 +65,9 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
     let mut entries: Vec<StatusEntry> = Vec::new();
     let mut state_keys: HashSet<String> = HashSet::new();
 
-    for (source_rel, sync_time) in &state.syncs {
+    let mut progress = ProgressLine::new();
+    for (i, (source_rel, sync_time)) in state.syncs.iter().enumerate() {
+        report_progress(&mut progress, i + 1, state.syncs.len());
         state_keys.insert(source_rel.clone());
 
         let source_abs = PathBuf::from_iter([source_dir_abs.to_str().unwrap(), source_rel]);
@@ -144,6 +146,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
             matched_pattern: None,
         });
     }
+    progress.clear();
 
     // ------------------------------------------------------------------
     // Phase 2 — Walk target directory for unmanaged files
@@ -159,7 +162,8 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
     // Pre-compute canonical source dir for robust path comparison
     let canon_source_dir = fs::canonicalize(&source_dir_abs).unwrap_or_else(|_| source_dir_abs.clone());
 
-    for target_abs in &traversed_target {
+    for (i, target_abs) in traversed_target.iter().enumerate() {
+        report_progress(&mut progress, i + 1, traversed_target.len());
         // Skip files inside the source directory — normalize via canonicalize
         // to avoid path-comparison edge cases (symlinks, double slashes, etc.)
         if let Ok(canon_target) = fs::canonicalize(target_abs) {
@@ -300,6 +304,7 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
             matched_pattern: None,
         });
     }
+    progress.clear();
 
     // ------------------------------------------------------------------
     // Phase 3 — Find unused ignore patterns

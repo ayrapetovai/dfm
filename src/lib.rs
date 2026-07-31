@@ -751,6 +751,64 @@ pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf),
     return Ok((target_dir_abs_path, source_dir_abs_path));
 }
 
+// ---------------------------------------------------------------------------
+// Single-line progress indicator
+// ---------------------------------------------------------------------------
+
+/// Renders a self-overwriting progress line on stderr.
+///
+/// Each `set` overwrites the previous line in place (carriage return + space
+/// padding), so a long-running operation shows one updating line instead of
+/// many lines. `clear` (also run automatically on drop) erases the line, so
+/// nothing lingers after the operation finishes.
+pub struct ProgressLine {
+    last_len: usize,
+    active: bool,
+}
+
+impl ProgressLine {
+    pub fn new() -> ProgressLine {
+        ProgressLine { last_len: 0, active: false }
+    }
+
+    /// Replace the current progress line with `text`, overwriting in place.
+    pub fn set(&mut self, text: &str) {
+        use std::io::Write;
+        let mut stderr = std::io::stderr();
+        let _ = write!(stderr, "\r{}", text);
+        if text.len() < self.last_len {
+            let _ = write!(stderr, "{}", " ".repeat(self.last_len - text.len()));
+        }
+        let _ = stderr.flush();
+        self.last_len = text.len();
+        self.active = true;
+    }
+
+    /// Erase the progress line if one is currently shown.
+    pub fn clear(&mut self) {
+        use std::io::Write;
+        if self.active {
+            let mut stderr = std::io::stderr();
+            let _ = write!(stderr, "\r{}", " ".repeat(self.last_len));
+            let _ = write!(stderr, "\r");
+            let _ = stderr.flush();
+            self.active = false;
+        }
+    }
+}
+
+impl Default for ProgressLine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ProgressLine {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 #[derive(Debug)]
 pub struct ListDirectories {
     pub found: Vec<PathBuf>,
@@ -775,34 +833,42 @@ pub fn list_directory(paths: &[PathBuf], filter_regexp_opt: Option<&RegexSet>) -
         };
 
     let mut error_messages = Vec::new();
-    let mut traversed_paths = paths.iter()
-        .flat_map(|path| {
-            WalkDir::new(path)
-                .follow_links(false)
-                .follow_root_links(false) // do not traverse symlinks pointing to dirs
-                .into_iter()
-                .filter_entry(ignore_filter)
-                .map(|r| {
-                    match r {
-                        Ok(d) if !d.file_type().is_dir() => Some(d.path().to_path_buf()),
-                        Err(ref e) if e.io_error()?.kind() == io::ErrorKind::NotFound => {
-                            Some(path.into())
-                        },
-                        Err(ref e) => {
-                            error_messages.push(format!("error: {}", e));
-                            None
-                        },
-                        // we don't manage directories in source directory
-                        _ => None
-                    }
-                })
-                .filter(|o| o.is_some())
-                .map(|o| o.unwrap())
-                // FIXME do not create an array
-                .collect::<Vec<_>>()
-                .into_iter()
-        })
-        .collect::<Vec<PathBuf>>();
+
+    // Walk the tree and report progress periodically so large traversals
+    // (e.g. `dfm add`/`dfm status` over $HOME) do not look frozen.
+    // Progress is written straight to stderr (not via the `log` crate) so it
+    // is shown at every verbosity level, and reuses a single line in place.
+    const TRAVERSE_PROGRESS_STEP: usize = 500;
+    let mut traversed_paths: Vec<PathBuf> = Vec::new();
+    let mut visited = 0usize;
+    let mut progress = ProgressLine::new();
+
+    for path in paths.iter() {
+        for entry in WalkDir::new(path)
+            .follow_links(false)
+            .follow_root_links(false) // do not traverse symlinks pointing to dirs
+            .into_iter()
+            .filter_entry(ignore_filter)
+        {
+            visited += 1;
+            if visited % TRAVERSE_PROGRESS_STEP == 0 {
+                progress.set(&format!("traversing... {} entries visited", visited));
+            }
+            match entry {
+                Ok(d) if !d.file_type().is_dir() => traversed_paths.push(d.path().to_path_buf()),
+                Err(ref e) => match e.io_error() {
+                    Some(err) if err.kind() == io::ErrorKind::NotFound => {
+                        traversed_paths.push(path.into());
+                    },
+                    _ => {
+                        error_messages.push(format!("error: {}", e));
+                    },
+                },
+                // we don't manage directories in source directory
+                _ => {}
+            }
+        }
+    }
 
     traversed_paths.dedup();
 

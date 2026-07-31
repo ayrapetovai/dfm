@@ -107,6 +107,24 @@ pub(crate) fn list_directory_or_error(
     Ok(found)
 }
 
+/// Report a periodic progress heartbeat during bulk analysis loops.
+/// No-op unless the batch is large enough to be worth reporting,
+/// so small, fast operations stay quiet.
+///
+/// Each update overwrites the single progress line in place (`\r`), and the
+/// caller erases the line when the operation is done via `progress.clear()`.
+/// Progress is written straight to stderr (not through the `log` crate) so it
+/// is visible at every verbosity level, including `-v 0`.
+pub(crate) fn report_progress(progress: &mut ProgressLine, done: usize, total: usize) {
+    const BULK_PROGRESS_MIN: usize = 100;
+    // Scale the step with the batch size so large operations still only
+    // update the line about 20 times per run.
+    let step = (total / 20).max(BULK_PROGRESS_MIN);
+    if total >= BULK_PROGRESS_MIN && (done % step == 0 || done == total) {
+        progress.set(&format!("processed {}/{} files", done, total));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared message templates
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ use dfm::*;
 use crate::{Args, Command};
 use super::{sync_file_copy, resolve_dry_run, require_force,
             update_sync_state, remove_sync_state, get_sync_time,
-            list_directory_or_error, msg_dry_run, msg_nothing_to_do};
+            list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress};
 
 pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
@@ -76,7 +76,9 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
     let mut error_messages = vec![];
     let mut patterns_to_remove: Vec<String> = vec![];
 
-    for target_path in traversed_paths.iter() {
+    let mut progress = ProgressLine::new();
+    for (i, target_path) in traversed_paths.iter().enumerate() {
+        report_progress(&mut progress, i + 1, traversed_paths.len());
         debug!("checking {:?}", target_path);
 
         let target_path = if target_path.is_symlink() {
@@ -329,6 +331,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
             tasks.push(AddTask::Copy(target_abs_path, source_abs_path));
         }
     }
+    progress.clear();
 
     if !error_messages.is_empty() {
         for error_message in &error_messages {
@@ -411,7 +414,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
                 // open if exists or create, if it doesn't
                 let mut symlink_file = File::create(&source_symlink)?;
-                symlink_file.write(points_to.as_bytes())?;
+                symlink_file.write_all(points_to.as_bytes())?;
 
                 update_sync_state(state, &source_symlink, &target_abs, &source_dir_abs_path)?;
             },

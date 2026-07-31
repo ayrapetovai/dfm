@@ -9,7 +9,7 @@ use dfm::*;
 use crate::{Args, Command, DfmError};
 use super::{sync_file_copy, resolve_dry_run, require_force,
             update_sync_state, get_sync_time, source_rel_to_target_rel,
-            list_directory_or_error, msg_dry_run, msg_nothing_to_do};
+            list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress};
 
 #[derive(Debug)]
 enum PullTask {
@@ -92,7 +92,9 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
     let mut error_list = vec![];
     let mut patterns_to_remove: Vec<String> = vec![];
 
-    for path in traversed_paths.iter() {
+    let mut progress = ProgressLine::new();
+    for (i, path) in traversed_paths.iter().enumerate() {
+        report_progress(&mut progress, i + 1, traversed_paths.len());
         debug!("checking {:?}", path);
 
         let target_abs_path = PathBuf::from_iter(vec!(&target_dir_abs_path, &path));
@@ -342,6 +344,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             ));
         }
     }
+    progress.clear();
 
     if !error_list.is_empty() {
         require_force(*force, "improper operation")?;
