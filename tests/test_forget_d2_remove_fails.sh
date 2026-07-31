@@ -1,5 +1,6 @@
 # D2 — provoke fs::remove_file error by making the source directory read-only
-# The command must still succeed (state entry removed) even when deletion fails
+# The command must return error code 1 (filesystem error) but the state
+# entry must still be removed.
 
 CLEANUP() {
   chmod -R u+w "$PWD/dotfiles" 2>/dev/null || true
@@ -13,8 +14,8 @@ dfm add file.txt
 # make the source directory read-only — prevents file deletion
 chmod a-w "$PWD/dotfiles"
 
-# forget must succeed: state entry is removed even if deletion fails
-dfm forget file.txt
+# forget must fail: deletion fails but state entry is still cleaned up
+assert_fail dfm forget file.txt
 
 # restore permissions so cleanup works
 CLEANUP

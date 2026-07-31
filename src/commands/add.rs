@@ -65,6 +65,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         CopyEncryptedFile(PathBuf, PathBuf),
         CreateSymlinkFilePointer(PathBuf, PathBuf, String),
         CopyAndSymlink(PathBuf, PathBuf),
+        UpdateSync(PathBuf, PathBuf),
     }
 
     let mut tasks: Vec<AddTask> = Vec::new();
@@ -226,8 +227,15 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                         // target is truth for add, safe to replace
                     },
                     CompareByTimestamp::NeverSynchronized => {
-                        if !force {
-                            warn!("plain source {:?}\n\tand target {:?}\n\twere never synchronized.", regular_source_abs_path, target_abs_path);
+                        let content_equal = {
+                            let t = fs::read_to_string(&target_abs_path)?;
+                            let s = fs::read_to_string(&regular_source_abs_path)?;
+                            t == s
+                        };
+                        if content_equal || *force {
+                            // safe to replace
+                        } else {
+                            warn!("plain source {:?}\n\tand target {:?}\n\tare different and were never synchronized.", regular_source_abs_path, target_abs_path);
                             warn!("Use --force to replace plain source with encrypted source");
                             continue;
                         }
@@ -287,10 +295,21 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                     info!("only target {:?} was modified, no conflicts", target_abs_path);
                 },
                 CompareByTimestamp::NeverSynchronized => {
+                    let content_equal = {
+                        let t = fs::read_to_string(&target_abs_path)?;
+                        let s = fs::read_to_string(&source_abs_path)?;
+                        t == s
+                    };
+                    if content_equal {
+                        tasks.push(AddTask::UpdateSync(source_abs_path.clone(), target_abs_path.clone()));
+                        continue;
+                    }
+                    if !is_dir_traversal {
+                        conflict_detected = true;
+                    }
                     if !force {
-                        warn!("target {:?}\n\tand source {:?}\n\twere not synchronized.", target_abs_path, source_abs_path);
-                        warn!("Use --force to replace source with target");
-                        continue; // TODO error?
+                        warn!("target {:?}\n\tand source {:?}\n\tare different and were never synchronized. Use --force to overwrite", target_abs_path, source_abs_path);
+                        continue;
                     }
                 },
             }
@@ -395,6 +414,13 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 symlink_file.write(points_to.as_bytes())?;
 
                 update_sync_state(state, &source_symlink, &target_abs, &source_dir_abs_path)?;
+            },
+            AddTask::UpdateSync(source_file, target_file) => {
+                info!("recording sync state for {:?}", source_file);
+                if dry_run {
+                    continue;
+                }
+                update_sync_state(state, &source_file, &target_file, &source_dir_abs_path)?;
             },
         }
     }

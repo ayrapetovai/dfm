@@ -293,8 +293,9 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            forget_command(&settings, &args, &mut state)?;
-            write_state(&path_to_state_file, &state)
+            let result = forget_command(&settings, &args, &mut state);
+            write_state(&path_to_state_file, &state)?;
+            result
         },
         Command::Ignore { .. } => {
             ignore_command(&settings, &args)
@@ -322,7 +323,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
 
 fn main() {
     if let Err(e) = main_logic() {
-        eprintln!("{:?}", e);
+        eprintln!("{}", e);
         std::process::exit(1);
     }
 }

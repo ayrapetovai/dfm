@@ -51,12 +51,9 @@ fn handle_encrypted_timestamps(
             tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
         },
         CompareByTimestamp::NeverSynchronized => {
-            if !force {
-                warn!("target {:?}\n\tand encrypted source {:?}\n\twere not synchronized.", target_abs, source_abs);
-                warn!("Use --force to replace target with decrypted source");
-            } else {
-                tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
-            }
+            warn!("target {:?}\n\tand encrypted source {:?}\n\twere not synchronized.", target_abs, source_abs);
+            require_force(force, "encrypted source was not synchronized")?;
+            tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
         },
     }
     Ok(())
@@ -271,10 +268,10 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                     info!("only the source was modified")
                 },
                 CompareByTimestamp::NeverSynchronized => {
-                    if !force {
-                        warn!("target {:?}\n\tand source {:?}\n\twere not synchronized.", target_abs_path, source_abs_path);
-                        warn!("Use --force to replace target with source");
-                        continue; // TODO error?
+                    warn!("target {:?}\n\tand source {:?}\n\twere not synchronized.", target_abs_path, source_abs_path);
+                    error_list.push(format!("target {:?} and source {:?} were not synchronized", target_abs_path, source_abs_path));
+                    if !*force {
+                        continue;
                     }
                 },
             }

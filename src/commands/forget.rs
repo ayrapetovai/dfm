@@ -354,6 +354,11 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
     if !delete_errors.is_empty() {
         error!("some source files could not be deleted: {:?}", delete_errors);
+        let summary: String = delete_errors.iter()
+            .map(|(path, err)| format!("{}: {}", path, err))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(DfmError::Other(format!("failed to delete source files: {}", summary)));
     }
 
     Ok(())
