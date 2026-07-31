@@ -1,8 +1,3 @@
-```
-╔══════════════════════════════════════════════════════╗
-║          ☯ Vibecoded with OpenWork ☯                ║
-╚══════════════════════════════════════════════════════╝
-```
 # Dotfile Manager (dfm)
 
 A CLI tool to manage dotfiles: keep copies of configuration files from your home directory (**target**) inside a version-controlled **source** directory, and synchronize changes between them safely.
@@ -122,6 +117,7 @@ dfm add [PATH...] [--force] [--symlink] [--encrypt] [--dry-run]
 ```
 
 - `PATH...` — files or directories to add. Omitting traverses the entire target directory (respecting ignore rules).
+- Fully-ignored directories are pruned during the traversal: they are never descended into (so their files are not visited, counted in progress, or reported), and the matching pattern is kept. An explicitly named ignored path is still entered — combine with `--force` to add an ignored directory anyway.
 - Each file is compared against its source counterpart using [conflict detection](#5-conflict-detection). Only safe copies proceed automatically; conflicts require `--force`.
 
 | Flag | Description |
@@ -243,7 +239,8 @@ dfm ignore [PATH...] [-p PATTERN...] [--dry-run]
 
 - `PATH...` — file paths to ignore (relative to target or source directory).
 - `-p`, `--patterns` — regex patterns to ignore.
-- Omitting both paths and patterns traverses the target directory and prints the current ignore status.
+- At least one of `PATH...` or `--patterns` is required; running `dfm ignore` with neither prints help.
+- When adding a directory path, dfm writes the directory itself to the ignore file; the directory (and everything under it) is then skipped by `add`, `merge`, `forget`, and `status` — ignored directories are pruned during traversal rather than walked and filtered file-by-file.
 
 The program maintains two ignore files:
 - **Target ignore file** at `$XDG_STATE_HOME/dfm/ignore_file` — patterns for target-side files.
@@ -350,7 +347,7 @@ Ignore patterns:
 | `??` | Unmanaged — regular file exists in the target directory but is not tracked. |
 | `?L` | Unmanaged symlink — symlink exists in the target directory but is not tracked. |
 | `LL` | Managed symlink — symlink tracked via a `.symlink` pointer file. |
-| `!!` | Ignored — file matches an ignore pattern. |
+| `!!` | Ignored — file matches an ignore pattern. A fully-ignored directory is shown as a single `!! dir/` entry (with trailing slash) instead of its contents. |
 | `!L` | Ignored symlink — symlink matches an ignore pattern. |
 
 Codes are two characters: the first represents the **target** side, the second represents the **source** side. A space (` `) means "no change" on that side.
