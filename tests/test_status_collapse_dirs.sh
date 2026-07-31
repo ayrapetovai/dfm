@@ -50,13 +50,13 @@ write "f" "lone/single.txt"
 dfm status --all 2>/dev/null | grep -qF "lone/single.txt"
 ! dfm status --all 2>/dev/null | grep -qF "lone/*"
 
-# Ignored files in a common directory also collapse.
-# dfm ignore -p with a bare directory name matches any component
-# named that directory, so all files inside it become ignored.
+# Fully-ignored directories are pruned during the walk and rendered as a
+# single `!! dir/` entry (git-style), not enumerated file-by-file.
 rm -rf lone
 mkdir -p ignored_collapse
 write "g" "ignored_collapse/file.txt"
 write "h" "ignored_collapse/other.txt"
 dfm ignore -p "ignored_collapse"
-dfm status --ignored 2>/dev/null | grep -qF "!!  ignored_collapse/*"
-
+dfm status --ignored 2>/dev/null | grep -qF "!!  ignored_collapse/"
+! dfm status --ignored --short 2>/dev/null | grep -qF "file.txt"
+! dfm status --ignored --short 2>/dev/null | grep -qF "other.txt"

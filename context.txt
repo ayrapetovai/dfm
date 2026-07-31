@@ -218,13 +218,42 @@ edge cases). Errors with `"timestamps ... inconsistent"` otherwise.
   `-v 3`→Debug), so progress cannot interleave with verbose logging.
 - `msg_dry_run()` / `msg_nothing_to_do()`.
 
+## Traversal (list_directory, lib.rs)
+
+- `list_directory(paths, rel_base, filter)` walks each root with
+  `WalkDir::filter_entry`; `rel_base` is where ignore patterns are relative to
+  (target or source dir). `TraversalFilter`: `KeepMatching(&RegexSet)` (pull:
+  keep entries whose **rel path** matches — skips dot files AND dot dirs) or
+  `PruneIgnoredDirs(&RegexSet)` (add/forget/status/ignore: keep every file,
+  prune dirs whose subtree is fully ignored).
+- A directory rel path `R` is fully ignored iff component-wise matching hits
+  `R + "/x"` (sentinel makes `R` a non-last component, since
+  `pattern_matches_path_components` treats the last component as a filename).
+  Consistent with per-file analysis: glob patterns only prune when a
+  *directory* component matches (a matching filename alone never prunes its
+  dir); multi-part patterns (`a/b`) prune `a/b` but not `a`.
+- **The walk root is always kept** (`depth() == 0`), so an explicitly named
+  ignored path (e.g. `dfm add ignored_dir/`) is still entered; only its
+  ignored *sub*directories are pruned.
+- Pruned dirs are recorded in `ListDirectories::pruned` (rel paths).
+  `status` renders each as a single `!! dir/` entry (git-style) instead of
+  enumerating every file inside.
+- `filter_entry` never *yields* pruned entries, so skipped directories do not
+  count toward the `traversing... N entries visited` progress counter.
+- Rel path = `strip_prefix(rel_base)`, falling back to
+  `strip_prefix(walk_root)`, else the entry is kept (no pruning).
+
 ## Key gotchas / conventions
 
 - **Symlink pointer files**: postfix is appended to the *full* filename
   (`link-to-file.txt` → `link-to-file.txt.symlink`, not `link-to-file.symlink`).
 - **`list_directory`**: `WalkDir` `NotFound` errors push the original path
   through silently (non-existent paths get processed). `follow_links(false)` +
-  `follow_root_links(false)`. Directories are skipped.
+  `follow_root_links(false)`. Directories are skipped. `add`/`forget`/`status`/
+  `ignore` prune fully-ignored dirs during the walk (`PruneIgnoredDirs`);
+  `pull` keeps only non-dot entries (`KeepMatching`). With `--force` on a full
+  traversal, ignored *files* still get processed, but ignored *directories* are
+  skipped regardless.
 - **Task pattern**: mutating ops are queued as task enums, then executed in a
   final loop. A `continue` in the analysis loop doesn't cancel already-queued
   tasks.

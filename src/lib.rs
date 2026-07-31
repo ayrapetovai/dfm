@@ -833,24 +833,43 @@ impl Drop for ProgressLine {
 pub struct ListDirectories {
     pub found: Vec<PathBuf>,
     pub errors: Vec<String>,
+    /// Relative paths (to `rel_base`) of directories pruned by the traversal
+    /// filter. Only populated by `TraversalFilter::PruneIgnoredDirs`.
+    pub pruned: Vec<String>,
 }
 
-pub fn list_directory(paths: &[PathBuf], filter_regexp_opt: Option<&RegexSet>) -> Result<ListDirectories, DfmError> {
-    trace!("list directories with filter {:?}", filter_regexp_opt);
+/// Decides which entries the directory walk should keep.
+///
+/// Rel paths are computed relative to `rel_base` (the target or source
+/// directory the ignore patterns are relative to). The walk root is always
+/// kept, so an explicitly named ignored path is still entered.
+#[derive(Clone, Copy, Debug)]
+pub enum TraversalFilter<'a> {
+    /// Keep an entry iff its rel path matches the regex. Applies to both
+    /// files and directories (used by `pull` to skip dotfiles/dot-dirs).
+    KeepMatching(&'a RegexSet),
+    /// Keep every file, but prune directories whose subtree is fully ignored
+    /// (component-wise matching). Pruned dirs are recorded in
+    /// `ListDirectories::pruned` (used by `add`/`forget`/`status`/`ignore`).
+    PruneIgnoredDirs(&'a RegexSet),
+}
 
-    let ignore_filter =
-        |dir_entry: &DirEntry| -> bool {
-            return match dir_entry.path().to_str() {
-                Some(p) => if let Some(regex) = filter_regexp_opt {
-                    let matched = regex.is_match(p);
-                    trace!("{} matched={}", p, matched);
-                    matched
-                } else {
-                    true
-                },
-                None => true
-            };
-        };
+/// Whether a directory at rel path `dir_rel` is fully ignored by `regex`.
+///
+/// `pattern_matches_path_components` treats the *last* component as a
+/// filename, so the directory is tested as a non-last component by appending
+/// a sentinel (which never matches a real sub-pattern unless it is a glob
+/// that matches everything — and then pruning is still correct).
+pub fn is_dir_ignored(regex: &RegexSet, dir_rel: &str) -> bool {
+    check_path_matches_regex_component_wise(regex, &PathBuf::from(format!("{}/x", dir_rel))).is_some()
+}
+
+pub fn list_directory(
+    paths: &[PathBuf],
+    rel_base: &PathBuf,
+    filter: Option<TraversalFilter<'_>>,
+) -> Result<ListDirectories, DfmError> {
+    trace!("list directories with filter {:?}", filter);
 
     let mut error_messages = Vec::new();
 
@@ -858,17 +877,50 @@ pub fn list_directory(paths: &[PathBuf], filter_regexp_opt: Option<&RegexSet>) -
     // (e.g. `dfm add`/`dfm status` over $HOME) do not look frozen.
     // Progress is written straight to stderr (not via the `log` crate) so it
     // is shown at every verbosity level, and reuses a single line in place.
+    // Pruned subtrees are never yielded by `filter_entry`, so skipped
+    // directories do not count toward the visited-entry counter.
     const TRAVERSE_PROGRESS_STEP: usize = 500;
     let mut traversed_paths: Vec<PathBuf> = Vec::new();
+    let mut pruned_dirs: Vec<String> = Vec::new();
     let mut visited = 0usize;
     let mut progress = ProgressLine::new();
 
     for path in paths.iter() {
+        let keep_entry = |dir_entry: &DirEntry| -> bool {
+            // Always keep the walk root: pruning it would silently drop an
+            // explicitly named path (e.g. `dfm add some_ignored_dir`).
+            if dir_entry.depth() == 0 {
+                return true;
+            }
+
+            let rel = match dir_entry.path().strip_prefix(rel_base) {
+                Ok(r) => r,
+                Err(_) => match dir_entry.path().strip_prefix(path) {
+                    Ok(r) => r,
+                    Err(_) => return true,
+                },
+            };
+            let Some(rel_str) = rel.to_str() else { return true };
+
+            match filter {
+                None => true,
+                Some(TraversalFilter::KeepMatching(regex)) => regex.is_match(rel_str),
+                Some(TraversalFilter::PruneIgnoredDirs(regex)) => {
+                    if dir_entry.file_type().is_dir() && is_dir_ignored(regex, rel_str) {
+                        pruned_dirs.push(rel_str.to_string());
+                        false
+                    } else {
+                        true
+                    }
+                }
+            }
+        };
+
         for entry in WalkDir::new(path)
             .follow_links(false)
             .follow_root_links(false) // do not traverse symlinks pointing to dirs
             .into_iter()
-            .filter_entry(ignore_filter)
+            .filter_entry(keep_entry)
         {
             visited += 1;
             if visited % TRAVERSE_PROGRESS_STEP == 0 {
@@ -891,10 +943,12 @@ pub fn list_directory(paths: &[PathBuf], filter_regexp_opt: Option<&RegexSet>) -
     }
 
     traversed_paths.dedup();
+    pruned_dirs.dedup();
 
     Ok(ListDirectories {
         found: traversed_paths,
         errors: error_messages,
+        pruned: pruned_dirs,
     })
 }
 

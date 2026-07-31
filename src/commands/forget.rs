@@ -38,7 +38,15 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
         None => vec![target_dir_abs_path.clone()]
     };
 
-    let traversed_paths = list_directory_or_error(&paths, None, "in targets")?;
+    let target_ignore_file_path = calc_local_ignore_file()?;
+    let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
+
+    let traversed_paths = list_directory_or_error(
+        &paths,
+        &target_dir_abs_path,
+        Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
+        "in targets",
+    )?;
     debug!("traversing result is {:?}", traversed_paths);
 
     enum ForgetTask {

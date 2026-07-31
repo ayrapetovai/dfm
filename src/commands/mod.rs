@@ -27,7 +27,6 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 use filetime_creation::{set_file_mtime, FileTime};
 use log::{error, info, trace, log_enabled};
-use regex::RegexSet;
 
 use dfm::*;
 
@@ -95,10 +94,11 @@ pub(crate) fn source_rel_to_target_rel(
 /// Thin wrapper around `list_directory` that bundles the error check.
 pub(crate) fn list_directory_or_error(
     paths: &[PathBuf],
-    filter: Option<&RegexSet>,
+    rel_base: &PathBuf,
+    filter: Option<TraversalFilter<'_>>,
     context: &str,
 ) -> Result<Vec<PathBuf>, DfmError> {
-    let ListDirectories { found, errors, .. } = list_directory(paths, filter)?;
+    let ListDirectories { found, errors, .. } = list_directory(paths, rel_base, filter)?;
     if !errors.is_empty() {
         return Err(DfmError::InvalidData(
             format!("failed to process some subdirectories or files {}: {:?}", context, errors)

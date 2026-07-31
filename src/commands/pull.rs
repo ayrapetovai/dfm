@@ -81,7 +81,12 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
     };
 
     let regex_no_dot_files = RegexSet::new(vec![r#"^(.+/)?[^.][^/]+$"#]).unwrap();
-    let traversed_paths = list_directory_or_error(&paths, Some(&regex_no_dot_files), "in source")?;
+    let traversed_paths = list_directory_or_error(
+        &paths,
+        &source_dir_abs_path,
+        Some(TraversalFilter::KeepMatching(&regex_no_dot_files)),
+        "in source",
+    )?;
     debug!("traversing result is {:?}", traversed_paths);
 
 

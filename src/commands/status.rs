@@ -10,7 +10,7 @@ use log::{debug, info};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::{source_rel_to_target_rel, list_directory_or_error, report_progress};
+use super::{source_rel_to_target_rel, list_directory, report_progress};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -151,11 +151,18 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
     // ------------------------------------------------------------------
     // Phase 2 — Walk target directory for unmanaged files
     // ------------------------------------------------------------------
-    let traversed_target = list_directory_or_error(
-        &[target_dir_abs.clone()],
-        None,
-        "target directory for status",
-    )?;
+    let ListDirectories { found: traversed_target, errors: traversal_errors, pruned: pruned_dirs } =
+        list_directory(
+            &[target_dir_abs.clone()],
+            &target_dir_abs,
+            Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
+        )?;
+    if !traversal_errors.is_empty() {
+        return Err(DfmError::InvalidData(format!(
+            "failed to process some subdirectories or files in target directory for status: {:?}",
+            traversal_errors
+        )));
+    }
 
     // Phase 3 builds its own list from traversed_target + entries
 
@@ -305,6 +312,18 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
         });
     }
     progress.clear();
+
+    // Entries for fully-ignored directories that were pruned during the walk:
+    // one `!! dir/` per directory instead of enumerating every file inside it.
+    for pruned_rel in &pruned_dirs {
+        let probe = PathBuf::from(format!("{}/x", pruned_rel));
+        let matched_pattern = check_path_matches_regex_component_wise(&target_ignore_regex, &probe);
+        entries.push(StatusEntry {
+            code: "!!",
+            path: format!("{}/", pruned_rel),
+            matched_pattern,
+        });
+    }
 
     // ------------------------------------------------------------------
     // Phase 3 — Find unused ignore patterns
