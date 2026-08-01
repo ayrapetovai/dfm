@@ -10,9 +10,12 @@ dfm init dotfiles
 
 # A large ignored directory — if the walk stepped into it, 600 files would be
 # visited and the 500-entry progress heartbeat would fire.
+# Plain redirections (not `write`): these files are ignored and never synced,
+# so their mtimes don't matter and the per-file sleep/mkdir would only slow
+# the loop down.
 mkdir -p big
 for i in $(seq 1 600); do
-    write "x" "big/f_$i.txt"
+    echo "x" > "big/f_$i.txt"
 done
 dfm ignore big
 

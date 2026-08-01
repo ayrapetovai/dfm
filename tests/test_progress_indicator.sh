@@ -12,8 +12,10 @@ capture() {
 
 # Create a batch large enough to trigger the bulk-progress heartbeats
 # (analysis loop fires every 100 files, traversal every 500 entries).
+# Plain redirections (not `write`): progress fires during iteration regardless
+# of file content or mtime, and the per-file sleep/mkdir would slow the loop.
 for i in $(seq 1 600); do
-    write "content $i" "file_$i.txt"
+    echo "content $i" > "file_$i.txt"
 done
 
 # progress is visible at -v 0 and the default (-v 1)

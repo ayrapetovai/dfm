@@ -164,11 +164,13 @@ FAILED_COUNTER=0
 
 run_test() {
     local test_file="$1"
+    # Tests must never read stdin: commands that prompt would otherwise hang
+    # the whole suite waiting for input that is never going to come.
     if [ -n "$QUIET" ]; then
-        ( set -eEu; source "$test_file" ) > /dev/null 2>&1
+        ( set -eEu; source "$test_file" ) < /dev/null > /dev/null 2>&1
     else
         local tmp; tmp=$(mktemp)
-        if ( set -eEu -x; source "$test_file" ) >"$tmp" 2>&1; then
+        if ( set -eEu -x; source "$test_file" ) < /dev/null >"$tmp" 2>&1; then
             rm -f "$tmp"
             return 0
         else
