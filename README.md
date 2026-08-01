@@ -186,7 +186,7 @@ dfm merge [PATH...]
 - With a path given, merges the file even if only one side was modified — useful for resolving a `M ` or ` M` state proactively.
 - Skips symlinks and files matching the target ignore pattern.
 
-The merge tool is configured by the `merge_tool_command` setting (default: `vimdiff {target} {result} {source}`). The placeholders are:
+The merge tool is configured by the `merge_tool_command` setting (default: `vimdiff {target} {source} {result}`). The placeholders are:
 
 | Placeholder | Description |
 |---|---|
@@ -389,7 +389,7 @@ manage_symlinks = true
 dotfiles_only = false
 force_encryption_for = ["\\.ssh"]
 obtain_password_shell_command = ""
-merge_tool_command = "vimdiff {target} {result} {source}"
+merge_tool_command = "vimdiff {target} {source} {result}"
 ```
 
 ### Properties

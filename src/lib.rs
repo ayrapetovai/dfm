@@ -564,7 +564,7 @@ pub fn create_default_settings() -> Settings {
         dotfiles_only: false,
         force_encryption_for: BY_DEFAULT_FORCE_ENCRYPTION_FILES.to_vec(),
         obtain_password_shell_command: Some("".to_owned()), // TODO need to make serde to add empty files to file
-        merge_tool_command: Some("vimdiff {target} {result} {source}".to_owned()),
+        merge_tool_command: Some("vimdiff {target} {source} {result}".to_owned()),
     }
 }
 

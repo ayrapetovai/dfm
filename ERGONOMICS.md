@@ -41,24 +41,6 @@ All values are serialized as TOML strings regardless of the expected type. `mana
 
 ---
 
-### 8. Merge tool default is non-standard
-
-The default `"vimdiff {target} {result} {source}"` places the `{result}` file in the middle, which is an unusual vimdiff layout. A user running `dfm merge` for the first time gets a confusing diff window.
-
-**Recommendation**: Use a more standard command template, or at minimum document the expected layout in the default value's help text.
-
----
-
-### 9. `purge` safety check is one-directional
-
-`purge` warns about un-pulled source changes, but does NOT warn about un-pushed target changes. A user who modified files but forgot to `add` will lose those records without notice.
-
-**Recommendation**: Also check for target files that are newer than the sync timestamp.
-
-**Status**: Fixed — `purge` now checks both directions and reports un-pulled and un-pushed changes in a single error. Managed symlinks are excluded from the check (their data is preserved by the replacement step) and are replaced with regular copies of their pointees before the source directory is removed.
-
----
-
 ### 10. `calc_working_dir_paths` doesn't validate source exists
 
 When the source directory is missing, the function returns `Ok` and subsequent operations produce confusing `NotFound` errors instead of a clear "source directory does not exist, run `dfm init`."
