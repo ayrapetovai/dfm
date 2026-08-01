@@ -78,6 +78,22 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Opt
                     }
                 }
                 info!("config removed {:?}", path_to_config_file);
+
+                if let Some(config_dir) = path_to_config_file.parent() {
+                    let is_home_dir = get_home_path()
+                        .map(|home| config_dir == home.as_path())
+                        .unwrap_or(false);
+                    if is_home_dir {
+                        info!("config directory is the home directory; skipping");
+                    } else if config_dir.exists() {
+                        if !dry_run {
+                            if let Err(e) = fs::remove_dir_all(config_dir) {
+                                errors.push(format!("failed to remove config directory {:?}: {}", config_dir, e));
+                            }
+                        }
+                        info!("config directory removed {:?}", config_dir);
+                    }
+                }
             }
         }
     }

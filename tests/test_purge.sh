@@ -17,6 +17,7 @@ assert_fail dfm purge 2>/dev/null
 # purge with --dry-run must not remove anything
 dfm purge --dry-run
 assert -f "$PWD/.config/dfm/config.toml"
+assert -d "$PWD/.config/dfm"
 assert -d "$PWD/.local/state/dfm"
 assert -d "$PWD/dotfiles"
 assert_source "file.txt"
@@ -26,5 +27,6 @@ dfm purge --force
 
 # postconditions: everything removed
 assert_fail test -f "$PWD/.config/dfm/config.toml"
+assert_fail test -d "$PWD/.config/dfm"
 assert_fail test -d "$PWD/.local/state/dfm"
 assert_fail test -d "$PWD/dotfiles"

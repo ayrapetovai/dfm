@@ -14,6 +14,7 @@ dfm purge --keep-config-file
 
 # postconditions: config file still present
 assert -f "$PWD/.config/dfm/config.toml"
+assert -d "$PWD/.config/dfm"
 
 # source directory and state are removed
 assert_fail test -d "$PWD/dotfiles"
