@@ -55,6 +55,8 @@ The default `"vimdiff {target} {result} {source}"` places the `{result}` file in
 
 **Recommendation**: Also check for target files that are newer than the sync timestamp.
 
+**Status**: Fixed — `purge` now checks both directions and reports un-pulled and un-pushed changes in a single error. Managed symlinks are excluded from the check (their data is preserved by the replacement step) and are replaced with regular copies of their pointees before the source directory is removed.
+
 ---
 
 ### 10. `calc_working_dir_paths` doesn't validate source exists

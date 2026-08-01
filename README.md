@@ -234,12 +234,13 @@ dfm forget [PATH...] [--force] [--dry-run]
 Add paths or regex patterns to the ignore list. Ignored files are skipped by `add`, `pull`, `merge`, and `forget`.
 
 ```bash
-dfm ignore [PATH...] [-p PATTERN...] [--dry-run]
+dfm ignore [PATH...] [-p PATTERN...] [-r RECORD...] [--dry-run]
 ```
 
 - `PATH...` — file paths to ignore (relative to target or source directory).
 - `-p`, `--patterns` — regex patterns to ignore.
-- At least one of `PATH...` or `--patterns` is required; running `dfm ignore` with neither prints help.
+- `-r`, `--remove` — records to remove from the ignore list.
+- At least one of `PATH...`, `--patterns`, or `--remove` is required; running `dfm ignore` with none of them exits with an error.
 - When adding a directory path, dfm writes the directory itself to the ignore file; the directory (and everything under it) is then skipped by `add`, `merge`, `forget`, and `status` — ignored directories are pruned during traversal rather than walked and filtered file-by-file.
 
 The program maintains two ignore files:
@@ -288,13 +289,15 @@ Remove all program data: config file, source directory, and state directory.
 dfm purge [--keep-source] [--keep-config-file] [--force] [--dry-run]
 ```
 
-Before removing the source directory, `purge` checks for un-pulled changes (source files modified since their last sync). If any exist, the command aborts unless `--force` is given.
+Before removing the source directory, `purge` checks for un-pulled changes (source files modified since their last sync) and un-pushed changes (target files modified since their last sync). If any exist, the command aborts unless `--force` is given.
+
+Managed symlinks (created by `add -s` / `pull -s`) are replaced with regular copies of the files they point to before the source directory is removed, so no dangling symlinks are left behind. Symlinks pointing outside the source directory are left untouched.
 
 | Flag | Description |
 |---|---|
 | `-s`, `--keep-source` | Do not remove the source directory. |
 | `-c`, `--keep-config-file` | Do not remove the config file. |
-| `-f`, `--force` | Remove the source directory even if it has un-pulled changes. |
+| `-f`, `--force` | Remove the source directory even if it has un-pulled or un-pushed changes. |
 | `-n`, `--dry-run` | Check without making changes. |
 
 ### 2.10 `status`
