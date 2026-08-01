@@ -53,25 +53,6 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
 
     let traversed_paths = match paths {
         Some(p) => p,
-        None if patterns.is_none() => {
-            let ListDirectories {
-                found: traversed_paths,
-                errors: error_messages,
-                ..
-            } = list_directory(
-                &vec![target_dir_abs_path.clone()],
-                &target_dir_abs_path,
-                Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
-            )?;
-
-            if !error_messages.is_empty() {
-                return Err(DfmError::InvalidData(
-                    format!("failed to process some subdirectories or files in targets {:?}", error_messages)
-                ));
-            }
-
-            &traversed_paths.clone()
-        },
         None => &vec![]
     };
 

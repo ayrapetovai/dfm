@@ -1,7 +1,17 @@
-# H1 — nothing to do: empty patterns with no paths
+# H1 — ignore requires paths or a flag with parameters
 dfm init dotfiles
 
-# dfm ignore -p with no pattern values and no paths
-# patterns = Some([]), paths = None → traversed_paths = &vec![]
-# All three collections empty → "nothing to do"
-dfm ignore -p
+# no arguments at all → clap rejects
+assert_fail dfm ignore
+
+# only a dry-run flag → still no input → clap rejects
+assert_fail dfm ignore -n
+
+# -p without any pattern values → clap rejects
+assert_fail dfm ignore -p
+
+# -r without any records → clap rejects
+assert_fail dfm ignore -r
+
+# valid invocation still works
+dfm ignore -p '\.txt$'

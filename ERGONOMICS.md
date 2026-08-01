@@ -41,30 +41,6 @@ All values are serialized as TOML strings regardless of the expected type. `mana
 
 ---
 
-### 5. Default `dot_prefix` mismatch
-
-The code default is `"dot_"` but the README examples show `"dot-"`. A user following the README gets different behavior than their config suggests. The readme tables and the config defaults should agree.
-
-**Recommendation**: Align code and docs, or change one to match.
-
----
-
-### 6. No progress indication for full-tree traversals
-
-`dfm add` (no args) and `dfm status` walk the entire `$HOME` directory with zero progress output. For users with large homes, this can look frozen.
-
-**Recommendation**: Log a periodic "traversing…" message at `info` level, or add a spinner for lengthy operations.
-
----
-
-### 7. `dfm ignore` with no args is an undocumented "list" mode
-
-Running `dfm ignore` without paths or patterns prints the current ignore status for all traversed files. This behavior is not discoverable — most users would expect a usage error. The `-r`/`--remove` flag is also not mentioned in the command's help.
-
-**Recommendation**: Add an explicit `dfm ignore --list` flag and document `-r` in the short help.
-
----
-
 ### 8. Merge tool default is non-standard
 
 The default `"vimdiff {target} {result} {source}"` places the `{result}` file in the middle, which is an unusual vimdiff layout. A user running `dfm merge` for the first time gets a confusing diff window.

@@ -199,18 +199,23 @@ enum Command {
     },
 
     /// Ignore a file when processing other subcommands (does not delete target of source file).
-    #[command(arg_required_else_help = true)]
+    #[command(group(
+        clap::ArgGroup::new("ignore_input")
+            .required(true)
+            .multiple(true)
+            .args(["paths", "patterns", "remove"])
+    ))]
     Ignore {
         /// Ignore files.
-        #[arg(num_args = 0.., value_name = "PATH")]
+        #[arg(num_args = 1.., value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
 
         /// Add an ignore regular expression
-        #[arg(long, short = 'p', num_args = 0.., value_name = "REGEXP")]
+        #[arg(long, short = 'p', num_args = 1.., value_name = "REGEXP")]
         patterns: Option<Vec<String>>,
 
         /// Remove records from the target ignore file.
-        #[arg(long, short = 'r', num_args = 1.., required = false, value_name = "RECORD")]
+        #[arg(long, short = 'r', num_args = 1.., value_name = "RECORD")]
         remove: Option<Vec<String>>,
 
         /// Run only checks, no changes will be made to filesystem.
