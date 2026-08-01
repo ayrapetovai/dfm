@@ -1,0 +1,155 @@
+# Code Review — dfm
+
+Review date: 2026-08-01
+
+This document records a code review of the dfm source tree (`src/`). It lists
+bad patterns found and proposes replacement patterns that are clearer for AI
+analysis (explicit, testable, and free of hidden global state).
+
+## A. Bad patterns found
+
+### A1. Global, env-bound `static` that can panic — `src/lib.rs:135`
+
+```rust
+static XDG: Lazy<Xdg> = Lazy::new(|| Xdg::new().expect("XDG directories must be available"));
+```
+
+- Reads `HOME`/`USER` from the process env at first touch, and **panics** if both
+  are unset.
+- Every path resolver (`calc_state_file_path`, `calc_config_file_path`,
+  `calc_local_ignore_file`, ...) silently depends on this global. Nothing can be
+  injected, which is exactly why a test could not sandbox its paths and
+  destroyed the real `~/.local/state/dfm` (see `tests/test_purge_unresolvable_env.sh`).
+
+### A2. `&Args` drilled into every command + `unreachable code reached` boilerplate
+
+Every command starts with (e.g. `add.rs:17-25`):
+
+```rust
+let Command::Add { .. } = &args.command else {
+    return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `add`", args.command)));
+};
+```
+
+Repeated 10 times. It is dead defensive code — the dispatcher already matched
+the variant. It also forces `*force`, `args.dry_run` re-reading and makes every
+command signature `(settings, &Args, ...)`.
+
+### A3. Two different path-matching engines with confusing names
+
+- `check_path_matches_regex` (substring match) — used **only** for
+  `force_encryption_for` (`add.rs:196`).
+- `check_path_matches_regex_component_wise` — used for ignore files everywhere
+  else.
+
+Same-looking API, opposite semantics. And in `ignore.rs:85,97` the "already
+ignored" check computes the relative path against the ignore **file path** (not
+the target/source dir) and relies on substring matching to accidentally pass:
+
+```rust
+let rel_path = file_path_relative_to(&abs_path, &local_ignore_file_path); // base is a FILE
+if target_ignore_regex.matches(rel_path.to_str().unwrap()).matched_any() { // substring match
+```
+
+It works today only because `RegexSet::matches` substrings the dotted
+`./../../..` path. Latent bug.
+
+### A4. `.unwrap()` / `to_str().unwrap()` on user-controlled paths
+
+Non-UTF-8 paths panic. `to_str().unwrap()` appears ~30 times;
+`PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), ...])` builds paths
+by string-concatenation (`lib.rs:694`, `status.rs:73`, `forget.rs:271`).
+`context.txt` even admits this ("many `to_str().unwrap()`").
+
+### A5. Ignore-file edit logic copy-pasted 3 times
+
+The "remove `--force`d patterns from ignore file" filter appears in
+`add.rs:436-449` and `pull.rs:417-431`; record removal in `ignore.rs:200-244`.
+Three near-identical read/filter/write blocks — they have already started to
+drift.
+
+### A6. Swallowed errors / lossy error messages
+
+- `config.rs:19` — `if let Ok(value_opt) = read_property_from_config(...)`
+  discards the actual I/O error and reports a generic "config files does not exists".
+- `add.rs:341-346` — errors collected as strings, then flattened into
+  `require_force(*force, "error occurred")`, losing which file and why.
+- `purge.rs` does this well (aggregates `Vec<String>`, returns a joined message)
+  — that is the pattern to copy.
+
+### A7. Subtle behavioral divergence hidden in a flag
+
+`add.rs:65` `is_dir_traversal` switches a conflict from "error" to "silent skip"
+depending on whether the user named the path or traversed. The invariant is real
+but invisible; the same dual-mode logic is scattered across several
+`if !is_dir_traversal` branches.
+
+### A8. Magic strings
+
+Status codes (`"MM"`, `"M "`, `"!?"`, `"LL"`) as `&'static str` throughout
+`status.rs`; the pull dotfile filter regex `r#"^(.+/)?[^.][^/]+$"#`
+(`pull.rs:83`) is an unlabeled constant; `"."`/`"x"` sentinels in
+`is_dir_ignored`.
+
+### A9. Test fragility masks the design
+
+`launcher.sh` sleeps `0.002s` after every write/dfm call and `assert_source`
+retries up to 1s "for CI latency" — this is the mtime-granularity workaround
+leaking into tests. It is the symptom of A10.
+
+### A10. Dead/contradictory config surface
+
+`manage_symlinks`, `dotfiles_only`, `hooks` are parsed but never used;
+README/context.txt/code disagree on AES-128 vs AES-256 and on the merge-tool
+default argument order (`README:392` says `{target} {source} {result}`;
+`context.txt` says `{result} {source}`; code `lib.rs:567` is
+`{target} {source} {result}`).
+
+### Minor
+
+- Typos: `SUCCED_COUNTER`, `is_last_goup`, `target_dir_abs_apth`,
+  `param_new_vlue`, `pints`.
+- Both `lazy_static` **and** `once_cell::sync::Lazy` imported; two global-cache
+  styles (`PASSWORD_CACHE` Mutex vs `XDG` Lazy).
+- `test_status_ignored.sh:2` comments say `~/.local/share` where it is really the
+  state dir — share vs state confusion recurs.
+
+## B. Patterns clearer for AI analysis
+
+1. **Inject a context struct instead of globals.** `struct Ctx { paths: Paths,
+   settings: Settings, state: ... }` with `Paths` built once from an explicit
+   `Xdg::with_home(...)` (or injected home). Path resolution becomes pure
+   functions on `&Paths`; commands and tests call the same code with a fake
+   home. This kills A1 and the panic hazard, and would have prevented the purge
+   bug by construction.
+
+2. **Typed per-command args; delete the dispatcher boilerplate.** Change each
+   command to accept a small struct (`AddArgs { paths, force, symlink, encrypt,
+   dry_run }`) rather than `&Args`, and let `main` map the clap variant into it.
+   Removes A2 entirely.
+
+3. **Separate *plan* from *execute* as reusable functions.** The task-enum idea
+   is right; make it explicit and pure: `fn plan_add(ctx, ...) ->
+   Result<PlannedAdd>` where the analysis loop touches **no filesystem writes**,
+   then `fn execute_add(planned, ctx)` runs tasks and updates state. The analysis
+   becomes unit-testable without a sandbox, and the "silent-skip vs conflict"
+   decision (A7) becomes one small pure decision function returning
+   `Action::{Skip, Conflict, Task(_)}`.
+
+4. **One decision table, not two matching functions.** Rename to state behavior:
+   `matches_substring` (encryption) vs `matches_component_wise` (ignore). Fix
+   `ignore.rs` to compute rel against the directory, not the file. Add the
+   `file_abs_path` → rel-to-dir helper used consistently.
+
+5. **Newtypes + typed errors over `PathBuf` + `String` keys.** `type StateKey =
+   String` (with a `from_source_rel` constructor), `StatusCode` enum with
+   `Display`, and a `fn rel_str(p: &Path) -> Result<&str, DfmError>` wrapper to
+   replace `to_str().unwrap()`. This removes A4 and A8.
+
+6. **One ignore-file edit helper.** `fn edit_ignore_file(path, &dyn
+   Fn(&mut Vec<String>)) -> Result<()>` shared by add/pull/ignore — kills A5 and
+   its drift.
+
+7. **Keep a single doc of record.** Pick `context.txt` (it is the accurate one),
+   delete dead config fields, and have the README reference it instead of
+   restating (and contradicting) behavior. Reduces A10.
