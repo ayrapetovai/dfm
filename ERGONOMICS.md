@@ -25,27 +25,11 @@ Review of dfm from the perspective of command ergonomics, feedback clarity, and 
 ---
 
 
-### 3. `--force` has overloaded meaning
+### 2. `--force` has overloaded meaning
 
 In `add`/`pull`, `--force` both overrides conflict detection AND bypasses ignore patterns (removing them from the ignore file). These are two distinct operations. A user who just wants to overwrite a conflict will be surprised when their carefully curated ignore patterns vanish.
 
 **Recommendation**: Split into `--force` (conflicts) and `--bypass-ignore` (or similar) with separate flags.
-
----
-
-### 4. `config --set` stores everything as strings, no validation
-
-All values are serialized as TOML strings regardless of the expected type. `manage_symlinks = "false"` (string) is not the same as `manage_symlinks = false` (bool). Array fields like `force_encryption_for` cannot be set at all.
-
-**Recommendation**: Parse the value according to the field's expected type, or validate and give a clear error. Add a `--help` mode per property.
-
----
-
-### 10. `calc_working_dir_paths` doesn't validate source exists
-
-When the source directory is missing, the function returns `Ok` and subsequent operations produce confusing `NotFound` errors instead of a clear "source directory does not exist, run `dfm init`."
-
-**Recommendation**: Validate existence early and return a user-friendly error.
 
 ---
 

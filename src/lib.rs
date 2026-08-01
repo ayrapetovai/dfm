@@ -735,6 +735,19 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
 }
 
 pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf), DfmError> {
+    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths_unchecked(settings)?;
+
+    if !source_dir_abs_path.is_dir() {
+        return Err(DfmError::other(format!(
+            "source directory does not exist: {}. Run `dfm init` to create it.",
+            source_dir_abs_path.display()
+        )));
+    }
+
+    Ok((target_dir_abs_path, source_dir_abs_path))
+}
+
+pub fn calc_working_dir_paths_unchecked(settings: &Settings) -> Result<(PathBuf, PathBuf), DfmError> {
     if settings.source_dir.trim().is_empty() {
         return Err(DfmError::other("failed to read source path from the config file: empty string"));
     }
