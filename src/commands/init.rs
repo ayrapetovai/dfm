@@ -46,20 +46,20 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
 
     let mut tasks = vec![];
 
-    let mut source_directory_pointer = PathBuf::from_iter(vec![path_to_source.to_str().unwrap(), ".dfm_root"]);
+    let mut source_directory_pointer = path_to_source.join(".dfm_root");
     let source_dir_path = if source_directory_pointer.exists() {
         loop {
             let pointer_content = fs::read_to_string(&source_directory_pointer)?.trim().to_owned();
             if pointer_content == "." {
                 break;
             } else {
-                source_directory_pointer = PathBuf::from_iter(vec![source_directory_pointer.to_str().unwrap(), &pointer_content]);
+                source_directory_pointer = source_directory_pointer.join(&pointer_content);
             }
             trace!("searching .dfm_root in {:?}", source_directory_pointer);
         }
         fs::canonicalize(source_directory_pointer.parent().unwrap())?
     } else {
-        tasks.push(InitTask::CreateSourceRootFile(PathBuf::from_iter(vec![path_to_source.to_str().unwrap(), ".dfm_root"])));
+        tasks.push(InitTask::CreateSourceRootFile(path_to_source.join(".dfm_root")));
         fs::canonicalize(path_to_source)?
     };
 

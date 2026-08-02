@@ -21,7 +21,7 @@ pub struct ForgetArgs {
 fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String {
     let rel = file_path_relative_to(source_abs, source_dir_abs);
     let rel = remove_dots_from_path(&rel);
-    rel.to_str().unwrap().to_string()
+    rel.to_string_lossy().into_owned()
 }
 
 pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &mut StateObject) -> Result<(), DfmError> {
@@ -80,12 +80,13 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
             );
             if source_symlink_file_abs_path.exists() {
                 let source_file_content = fs::read_to_string(&source_symlink_file_abs_path)?;
-                if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
-                    info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_abs_path, target_symlink_pointee_path.to_str().unwrap());
+                let target_pointee_str = target_symlink_pointee_path.to_string_lossy();
+                if source_file_content.trim().eq(target_pointee_str.as_ref()) {
+                    info!("target symlink {:?}\n\tpoints to {}, skipping...", target_abs_path, target_pointee_str);
                     tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
                     continue;
                 } else {
-                    info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                    info!("target symlink {:?}\n\tpoints to {},\n\tmust point to {:?}", target_abs_path, target_pointee_str, source_file_content);
                     if *force {
                         tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
                     } else {
@@ -147,27 +148,28 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
             if target_abs_path.starts_with(&source_dir_abs_path) {
                 let source_abs_path = target_abs_path;
                 debug!("target {:?} resides in source directory", source_abs_path);
-                if source_abs_path.to_str().unwrap().ends_with(&settings.symlink_postfix) {
+                if source_abs_path.as_os_str().to_string_lossy().ends_with(&settings.symlink_postfix) {
                     let source_symlink_file_abs_path = source_abs_path;
                     let source_rel_path = file_path_relative_to(&source_symlink_file_abs_path, &source_dir_abs_path);
-                    let source_rel_str = source_rel_path.to_str().unwrap();
+                    let source_rel_str = source_rel_path.to_string_lossy().into_owned();
                     let target_rel_str = source_rel_to_target_rel(
-                        source_rel_str, &settings.dot_prefix,
+                        &source_rel_str, &settings.dot_prefix,
                         &settings.symlink_postfix, &settings.encrypted_postfix,
                     );
-                    let target_symlink_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &target_rel_str]);
+                    let target_symlink_abs_path = target_dir_abs_path.join(&target_rel_str);
                     if target_symlink_abs_path.exists() {
                         let target_symlink_pointee_path = match fs::read_link(&target_symlink_abs_path) {
                             Ok(p) => p,
                             Err(e) => return Err(e.into()),
                         };
-                        let source_file_content = fs::read_to_string(&source_symlink_file_abs_path).unwrap();
-                        if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
-                            info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_symlink_abs_path, target_symlink_pointee_path.to_str().unwrap());
+                        let source_file_content = fs::read_to_string(&source_symlink_file_abs_path)?;
+                        let target_pointee_str = target_symlink_pointee_path.to_string_lossy();
+                        if source_file_content.trim().eq(target_pointee_str.as_ref()) {
+                            info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_symlink_abs_path, target_pointee_str);
                             tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
                             continue;
                         } else {
-                            info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_symlink_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                            info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_symlink_abs_path, target_pointee_str, source_file_content);
                             if *force {
                                 tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
                             } else {
@@ -267,7 +269,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
     let orphan_total = orphan_keys.len();
     for (i, key) in orphan_keys.into_iter().enumerate() {
         report_progress(&mut progress, i + 1, orphan_total);
-        let source_abs = PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), &key]);
+        let source_abs = source_dir_abs_path.join(&key);
         let source_abs = remove_dots_from_path(&source_abs);
 
         if source_abs.exists() {
@@ -323,7 +325,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
                 debug!("{:?} was already removed, skipping", source_file);
             } else {
                 warn!("failed to delete {:?}: {}", source_file, e);
-                delete_errors.push((source_file.to_str().unwrap().to_string(), e.to_string()));
+                delete_errors.push((source_file.to_string_lossy().into_owned(), e.to_string()));
             }
         }
     }

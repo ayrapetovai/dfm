@@ -5,7 +5,7 @@ use std::{fs, io};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader};
 use std::ops::Add;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
 
@@ -92,6 +92,12 @@ static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "config.toml";
 static IGNORE_FILE_NAME_IN_XDG_STATE : &str = "ignore_file";
 static IGNORE_FILE_NAME_IN_SOURCE_DIR: &str = ".dfm_ignore_file";
 
+/// Sentinel child name appended to a directory rel path to probe whether the
+/// directory (as a non-last component) is fully ignored.
+pub const IGNORE_DIR_PROBE_CHILD: &str = "x";
+/// Sentinel leading `.` component (e.g. `./file.txt`) skipped in matching.
+pub const LEADING_DOT_COMPONENT: &str = ".";
+
 lazy_static! {
     // file name must be relative to target directory
     static ref BY_DEFAULT_FORCE_ENCRYPTION_FILES: Vec<Regex> = vec![Regex::from_str("\\.ssh").unwrap()];
@@ -170,7 +176,7 @@ pub fn open_or_create_file(path_to_file: &PathBuf) -> Result<File, DfmError> {
 
 // TODO refactor, make less code
 pub fn calc_source_ignore_file(source_dir_abs_path: &PathBuf) -> Result<PathBuf, DfmError> {
-    let source_ignore_file_path = PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), &IGNORE_FILE_NAME_IN_SOURCE_DIR]);
+    let source_ignore_file_path = source_dir_abs_path.join(IGNORE_FILE_NAME_IN_SOURCE_DIR);
     Ok(source_ignore_file_path)
 }
 
@@ -211,12 +217,12 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmErr
 }
 
 pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<String> {
-    let haystack = haystack.to_str().unwrap();
-    if regex.matches(haystack).matched_any() {
+    let haystack = haystack.to_string_lossy();
+    if regex.matches(haystack.as_ref()).matched_any() {
         let target_ignore_patterns = regex.patterns();
         for pattern in target_ignore_patterns {
             let regex = Regex::new(pattern).unwrap();
-            if regex.is_match(haystack) {
+            if regex.is_match(haystack.as_ref()) {
                 return Some(pattern.to_owned());
             }
         }
@@ -302,12 +308,12 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
             // component (i.e., a directory prefix). A root-level path
             // (single component, possibly prefixed with "./") always matches.
             if let Ok(re) = Regex::new(&anchored(sub)) {
-                // Skip a leading "." component ("./file.txt" → "file.txt")
-                let comps: &[&str] = if components.first() == Some(&".") {
-                    &components[1..]
-                } else {
-                    &components[..]
-                };
+            // Skip a leading "." component ("./file.txt" → "file.txt")
+            let comps: &[&str] = if components.first() == Some(&LEADING_DOT_COMPONENT) {
+                &components[1..]
+            } else {
+                &components[..]
+            };
                 if comps.len() == 1 {
                     // Root-level: match the single component
                     re.is_match(comps[0])
@@ -361,12 +367,12 @@ pub fn check_path_matches_regex_component_wise(
     regex_set: &RegexSet,
     haystack: &PathBuf,
 ) -> Option<String> {
-    let haystack_str = haystack.to_str().unwrap();
-    if !regex_set.matches(haystack_str).matched_any() {
+    let haystack_str = haystack.to_string_lossy();
+    if !regex_set.matches(haystack_str.as_ref()).matched_any() {
         return None;
     }
     for pattern in regex_set.patterns() {
-        if pattern_matches_path_components(pattern, haystack_str) {
+        if pattern_matches_path_components(pattern, haystack_str.as_ref()) {
             return Some(pattern.to_owned());
         }
     }
@@ -374,7 +380,7 @@ pub fn check_path_matches_regex_component_wise(
 }
 
 pub fn calc_state_directory_path(xdg: &Xdg) -> Result<PathBuf, DfmError> {
-    Ok(PathBuf::from_iter([xdg.state()?, PathBuf::from(STATE_DIRECTORY_NAME_IN_XDG_STATE)]))
+    Ok(xdg.state()?.join(STATE_DIRECTORY_NAME_IN_XDG_STATE))
 }
 
 pub fn calc_state_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError> {
@@ -485,12 +491,12 @@ pub fn calc_config_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError>{
         Some(p) => p,
         None => return Err(DfmError::Unsupported("Environment variable $HOME is not set".into()))
     };
-    let config_in_home = PathBuf::from_iter(vec![home_path, PathBuf::from(CONFIG_FILE_NAME_IN_HOME)]);
+    let config_in_home = home_path.join(CONFIG_FILE_NAME_IN_HOME);
 
     let path_to_config_file = match xdg.config() {
         Ok(path_to_config_dir) => {
             let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, CONFIG_FILE_NAME_IN_XDG_CONFIG);
-            let config_path = PathBuf::from_iter(vec![path_to_config_dir.to_str().unwrap(), &state_file_name]);
+            let config_path = path_to_config_dir.join(&state_file_name);
             if config_path.exists() || !config_in_home.exists() {
                 trace!("config file path is taken from XDG variable {:?}", config_path);
                 config_path
@@ -546,11 +552,11 @@ pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_obj
             Settings {
                 config_file_found: true,
                 source_dir: match state_object {
-                    Some(state) => state.source_directory.to_str().unwrap().to_string(),
+                    Some(state) => state.source_directory.to_string_lossy().into_owned(),
                     None => "".to_string()
                 },
                 target_dir: match state_object {
-                    Some(state) => state.target_directory.to_str().unwrap().to_string(),
+                    Some(state) => state.target_directory.to_string_lossy().into_owned(),
                     None => "".to_string()
                 },
                 dot_prefix: match &custom.dot_prefix {
@@ -596,11 +602,10 @@ pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &Pat
         }
     }
 
-    if target_file_rel_to_target_dir_path_opt.is_some() {
-        let ret = target_file_rel_to_target_dir_path_opt.unwrap();
-        return if ret.to_str().unwrap().is_empty() { PathBuf::from(".") } else { ret };
+    if let Some(ret) = target_file_rel_to_target_dir_path_opt {
+        return if ret.as_os_str().is_empty() { PathBuf::from(".") } else { ret };
     } else {
-        let mut target_file_rel_to_target_dir_path_with_backs = String::from(file_abs_path.to_str().unwrap());
+        let mut target_file_rel_to_target_dir_path_with_backs = file_abs_path.to_string_lossy().into_owned();
         for _ in 0..path_components.len() {
             target_file_rel_to_target_dir_path_with_backs.insert_str(0, "/..")
         }
@@ -620,8 +625,8 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, s
     trace!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
 
     // replace dots in filenames and dirnames to dot_prefix from config
-    let filename = regexp_for_leading_dot_in_filename.replace(target_file_rel_to_target_dir_path.file_name().unwrap().to_str().unwrap(), dot_prefix).to_string();
-    let parent = regexp_for_leading_dot_in_filename.replace(target_file_rel_to_target_dir_path.parent().unwrap().to_str().unwrap(), dot_prefix).to_string();
+    let filename = regexp_for_leading_dot_in_filename.replace(&target_file_rel_to_target_dir_path.file_name().unwrap().to_string_lossy(), dot_prefix).to_string();
+    let parent = regexp_for_leading_dot_in_filename.replace(&target_file_rel_to_target_dir_path.parent().unwrap().to_string_lossy(), dot_prefix).to_string();
     let mut dirname = regexp_for_leading_dot_in_path.replace_all(&parent, &slash_dot_prefix).to_string();
     if !dirname.is_empty() {
         dirname.push('/');
@@ -636,20 +641,20 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, s
     }
 
     trace!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
-    let ret = PathBuf::from_iter(vec![source_dir_abs_path.to_str().unwrap(), &source_file_rel_to_source_dir_path]);
+    let ret = source_dir_abs_path.join(&source_file_rel_to_source_dir_path);
     return remove_dots_from_path(&ret);
 }
 
 // TODO this is a shame, refactor this function with repentance
 pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
-    if path.to_str().unwrap() == "/" {
+    if path == Path::new("/") {
         return PathBuf::from(path);
     }
 
     let mut go_back_counter = 0;
     let mut ret = String::new();
     for ancestor in path.iter().rev() {
-        let name= ancestor.to_str().unwrap();
+        let name = ancestor.to_string_lossy();
         let first_symbol_opt = ret.chars().nth(0);
         if name == "." && first_symbol_opt.is_some() && first_symbol_opt.unwrap() == '/' {
             ret.remove(0);
@@ -659,12 +664,12 @@ pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
             if go_back_counter > 0 {
                 go_back_counter -=1;
             } else if !name.is_empty() {
-                ret.insert_str(0, name);
+                ret.insert_str(0, name.as_ref());
                 ret.insert(0, '/');
             }
         }
     }
-    if !path.to_str().unwrap().starts_with("/") && ret.starts_with("/"){
+    if !path.is_absolute() && ret.starts_with("/"){
         ret.remove(0);
     }
     if go_back_counter > 0 && ret.starts_with("/") {
@@ -819,7 +824,16 @@ pub enum TraversalFilter<'a> {
 /// a sentinel (which never matches a real sub-pattern unless it is a glob
 /// that matches everything — and then pruning is still correct).
 pub fn is_dir_ignored(regex: &RegexSet, dir_rel: &str) -> bool {
-    check_path_matches_regex_component_wise(regex, &PathBuf::from(format!("{}/x", dir_rel))).is_some()
+    dir_ignore_pattern(regex, dir_rel).is_some()
+}
+
+/// Pattern that fully ignores the directory at rel path `dir_rel`, probed as
+/// `dir_rel/IGNORE_DIR_PROBE_CHILD`. `None` when not ignored.
+pub fn dir_ignore_pattern(regex: &RegexSet, dir_rel: &str) -> Option<String> {
+    check_path_matches_regex_component_wise(
+        regex,
+        &PathBuf::from(format!("{}/{}", dir_rel, IGNORE_DIR_PROBE_CHILD)),
+    )
 }
 
 pub fn list_directory(
@@ -1020,7 +1034,7 @@ pub fn compare_files(
     source_abs_path: &PathBuf,
     sync_time_opt: Option<&SyncTime>,
 ) -> Result<CompareByTimestamp, DfmError> {
-    if source_abs_path.to_str().unwrap().ends_with(encrypted_postfix) {
+    if source_abs_path.as_os_str().to_string_lossy().ends_with(encrypted_postfix) {
         compare_files_by_timestamps(target_abs_path, source_abs_path, sync_time_opt.map(|s| &s.mtime))
     } else {
         compare_files_by_content(target_abs_path, source_abs_path, sync_time_opt)

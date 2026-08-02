@@ -68,17 +68,17 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
                 let source_abs = target_abs;
                 let source_rel = file_path_relative_to(&source_abs, &source_dir_abs_path);
                 let source_rel = remove_dots_from_path(&source_rel);
-                let source_rel_str = source_rel.to_str().unwrap();
+                let source_rel_str = source_rel.to_string_lossy();
 
                 // Derive target path (replace dot_prefix, strip postfixes)
                 let target_rel = source_rel_to_target_rel(
-                    source_rel_str, &settings.dot_prefix,
+                    source_rel_str.as_ref(), &settings.dot_prefix,
                     &settings.symlink_postfix, &settings.encrypted_postfix,
                 );
-                let inferred_target_abs = PathBuf::from_iter([target_dir_abs_path.to_str().unwrap(), &target_rel]);
+                let inferred_target_abs = target_dir_abs_path.join(&target_rel);
                 let inferred_target_abs = remove_dots_from_path(&inferred_target_abs);
 
-                if let Some(sync_time) = state.syncs.get(source_rel_str) {
+                if let Some(sync_time) = state.syncs.get(source_rel_str.as_ref()) {
                     candidates.push((source_abs, inferred_target_abs, sync_time.clone()));
                 } else {
                     warn!("{:?} is not in the state file, skipping...", source_rel);
@@ -91,21 +91,21 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
                 );
                 let source_rel_base = file_path_relative_to(&source_abs_base, &source_dir_abs_path);
                 let source_rel_base = remove_dots_from_path(&source_rel_base);
-                let source_rel_base_str = source_rel_base.to_str().unwrap();
+                let source_rel_base_str = source_rel_base.to_string_lossy();
 
                 // State key may include encrypted/symlink postfix — try all variants
                 let state_key = resolve_state_key(
                     state,
-                    source_rel_base_str,
+                    &source_rel_base_str,
                     &settings.encrypted_postfix,
                     &settings.symlink_postfix,
                 );
 
                 if let Some(state_key) = state_key {
-                    let source_abs = if state_key == source_rel_base_str {
+                    let source_abs = if state_key == source_rel_base_str.as_ref() {
                         source_abs_base
                     } else {
-                        PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), &state_key])
+                        source_dir_abs_path.join(&state_key)
                     };
                     let source_abs = remove_dots_from_path(&source_abs);
                     let sync_time = &state.syncs[&state_key];
@@ -119,7 +119,7 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
     } else {
         // No paths given — iterate over all state entries
         for (source_rel, sync_time) in &state.syncs {
-            let source_abs = PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), source_rel]);
+            let source_abs = source_dir_abs_path.join(source_rel);
             let source_abs = remove_dots_from_path(&source_abs);
 
             // Derive target path (replace dot_prefix, strip postfixes)
@@ -127,7 +127,7 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
                 source_rel, &settings.dot_prefix,
                 &settings.symlink_postfix, &settings.encrypted_postfix,
             );
-            let target_abs = PathBuf::from_iter([target_dir_abs_path.to_str().unwrap(), &target_rel]);
+            let target_abs = target_dir_abs_path.join(&target_rel);
             let target_abs = remove_dots_from_path(&target_abs);
 
             candidates.push((source_abs, target_abs, sync_time.clone()));

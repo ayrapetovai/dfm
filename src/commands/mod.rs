@@ -53,7 +53,8 @@ pub(crate) fn get_sync_time<'a>(
 ) -> Option<&'a SyncTime> {
     let rel = file_path_relative_to(path, source_dir);
     let rel = remove_dots_from_path(&rel);
-    state.syncs.get(rel.to_str().unwrap())
+    let rel_str = rel.to_string_lossy();
+    state.syncs.get(rel_str.as_ref())
 }
 
 /// Remove the sync entry for a file, computing the state key from its absolute path.
@@ -64,7 +65,8 @@ pub(crate) fn remove_sync_state(
 ) {
     let rel = file_path_relative_to(path, source_dir);
     let rel = remove_dots_from_path(&rel);
-    state.syncs.remove(rel.to_str().unwrap());
+    let rel_str = rel.to_string_lossy();
+    state.syncs.remove(rel_str.as_ref());
 }
 
 /// Insert/update a sync entry and set mtimes on both the source-side file
@@ -79,7 +81,7 @@ pub(crate) fn update_sync_state(
     let source_rel_path = file_path_relative_to(source_abs, source_dir_abs);
     let source_rel_path = remove_dots_from_path(&source_rel_path);
     let sha256 = compute_sha256(source_abs)?;
-    state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), SyncTime { mtime: sync_creation, sha256 });
+    state.syncs.insert(source_rel_path.to_string_lossy().into_owned(), SyncTime { mtime: sync_creation, sha256 });
     let ft = FileTime::from_system_time(sync_creation);
     set_file_mtime(target_abs, ft)?;
     set_file_mtime(source_abs, ft)?;
@@ -315,10 +317,13 @@ pub(crate) fn run_merge(
         return Err(DfmError::Other("merge command is empty".into()));
     }
     let (prog, args) = parts.split_first().unwrap();
+    let target_str = target_path.to_string_lossy();
+    let source_str = source_path.to_string_lossy();
+    let result_str = result_path.to_string_lossy();
     let args: Vec<String> = args.iter().map(|a| {
-        a.replace("{target}", target_path.to_str().unwrap())
-         .replace("{source}", source_path.to_str().unwrap())
-         .replace("{result}", result_path.to_str().unwrap())
+        a.replace("{target}", target_str.as_ref())
+         .replace("{source}", source_str.as_ref())
+         .replace("{result}", result_str.as_ref())
     }).collect();
 
     info!("running merge tool: {} {:?}", prog, args);

@@ -87,7 +87,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
             // so the stored entry is the source-relative path with the dot
             // prefix stripped (e.g. source `dot_my.log` -> target `.my.log`
             // stored as `^my\.log$`).
-            let canonical = rel_path.to_str().unwrap().replace(&settings.dot_prefix, "");
+            let canonical = rel_path.to_string_lossy().replace(&settings.dot_prefix, "");
             let canonical_line = format!("^{}$", regex::escape(&canonical));
             let matched = check_path_matches_regex_component_wise(&source_ignore_regex, &rel_path)
                 .or_else(|| check_path_matches_regex_component_wise(&source_ignore_regex, &PathBuf::from(&canonical)));
@@ -167,7 +167,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
                 continue;
             }
 
-            let escaped_path_str = regex::escape(ignore_path.to_str().unwrap());
+            let escaped_path_str = regex::escape(&ignore_path.to_string_lossy());
             if let Err(e) = writeln!(target_ignore_file, "{}", escaped_path_str) {
                 return Err(e.into());
             }

@@ -32,10 +32,75 @@ pub struct StatusArgs {
 // Types
 // ---------------------------------------------------------------------------
 
+/// Two-letter status code. The `Display` output is part of the CLI contract
+/// (`--porcelain` is stable, machine-readable) and must stay byte-identical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatusCode {
+    UpToDate,
+    BothModified,
+    TargetModified,
+    SourceModified,
+    NeverSynchronized,
+    Unpulled,
+    Unmanaged,
+    UnmanagedSymlink,
+    ManagedSymlink,
+    Ignored,
+    IgnoredSymlink,
+    StalePattern,
+}
+
+impl StatusCode {
+    fn is_modified(self) -> bool {
+        matches!(self, StatusCode::BothModified | StatusCode::TargetModified | StatusCode::SourceModified)
+    }
+
+    fn is_managed(self) -> bool {
+        matches!(
+            self,
+            StatusCode::UpToDate
+                | StatusCode::BothModified
+                | StatusCode::TargetModified
+                | StatusCode::SourceModified
+                | StatusCode::NeverSynchronized
+                | StatusCode::Unpulled
+                | StatusCode::ManagedSymlink
+        )
+    }
+
+    fn is_ignored(self) -> bool {
+        matches!(self, StatusCode::Ignored | StatusCode::IgnoredSymlink)
+    }
+
+    fn is_up_to_date(self) -> bool {
+        matches!(self, StatusCode::UpToDate | StatusCode::ManagedSymlink)
+    }
+}
+
+impl std::fmt::Display for StatusCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let code = match self {
+            StatusCode::UpToDate => "--",
+            StatusCode::BothModified => "MM",
+            StatusCode::TargetModified => "M ",
+            StatusCode::SourceModified => " M",
+            StatusCode::NeverSynchronized => "NM",
+            StatusCode::Unpulled => "!?",
+            StatusCode::Unmanaged => "??",
+            StatusCode::UnmanagedSymlink => "?L",
+            StatusCode::ManagedSymlink => "LL",
+            StatusCode::Ignored => "!!",
+            StatusCode::IgnoredSymlink => "!L",
+            StatusCode::StalePattern => "!P",
+        };
+        f.write_str(code)
+    }
+}
+
 #[derive(Debug)]
 struct StatusEntry {
     /// Two-letter status code.
-    code: &'static str,
+    code: StatusCode,
     /// Display path (relative to target or source directory).
     path: String,
     /// Ignore pattern that matched this file (only for `!!` entries).
@@ -84,7 +149,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         report_progress(&mut progress, i + 1, state.syncs.len());
         state_keys.insert(source_rel.clone());
 
-        let source_abs = PathBuf::from_iter([source_dir_abs.to_str().unwrap(), source_rel]);
+        let source_abs = source_dir_abs.join(source_rel);
         let source_abs = remove_dots_from_path(&source_abs);
 
         let target_rel = source_rel_to_target_rel(
@@ -93,7 +158,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             &settings.symlink_postfix,
             &settings.encrypted_postfix,
         );
-        let target_abs = PathBuf::from_iter([target_dir_abs.to_str().unwrap(), &target_rel]);
+        let target_abs = target_dir_abs.join(&target_rel);
         let target_abs = remove_dots_from_path(&target_abs);
 
         debug!("status: state entry {:?} → target {:?}", source_rel, target_abs);
@@ -103,7 +168,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         // Check ignore patterns
         if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_rel)) {
-            let code = if is_managed_symlink { "!L" } else { "!!" };
+            let code = if is_managed_symlink { StatusCode::IgnoredSymlink } else { StatusCode::Ignored };
             entries.push(StatusEntry {
                 code,
                 path: target_rel.clone(),
@@ -124,9 +189,9 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
                 continue;
             }
             let code = if target_exists {
-                "LL"
+                StatusCode::ManagedSymlink
             } else {
-                "!?"
+                StatusCode::Unpulled
             };
             entries.push(StatusEntry { code, path: target_rel.clone(), matched_pattern: None });
             continue;
@@ -134,7 +199,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         // Regular file classification via timestamp comparison
         let (code, path) = if !target_exists && source_exists {
-            ("!?", target_rel.clone())
+            (StatusCode::Unpulled, target_rel.clone())
         } else if target_exists && !source_exists {
             state_keys.remove(source_rel);
             debug!("status: stale state entry {:?}, source missing", source_rel);
@@ -142,11 +207,11 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         } else if target_exists && source_exists {
             let cmp = compare_files(&settings.encrypted_postfix, &target_abs, &source_abs, Some(sync_time))?;
             match cmp {
-                CompareByTimestamp::BothModified => ("MM", target_rel.red().to_string()),
-                CompareByTimestamp::TargetModified => ("M ", target_rel.yellow().to_string()),
-                CompareByTimestamp::SourceModified => (" M", target_rel.yellow().to_string()),
-                CompareByTimestamp::NonModified => ("--", target_rel.green().to_string()),
-                CompareByTimestamp::NeverSynchronized => ("NM", target_rel.clone()),
+                CompareByTimestamp::BothModified => (StatusCode::BothModified, target_rel.red().to_string()),
+                CompareByTimestamp::TargetModified => (StatusCode::TargetModified, target_rel.yellow().to_string()),
+                CompareByTimestamp::SourceModified => (StatusCode::SourceModified, target_rel.yellow().to_string()),
+                CompareByTimestamp::NonModified => (StatusCode::UpToDate, target_rel.green().to_string()),
+                CompareByTimestamp::NeverSynchronized => (StatusCode::NeverSynchronized, target_rel.clone()),
             }
         } else {
             state_keys.remove(source_rel);
@@ -212,7 +277,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         // Compute the relative path for the display
         let rel = file_path_relative_to(target_abs, &target_dir_abs);
         let rel = remove_dots_from_path(&rel);
-        let rel_str = rel.to_str().unwrap().to_string();
+        let rel_str = rel.to_string_lossy().into_owned();
 
         // ------------------------------------------------------------------
         // Symlink handling
@@ -253,7 +318,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
                 // Managed symlink — only shown with --all
                 if *all {
                     entries.push(StatusEntry {
-                        code: "LL",
+                        code: StatusCode::ManagedSymlink,
                         path: rel_str.clone(),
                         matched_pattern: None,
                     });
@@ -265,7 +330,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&rel_str)) {
                 if *all || *ignored {
                     entries.push(StatusEntry {
-                        code: "!L",
+                        code: StatusCode::IgnoredSymlink,
                         path: rel_str,
                         matched_pattern: Some(pattern),
                     });
@@ -275,7 +340,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
             // Unmanaged symlink
             entries.push(StatusEntry {
-                code: "?L",
+                code: StatusCode::UnmanagedSymlink,
                 path: rel_str,
                 matched_pattern: None,
             });
@@ -293,7 +358,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         );
         let source_rel = file_path_relative_to(&source_abs, &source_dir_abs);
         let source_rel = remove_dots_from_path(&source_rel);
-        let source_rel_str = source_rel.to_str().unwrap().to_string();
+        let source_rel_str = source_rel.to_string_lossy().into_owned();
 
         // Also try encrypted/symlink postfix variants
         let enc_key = format!("{}{}", source_rel_str, settings.encrypted_postfix);
@@ -310,7 +375,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&rel_str)) {
             if *all || *ignored {
                 entries.push(StatusEntry {
-                    code: "!!",
+                    code: StatusCode::Ignored,
                     path: rel_str,
                     matched_pattern: Some(pattern),
                 });
@@ -320,7 +385,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         // Unmanaged regular file
         entries.push(StatusEntry {
-            code: "??",
+            code: StatusCode::Unmanaged,
             path: rel_str,
             matched_pattern: None,
         });
@@ -330,10 +395,9 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // Entries for fully-ignored directories that were pruned during the walk:
     // one `!! dir/` per directory instead of enumerating every file inside it.
     for pruned_rel in &pruned_dirs {
-        let probe = PathBuf::from(format!("{}/x", pruned_rel));
-        let matched_pattern = check_path_matches_regex_component_wise(&target_ignore_regex, &probe);
+        let matched_pattern = dir_ignore_pattern(&target_ignore_regex, pruned_rel);
         entries.push(StatusEntry {
-            code: "!!",
+            code: StatusCode::Ignored,
             path: format!("{}/", pruned_rel),
             matched_pattern,
         });
@@ -358,7 +422,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         }
         // Add all target paths from state entries (already relative)
         for entry in &entries {
-            if entry.code != "!?" {
+            if entry.code != StatusCode::Unpulled {
                 p.push(entry.path.clone());
             }
         }
@@ -393,7 +457,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             info!("unused ignore patterns");
         } else {
             for p in &stale_patterns {
-                println!("!P\t{}", p.red().to_string());
+                println!("{}\t{}", StatusCode::StalePattern, p.red().to_string());
             }
         }
         return Ok(());
@@ -403,14 +467,14 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // Apply filters
     // ------------------------------------------------------------------
     let filtered: Vec<&StatusEntry> = entries.iter().filter(|e| {
-        if *conflicted && e.code != "MM" { return false; }
-        if *modified && !e.code.contains('M') { return false; }
-        if *unmanaged && e.code != "??" && e.code != "?L" { return false; }
-        if *managed && e.code != "--" && e.code != "MM" && e.code != "M " && e.code != " M" && e.code != "NM" && e.code != "!?" && e.code != "LL" { return false; }
-        if *unpulled && e.code != "!?" { return false; }
-        if *ignored && e.code != "!!" && e.code != "!L" { return false; }
-        if !*all && !*ignored && (e.code == "!!" || e.code == "!L") { return false; }
-        if !*all && !*managed && (e.code == "--" || e.code == "LL") { return false; }
+        if *conflicted && e.code != StatusCode::BothModified { return false; }
+        if *modified && !e.code.is_modified() { return false; }
+        if *unmanaged && e.code != StatusCode::Unmanaged && e.code != StatusCode::UnmanagedSymlink { return false; }
+        if *managed && !e.code.is_managed() { return false; }
+        if *unpulled && e.code != StatusCode::Unpulled { return false; }
+        if *ignored && !e.code.is_ignored() { return false; }
+        if !*all && !*ignored && e.code.is_ignored() { return false; }
+        if !*all && !*managed && e.code.is_up_to_date() { return false; }
         true
     }).collect();
 
@@ -427,7 +491,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         if *unused_patterns || filtered.is_empty() {
             // If we have stale patterns, output them too
             for p in &stale_patterns {
-                println!("!P\t{}", p);
+                println!("{}\t{}", StatusCode::StalePattern, p);
             }
         }
     } else if *short {
@@ -435,9 +499,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             println!("{} {}", entry.code, entry.path);
         }
     } else {
-        let has_managed = entries.iter().any(|e| matches!(
-            e.code, "--" | "MM" | "M " | " M" | "NM" | "!?" | "LL"
-        ));
+        let has_managed = entries.iter().any(|e| e.code.is_managed());
         let output = format_default(&filtered, &stale_patterns, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
         print_paged(&output, false)?;
     }
@@ -482,15 +544,14 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
 
     for e in entries {
         match e.code {
-            "MM" => merge.push(e),
-            "M " => add.push(e),
-            " M" => pull.push(e),
-            "??" => unmanaged.push(e),
-            "?L" => unmanaged.push(e),
-            "!?" => unpulled.push(e),
-            "!!" | "!L" => ignored.push(e),
-            "--" | "LL" | "NM" => uptodate.push(e),
-            _ => {}
+            StatusCode::BothModified => merge.push(e),
+            StatusCode::TargetModified => add.push(e),
+            StatusCode::SourceModified => pull.push(e),
+            StatusCode::Unmanaged | StatusCode::UnmanagedSymlink => unmanaged.push(e),
+            StatusCode::Unpulled => unpulled.push(e),
+            StatusCode::Ignored | StatusCode::IgnoredSymlink => ignored.push(e),
+            StatusCode::UpToDate | StatusCode::ManagedSymlink | StatusCode::NeverSynchronized => uptodate.push(e),
+            StatusCode::StalePattern => {}
         }
     }
 
@@ -503,7 +564,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
 
         // Build display paths, then iteratively collapse the deepest shared
         // directory up to the root.
-        let mut paths: Vec<(&'static str, String, Option<String>)> = items.iter()
+        let mut paths: Vec<(StatusCode, String, Option<String>)> = items.iter()
             .map(|item| (item.code, item.path.clone(), item.matched_pattern.clone()))
             .collect();
 
@@ -562,7 +623,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
 
         // Build the final display list.
         struct DispLine {
-            code: &'static str,
+            code: StatusCode,
             path: String,
             pattern: Option<String>,
         }
@@ -623,7 +684,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
     if !stale_patterns.is_empty() {
         out.push_str("Unused ignore patterns:\n");
         for p in stale_patterns {
-            out.push_str(&format!("  !P  {}\n", p));
+            out.push_str(&format!("  {}  {}\n", StatusCode::StalePattern, p));
         }
     }
 
@@ -686,9 +747,10 @@ fn terminal_height() -> Option<usize> {
 // ---------------------------------------------------------------------------
 
 fn get_git_info(source_dir: &PathBuf) -> Option<String> {
+    let source_dir_str = source_dir.to_string_lossy();
     // Check if source_dir is a git repo
     let output = ProcessCmd::new("git")
-        .args(["-C", source_dir.to_str().unwrap(), "rev-parse", "--abbrev-ref", "HEAD"])
+        .args(["-C", source_dir_str.as_ref(), "rev-parse", "--abbrev-ref", "HEAD"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
@@ -705,7 +767,7 @@ fn get_git_info(source_dir: &PathBuf) -> Option<String> {
 
     // Check if dirty
     let status_output = ProcessCmd::new("git")
-        .args(["-C", source_dir.to_str().unwrap(), "status", "--porcelain"])
+        .args(["-C", source_dir_str.as_ref(), "status", "--porcelain"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()

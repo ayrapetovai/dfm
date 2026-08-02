@@ -123,11 +123,12 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                 &target_symlink_abs_path, Some(&settings.symlink_postfix)
             );
             let source_symlink_file_exists = source_symlink_file_abs_path.exists();
+            let target_pointee_rel_str = target_symlink_pointee_rel_path.to_string_lossy().into_owned();
             let source_symlink_file_points_to_right_target = if source_symlink_file_exists {
                  match fs::read_to_string(&source_symlink_file_abs_path) {
                     Ok(file_content) => {
                         debug!("source symlink file {:?}\n\tpoints to \"{}\"", source_symlink_file_abs_path, file_content);
-                        file_content.trim().eq(target_symlink_pointee_rel_path.to_str().unwrap())
+                        file_content.trim().eq(&target_pointee_rel_str)
                     },
                     _ => false
                 }
@@ -138,12 +139,12 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                 if !source_symlink_file_points_to_right_target {
                     debug!("source symlink file points to the wrong file, must be {:?}", &target_symlink_pointee_rel_path);
                 }
-                tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
+                tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_pointee_rel_str.clone()));
             } else if source_symlink_file_points_to_right_target {
                 debug!("for target symlink {:?},\n\tsource symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
             } else if !target_symlink_pointee_abs_path.starts_with(&source_dir_abs_path) {
                 debug!("for target symlink {:?},\n\tdoes not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
-                tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_symlink_pointee_rel_path.to_str().unwrap().to_owned()));
+                tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_pointee_rel_str));
             } else {
                 debug!("target symlink {:?}\n\tpointee is managed as {:?}", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
             };

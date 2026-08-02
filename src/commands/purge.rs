@@ -189,7 +189,7 @@ fn state_key_to_target(target_dir_abs_path: &PathBuf, source_rel: &str, settings
         &settings.symlink_postfix,
         &settings.encrypted_postfix,
     );
-    let target_abs = PathBuf::from_iter([target_dir_abs_path.to_str().unwrap(), &target_rel]);
+    let target_abs = target_dir_abs_path.join(&target_rel);
     (target_rel, remove_dots_from_path(&target_abs))
 }
 

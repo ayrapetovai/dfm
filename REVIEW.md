@@ -8,26 +8,12 @@ analysis (explicit, testable, and free of hidden global state).
 
 ## A. Bad patterns found
 
-### A4. `.unwrap()` / `to_str().unwrap()` on user-controlled paths
-
-Non-UTF-8 paths panic. `to_str().unwrap()` appears ~30 times;
-`PathBuf::from_iter([source_dir_abs_path.to_str().unwrap(), ...])` builds paths
-by string-concatenation (`lib.rs:694`, `status.rs:73`, `forget.rs:271`).
-`context.txt` even admits this ("many `to_str().unwrap()`").
-
 ### A7. Subtle behavioral divergence hidden in a flag
 
 `add.rs:65` `is_dir_traversal` switches a conflict from "error" to "silent skip"
 depending on whether the user named the path or traversed. The invariant is real
 but invisible; the same dual-mode logic is scattered across several
 `if !is_dir_traversal` branches.
-
-### A8. Magic strings
-
-Status codes (`"MM"`, `"M "`, `"!?"`, `"LL"`) as `&'static str` throughout
-`status.rs`; the pull dotfile filter regex `r#"^(.+/)?[^.][^/]+$"#`
-(`pull.rs:83`) is an unlabeled constant; `"."`/`"x"` sentinels in
-`is_dir_ignored`.
 
 ### Minor
 

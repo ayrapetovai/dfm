@@ -21,6 +21,9 @@ pub struct PullArgs {
     pub dry_run: bool,
 }
 
+/// Keep any-depth file whose name does not start with `.` (dotfiles pruned).
+const PULL_KEEP_NON_DOTFILES: &str = r#"^(.+/)?[^.][^/]+$"#;
+
 #[derive(Debug)]
 enum PullTask {
     Copy(PathBuf, PathBuf),
@@ -81,7 +84,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
         None => vec![source_dir_abs_path.clone()]
     };
 
-    let regex_no_dot_files = RegexSet::new(vec![r#"^(.+/)?[^.][^/]+$"#]).unwrap();
+    let regex_no_dot_files = RegexSet::new(vec![PULL_KEEP_NON_DOTFILES]).unwrap();
     let traversed_paths = list_directory_or_error(
         &paths,
         &source_dir_abs_path,
@@ -111,13 +114,13 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
             let source_file_abs_path = target_abs_path;
             debug!("provided path of a source {:?}", source_file_abs_path);
 
-            let source_name = source_file_abs_path.to_str().unwrap().to_owned();
-            let source_rel_str = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path).to_str().unwrap().to_owned();
+            let source_name = source_file_abs_path.to_string_lossy().into_owned();
+            let source_rel_str = file_path_relative_to(&source_file_abs_path, &source_dir_abs_path).to_string_lossy().into_owned();
             let target_file_rel_to_target_dir = source_rel_to_target_rel(
                 &source_rel_str, &settings.dot_prefix,
                 &settings.symlink_postfix, &settings.encrypted_postfix,
             );
-            let target_file_abs_path = PathBuf::from_iter(vec![target_dir_abs_path.to_str().unwrap(), &target_file_rel_to_target_dir]);
+            let target_file_abs_path = target_dir_abs_path.join(&target_file_rel_to_target_dir);
             let target_file_abs_path = remove_dots_from_path(&target_file_abs_path);
             debug!("inferred target {:?}", target_file_abs_path);
 
@@ -144,7 +147,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
                 } else {
                     if *target_must_be_symlink {
                         debug!("symlink creating task");
-                        tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_owned()));
+                        tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path.clone(), source_file_abs_path.to_string_lossy().into_owned()));
                     } else {
                         debug!("regular file creating task");
                         tasks.push(PullTask::Copy(target_file_abs_path, source_file_abs_path));
@@ -154,7 +157,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
             } else if target_file_abs_path.is_symlink() && source_file_abs_path.exists() {
                 let target_symlink_pointee = fs::read_link(&target_file_abs_path)?;
                 let source_file_content: String = fs::read_to_string(&source_file_abs_path)?.trim().to_string();
-                if !source_file_content.eq(target_symlink_pointee.to_str().unwrap()) {
+                if !source_file_content.eq(&target_symlink_pointee.to_string_lossy()) {
                     info!("target symlink {:?} points to {:?},\n\tmust point to {:?}", target_file_abs_path, target_symlink_pointee, source_file_content);
                     tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
                     continue; // success
@@ -209,11 +212,12 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
                 if source_symlink_file_abs_path.exists() {
                     let target_symlink_pointee_path = fs::read_link(&target_abs_path)?;
                     let source_file_content = fs::read_to_string(&source_symlink_file_abs_path)?;
-                    if source_file_content.trim().eq(target_symlink_pointee_path.to_str().unwrap()) {
-                        info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_abs_path, target_symlink_pointee_path.to_str().unwrap());
+                    let target_pointee_str = target_symlink_pointee_path.to_string_lossy();
+                    if source_file_content.trim().eq(target_pointee_str.as_ref()) {
+                        info!("target symlink {:?}\n\tpoints to {}, skipping...", target_abs_path, target_pointee_str);
                         continue; // success
                     } else {
-                        info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_abs_path, target_symlink_pointee_path.to_str().unwrap(), source_file_content);
+                        info!("target symlink {:?}\n\tpoints to {},\n\tmust point to {:?}", target_abs_path, target_pointee_str, source_file_content);
                         tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
                         continue; // success
                     }
@@ -227,7 +231,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
 
                 // also the case is handled when the symlink points inside the source directory but
                 // to the wrong file
-                tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_string()));
+                tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_string_lossy().into_owned()));
                 continue;
             }
 
@@ -313,7 +317,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
                         let target_file = target_abs_path.join(relative);
                         info!("source {:?} will be copied\n\tto the target {:?}", source_file, target_file);
                         if *target_must_be_symlink {
-                            tasks.push(PullTask::CreateOrUpdateSymlink(target_file, source_file.to_str().unwrap().to_owned()));
+                            tasks.push(PullTask::CreateOrUpdateSymlink(target_file, source_file.to_string_lossy().into_owned()));
                         } else {
                             tasks.push(PullTask::Copy(target_file, source_file));
                         }
@@ -323,7 +327,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
 
                 info!("source {:?} will be copied\n\tto the target {:?}", source_file_abs_path, target_abs_path);
                 if *target_must_be_symlink {
-                    tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_owned()));
+                    tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_string_lossy().into_owned()));
                 } else {
                     tasks.push(PullTask::Copy(target_abs_path.clone(), source_file_abs_path));
                 }
