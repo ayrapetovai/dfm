@@ -30,12 +30,6 @@ The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore
 ### 18. `add.rs` symlink branch joins `current_dir` with an already-absolute path
 `add.rs:93-101`: `PathBuf::from_iter(vec![current_dir, target_path.clone()])` — `target_path` comes from `list_directory` rooted at the absolute `target_dir_abs`, so it is absolute and **replaces** `current_dir` on push; the `current_dir` computation is dead. The subsequent canonicalize-parent+re-push dance is also redundant for paths already canonical-ish. Simplify or document.
 
-### 19. Dead / unused code
-- `Settings.config_file_found` (`lib.rs:444`) — set in `create_default_settings`/`merge_settings`, **never read**. Remove.
-- `status.rs:135` `let _source_ignore_regex = load_ignore_regex(&source_ignore_file)?;` — loads the source ignore file and discards it; pure wasted IO. Either use it (report source-side ignores) or drop it.
-- Unused direct dependencies in `Cargo.toml`: **`once_cell`**, **`aead`** (both already pulled transitively by other crates). Remove.
-- `crypt.rs:48` `eprint!(": ");` always prints, even when `obtain_password_shell_command` is set — stray prompt character before command output.
-
 ---
 
 ## P2 — Design patterns / robustness

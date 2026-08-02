@@ -45,9 +45,6 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 
     debug!("get password command is set to {:?}", settings.obtain_password_shell_command);
 
-    eprint!(": ");
-    let _ = std::io::stderr().flush();
-
     let password = if let Some(get_password_command) = settings.obtain_password_shell_command.clone() &&
             !get_password_command.is_empty() {
         debug!("launching get password program");
@@ -74,6 +71,8 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
         stdout.to_string()
     } else {
         debug!("using default procedure to get password");
+        eprint!(": ");
+        let _ = std::io::stderr().flush();
         let pwd = default_read_password()?;
         eprintln!();
         pwd
