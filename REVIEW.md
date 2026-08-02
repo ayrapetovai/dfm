@@ -63,9 +63,6 @@ The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore
 
 ## P1 — Overcomplicated / hard-to-parse code
 
-### 9. `remove_dots_from_path` (`lib.rs:649-685`) — author's own "this is a shame"
-A hand-rolled lexical normalizer: reversed-iterator over ancestors, `go_back_counter`, char-by-char `ret` string mutation, three trailing fix-up loops. ~36 lines + 17-test coverage for what a small component stack (or the `path-clean` crate) does in a few lines. High AI-parse cost, high bug surface. Refactor to: split on `/`, process components with a stack (`..` pops, `.` drops), re-join — keeping the existing test suite as the spec.
-
 ### 10. `forget.rs` analysis loop (`66-243`) — the maze
 ~180 lines of `if symlink { … }` / `if canonicalize fails { … } else { … }` with `continue` terminating every branch and the same file-format logic re-derived three times (plain/encrypted/symlink source lookup repeated at 109-145 and 189-199). The README already specifies the behavior as scenario tables (forget.rs:20-31) — mirror that: one small function per scenario (`handle_target_symlink`, `handle_missing_target`, `handle_target_file`, `handle_source_path`), each returning the tasks to queue.
 

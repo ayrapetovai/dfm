@@ -5,7 +5,8 @@ use std::{fs, io};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader};
 use std::ops::Add;
-use std::path::{Path, PathBuf};
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
 
@@ -645,43 +646,37 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, s
     return remove_dots_from_path(&ret);
 }
 
-// TODO this is a shame, refactor this function with repentance
-pub fn remove_dots_from_path(path: &PathBuf) -> PathBuf {
-    if path == Path::new("/") {
-        return PathBuf::from(path);
-    }
+pub fn remove_dots_from_path(path: &Path) -> PathBuf {
+    let absolute = path.is_absolute();
+    let mut stack: Vec<OsString> = Vec::new();
+    let mut pops_above_root = 0usize;
 
-    let mut go_back_counter = 0;
-    let mut ret = String::new();
-    for ancestor in path.iter().rev() {
-        let name = ancestor.to_string_lossy();
-        let first_symbol_opt = ret.chars().nth(0);
-        if name == "." && first_symbol_opt.is_some() && first_symbol_opt.unwrap() == '/' {
-            ret.remove(0);
-        } else if name == ".." {
-            go_back_counter += 1;
-        } else if name != "." && name != "/" {
-            if go_back_counter > 0 {
-                go_back_counter -=1;
-            } else if !name.is_empty() {
-                ret.insert_str(0, name.as_ref());
-                ret.insert(0, '/');
-            }
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match stack.pop() {
+                Some(_) => {}
+                None => pops_above_root += 1,
+            },
+            Component::Normal(name) => stack.push(name.to_os_string()),
+            Component::RootDir | Component::Prefix(_) => {}
         }
     }
-    if !path.is_absolute() && ret.starts_with("/"){
-        ret.remove(0);
+
+    let mut ret = PathBuf::new();
+    if absolute && pops_above_root == 0 {
+        ret.push("/");
     }
-    if go_back_counter > 0 && ret.starts_with("/") {
-        ret.remove(0);
+    for _ in 0..pops_above_root {
+        ret.push("..");
     }
-    for _ in 0..go_back_counter {
-        ret.insert_str(0, "../");
+    for component in stack {
+        ret.push(component);
     }
-    if ret == "" {
-        ret.push('.');
+    if ret.as_os_str().is_empty() {
+        ret.push(".");
     }
-    return PathBuf::from(ret);
+    ret
 }
 
 pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf), DfmError> {
@@ -1095,6 +1090,9 @@ fn test_remove_dots_from_path() {
     assert_eq!(remove_dots_from_path(&PathBuf::from("f/../")), PathBuf::from("."));
     assert_eq!(remove_dots_from_path(&PathBuf::from("./")), PathBuf::from("."));
     assert_eq!(remove_dots_from_path(&PathBuf::from(".")), PathBuf::from("."));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("..")), PathBuf::from(".."));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/..")), PathBuf::from("/"));
+    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/../../b")), PathBuf::from("../b"));
 }
 
 #[test]
