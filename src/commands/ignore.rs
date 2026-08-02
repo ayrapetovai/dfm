@@ -40,6 +40,8 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
 
     debug!("ignore paths {:?}, patterns {:?}, remove {:?}, dry-run {}", paths, patterns, remove, dry_run);
 
+    // Mutually exclusive with `paths`/`patterns` (enforced by the clap
+    // ArgGroup), so no other input can be pending here.
     if let Some(records) = remove {
         return remove_ignore_records(xdg, records, dry_run);
     }

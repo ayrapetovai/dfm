@@ -241,6 +241,7 @@ dfm ignore [PATH...] [-p PATTERN...] [-r RECORD...] [--dry-run]
 - `-p`, `--patterns` — regex patterns to ignore.
 - `-r`, `--remove` — records to remove from the ignore list.
 - At least one of `PATH...`, `--patterns`, or `--remove` is required; running `dfm ignore` with none of them exits with an error.
+- `PATH...`/`--patterns` add records to the ignore list, while `--remove` deletes them — the three are **mutually exclusive** and combining any of them is rejected by the CLI.
 - When adding a directory path, dfm writes the directory itself to the ignore file; the directory (and everything under it) is then skipped by `add`, `merge`, `forget`, and `status` — ignored directories are pruned during traversal rather than walked and filtered file-by-file.
 
 The program maintains two ignore files:

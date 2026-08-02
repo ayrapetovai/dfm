@@ -199,10 +199,14 @@ enum Command {
     },
 
     /// Ignore a file when processing other subcommands (does not delete target of source file).
+    /// `paths`/`patterns` add records while `remove` deletes them, so the three
+    /// are mutually exclusive: mixing them disambiguates no meaningful operation
+    /// and `ignore` previously ran only the `remove` branch, silently dropping
+    /// the rest. An ArgGroup error is clearer than silent partial behavior.
     #[command(group(
         clap::ArgGroup::new("ignore_input")
             .required(true)
-            .multiple(true)
+            .multiple(false)
             .args(["paths", "patterns", "remove"])
     ))]
     Ignore {

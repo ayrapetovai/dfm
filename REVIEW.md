@@ -20,9 +20,6 @@ State keys are joined onto `source_dir` and passed through `remove_dots_from_pat
 ### 6. `add`: force-encryption RegexSet rebuilt for every file
 `add.rs:192` builds a `RegexSet` from `settings.force_encryption_for` inside the traversal loop → O(files × patterns) regex compilation. Hoist it next to `target_ignore_regex`.
 
-### 7. `ignore --remove` silently drops `PATH`/`--patterns`
-The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore.rs:43` returns early when `remove` is present, discarding any co-issued paths/patterns without a message. Either make the group mutually exclusive or process all inputs.
-
 ---
 
 ## P2 — Design patterns / robustness
