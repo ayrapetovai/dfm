@@ -22,9 +22,6 @@ Priorities: **P0** = security/correctness, **P1** = overcomplicated/shrink, **P2
 
 ## P0 — Security
 
-### 2. Weak AES key derivation — PBKDF2 with 1000 iterations
-The `zip` crate derives the AES-256 key with `pbkdf2::pbkdf2::<Sha1>(password, salt, ITERATION_COUNT)` where `ITERATION_COUNT = 1000` (verified in `zip-8.6.0/src/aes.rs`). 1000 iterations is far below the ~600k-1M recommended for a KDF; an offline brute-force of a weak password is feasible. This is the crate's default, not dfm's code, but since dfm's whole value proposition is "encrypted dotfiles", it should be surfaced in the README (or mitigated by wrapping the archive in an `age`-style envelope / using a stronger-derivation container).
-
 ### 3. Path traversal via tampered state keys
 State keys are joined onto `source_dir` and passed through `remove_dots_from_path`, which resolves `..` lexically. A key like `../../.bashrc` in a tampered `state.toml` would, e.g., make `forget` orphan-processing (forget.rs:272-294) delete a file outside the source directory. The state file is user-owned so this is hardening rather than an active exploit, but a `syncs` key containing a `..` component should be rejected (or escaped) at `read_state` time.
 
@@ -40,16 +37,6 @@ State keys are joined onto `source_dir` and passed through `remove_dots_from_pat
 
 ### 7. `ignore --remove` silently drops `PATH`/`--patterns`
 The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore.rs:43` returns early when `remove` is present, discarding any co-issued paths/patterns without a message. Either make the group mutually exclusive or process all inputs.
-
----
-
-## P1 — Overcomplicated / hard-to-parse code
-
-### 11. `pull.rs` source-path branch (`113-180`) — fall-through reassignment
-`target_abs_path` is shadowed and then reassigned from inside an `if/else` where several inner branches `continue` and one falls through. Following which statements are reachable after the branch is genuinely hard. Extract a `resolve_source_to_target(...) -> Option<(target_abs, pending_task)>` function so the `continue`s become early returns.
-
-### 12. `filepath_in_source_dir` (`lib.rs:617-646`)
-Builds the source path with two regexes over filename+parent strings and string concatenation (`String::from_iter([dirname, filename])`). Same dot→`dot_prefix` mapping is reimplemented ad hoc in several commands. Iterate path components and map each leading `.` component to `dot_prefix` once.
 
 ---
 

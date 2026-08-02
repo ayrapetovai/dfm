@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::{fs, io};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader};
-use std::ops::Add;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
@@ -603,34 +602,41 @@ pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &Pat
 }
 
 pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, source_dir_abs_path: &PathBuf, target_abs_path: &PathBuf, add_postfix_opt: Option<&str>) -> PathBuf {
-    let regexp_for_leading_dot_in_filename = Regex::new(r#"^\."#).unwrap();
-    let regexp_for_leading_dot_in_path = Regex::new(r#"/\.[^.]"#).unwrap();
-
-    let slash_dot_prefix = String::from_iter(vec!["/", &dot_prefix]);
-
     let target_file_rel_to_target_dir_path = file_path_relative_to(target_abs_path, &target_dir_abs_path);
 
     trace!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
 
-    // replace dots in filenames and dirnames to dot_prefix from config
-    let filename = regexp_for_leading_dot_in_filename.replace(&target_file_rel_to_target_dir_path.file_name().unwrap().to_string_lossy(), dot_prefix).to_string();
-    let parent = regexp_for_leading_dot_in_filename.replace(&target_file_rel_to_target_dir_path.parent().unwrap().to_string_lossy(), dot_prefix).to_string();
-    let mut dirname = regexp_for_leading_dot_in_path.replace_all(&parent, &slash_dot_prefix).to_string();
-    if !dirname.is_empty() {
-        dirname.push('/');
-    }
-    else {
-        dirname.push_str("./");
+    // Encode the path into the source namespace by rewriting every leading-dot
+    // component to `dot_prefix`: `.bashrc` -> `dot_bashrc`, and each dot
+    // subdirectory likewise (`.config/foo` -> `dot_config/foo`). Iterating the
+    // components maps all of them uniformly, so an encoding written by dfm
+    // round-trips through `source_rel_to_target_rel` regardless of where a dot
+    // appears in the path.
+    let mut source_rel = PathBuf::new();
+    for component in target_file_rel_to_target_dir_path.components() {
+        match component {
+            Component::Normal(name) => {
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with('.') {
+                    source_rel.push(format!("{}{}", dot_prefix, &name_str[1..]));
+                } else {
+                    source_rel.push(name);
+                }
+            }
+            other => source_rel.push(other.as_os_str()),
+        }
     }
 
-    let mut source_file_rel_to_source_dir_path = String::from_iter(vec![dirname, filename]);
+    let mut source_file_rel_to_source_dir_path = source_rel;
     if let Some(postfix) = add_postfix_opt {
-        source_file_rel_to_source_dir_path = source_file_rel_to_source_dir_path.add(postfix);
+        let mut s = source_file_rel_to_source_dir_path.into_os_string();
+        s.push(postfix);
+        source_file_rel_to_source_dir_path = PathBuf::from(s);
     }
 
-    trace!("source file path relative to source directory {}", source_file_rel_to_source_dir_path);
+    trace!("source file path relative to source directory {:?}", source_file_rel_to_source_dir_path);
     let ret = source_dir_abs_path.join(&source_file_rel_to_source_dir_path);
-    return remove_dots_from_path(&ret);
+    remove_dots_from_path(&ret)
 }
 
 pub fn remove_dots_from_path(path: &Path) -> PathBuf {
