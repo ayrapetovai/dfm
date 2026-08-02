@@ -67,8 +67,14 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(DfmError::other(format!("Error (return code {}): {}", output.status.code().unwrap_or(-1), stderr)));
         }
+        // Most password providers (e.g. `security find-generic-password`,
+        // `pass`) emit a trailing newline on stdout. Trim a single trailing
+        // line terminator so the stored password matches what the user typed;
+        // otherwise manual `7z x` decryption with the intended password fails.
         let stdout = String::from_utf8_lossy(&output.stdout);
-        stdout.to_string()
+        let trimmed = stdout
+            .trim_end_matches(['\r', '\n']);
+        trimmed.to_string()
     } else {
         debug!("using default procedure to get password");
         eprint!(": ");

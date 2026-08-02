@@ -10,9 +10,6 @@ Builds clean, all 12 Rust unit tests pass. The shell suite (161 tests) was not r
 ### 3. Path traversal via tampered state keys
 State keys are joined onto `source_dir` and passed through `remove_dots_from_path`, which resolves `..` lexically. A key like `../../.bashrc` in a tampered `state.toml` would, e.g., make `forget` orphan-processing (forget.rs:272-294) delete a file outside the source directory. The state file is user-owned so this is hardening rather than an active exploit, but a `syncs` key containing a `..` component should be rejected (or escaped) at `read_state` time.
 
-### 4. Password from `obtain_password_shell_command` keeps trailing newline
-`crypt.rs:73-74` takes the shell command's stdout verbatim. A command like `security find-generic-password …` outputs `pass\n`, so the stored password is `pass\n`. Encryption/decryption stay consistent with each other, but **manual `7z x` decryption with the intended password silently fails** (README documents manual decrypt as a supported workflow). Trim trailing `\r?\n` (and decide explicitly whether leading/trailing whitespace is part of the password).
-
 ---
 
 ## P2 — Design patterns / robustness
