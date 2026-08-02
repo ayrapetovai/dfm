@@ -42,14 +42,6 @@ State keys are joined onto `source_dir` and passed through `remove_dots_from_pat
 
 ## P0 — Correctness
 
-### 5. Status stores ANSI color codes inside `StatusEntry.path` (`status.rs`)
-Phase 1 colorizes paths at status.rs:210-214 and stores them in `entry.path`; the plain path is discarded. Two bugs follow:
-
-- **`--porcelain` emits ANSI escapes** in a real terminal (`colored` colorizes whenever stdout is a TTY), violating the documented "stable, machine-readable" contract. `status.rs:460` has the same problem in the `unused_patterns` branch.
-- **Phase 3 stale-pattern detection pattern-matches the colored string** (status.rs:423-429 feeds `entry.path` into `pattern_matches_path_components`). With color active, `^\.bashrc$` is tested against `\x1b[31m.bashrc\x1b[0m` and never matches → ignore patterns for modified/up-to-date managed files are **wrongly reported as unused**.
-
-Fix: keep `path` raw in the entry; apply color only at render time (the `write_group`/short/porcelain output paths). This is a pure design-smell fix and makes the porcelain output deterministic.
-
 ### 6. `add`: force-encryption RegexSet rebuilt for every file
 `add.rs:192` builds a `RegexSet` from `settings.force_encryption_for` inside the traversal loop → O(files × patterns) regex compilation. Hoist it next to `target_ignore_regex`.
 
@@ -75,20 +67,6 @@ The iterative deepest-ancestor-collapse loop is ~80 lines of subtle `BTreeMap` b
 ---
 
 ## P1 — Shrinkable / duplicated code
-
-### 15. `main.rs` dispatch (`313-381`)
-Five near-identical `if state_opt.is_none() { return Err(NotFound) } … state_opt.unwrap() … path_to_state_file.as_ref().unwrap()` blocks. Extract:
-
-```rust
-fn with_state<T>(state_opt: Option<StateObject>, path: Option<&PathBuf>,
-                 f: impl FnOnce(&mut StateObject) -> Result<T, DfmError>) -> Result<T, DfmError> {
-    let mut state = state_opt.ok_or_else(|| DfmError::NotFound("state file is not found".into()))?;
-    let r = f(&mut state)?;
-    write_state(path.unwrap(), &state)?;
-    Ok(r)
-}
-```
-Kills ~20 `unwrap()`s and the copy-paste.
 
 ### 16. "Prune matching ignore patterns after success" duplicated
 `add.rs:423-430` and `pull.rs:422-429` are identical tails (`patterns_to_remove` + `prune_ignore_file`). Hoist into `commands/mod.rs`.

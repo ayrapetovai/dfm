@@ -207,10 +207,10 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         } else if target_exists && source_exists {
             let cmp = compare_files(&settings.encrypted_postfix, &target_abs, &source_abs, Some(sync_time))?;
             match cmp {
-                CompareByTimestamp::BothModified => (StatusCode::BothModified, target_rel.red().to_string()),
-                CompareByTimestamp::TargetModified => (StatusCode::TargetModified, target_rel.yellow().to_string()),
-                CompareByTimestamp::SourceModified => (StatusCode::SourceModified, target_rel.yellow().to_string()),
-                CompareByTimestamp::NonModified => (StatusCode::UpToDate, target_rel.green().to_string()),
+                CompareByTimestamp::BothModified => (StatusCode::BothModified, target_rel.clone()),
+                CompareByTimestamp::TargetModified => (StatusCode::TargetModified, target_rel.clone()),
+                CompareByTimestamp::SourceModified => (StatusCode::SourceModified, target_rel.clone()),
+                CompareByTimestamp::NonModified => (StatusCode::UpToDate, target_rel.clone()),
                 CompareByTimestamp::NeverSynchronized => (StatusCode::NeverSynchronized, target_rel.clone()),
             }
         } else {
@@ -457,7 +457,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             info!("unused ignore patterns");
         } else {
             for p in &stale_patterns {
-                println!("{}\t{}", StatusCode::StalePattern, p.red().to_string());
+                println!("{}\t{}", StatusCode::StalePattern, p);
             }
         }
         return Ok(());
@@ -510,6 +510,17 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 // ---------------------------------------------------------------------------
 // Default categorized output
 // ---------------------------------------------------------------------------
+
+/// Color a path by its status code. Only used in the human-readable default
+/// output; porcelain/short paths stay raw so their output is deterministic.
+fn color_path(code: StatusCode, path: &str) -> String {
+    match code {
+        StatusCode::BothModified => path.red().to_string(),
+        StatusCode::TargetModified | StatusCode::SourceModified => path.yellow().to_string(),
+        StatusCode::UpToDate => path.green().to_string(),
+        _ => path.to_string(),
+    }
+}
 
 fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &PathBuf, source_dir_abs: &PathBuf, has_managed: bool) -> String {
     let mut out = String::new();
@@ -640,9 +651,9 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
 
         for d in &display {
             if let Some(ref pat) = d.pattern {
-                out.push_str(&format!("  {}  {:<max_width$}  ({})\n", d.code, d.path, pat, max_width = max_path_len));
+                out.push_str(&format!("  {}  {:<max_width$}  ({})\n", d.code, color_path(d.code, &d.path), pat, max_width = max_path_len));
             } else {
-                out.push_str(&format!("  {}  {}\n", d.code, d.path));
+                out.push_str(&format!("  {}  {}\n", d.code, color_path(d.code, &d.path)));
             }
         }
         // Do not print after the last group in list as 'ls -lR' shell command
