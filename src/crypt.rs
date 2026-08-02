@@ -145,8 +145,15 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
 
         match archive.by_index_decrypt(0, password.as_bytes()) {
             Ok(mut zip_file) => {
+                // Restore the permissions recorded in the zip entry by
+                // write_zip_file, so a decrypt round-trip preserves e.g. a
+                // 0600 key file instead of defaulting to 0666 & ~umask (0644).
+                let permissions = zip_file.unix_mode().map(fs::Permissions::from_mode);
                 let mut output_file = std::fs::File::create(target_file_path)?;
                 std::io::copy(&mut zip_file, &mut output_file).map_err(DfmError::other)?;
+                if let Some(perms) = permissions {
+                    fs::set_permissions(target_file_path, perms)?;
+                }
                 return Ok(());
             }
             Err(zip::result::ZipError::InvalidPassword) if !already_retried => {

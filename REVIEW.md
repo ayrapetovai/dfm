@@ -22,13 +22,6 @@ Priorities: **P0** = security/correctness, **P1** = overcomplicated/shrink, **P2
 
 ## P0 — Security
 
-### 1. Decrypted files lose their permissions (`crypt.rs`)
-`write_zip_file` stores the source permissions in the ZIP entry (`unix_permissions`, crypt.rs:110), but `read_zip_file` (crypt.rs:146-150) creates the output with `File::create` → default `0666 & ~umask` (usually `644`) and never restores the entry's mode. `sync_file_copy` preserves permissions for plain copies, so only the encrypt/decrypt path loses them.
-
-Consequence: `dfm pull` of a `.ssh` file (force-encrypted by default config) that was `600` becomes `644` — **private keys world-readable**. `purge`'s `replace_managed_symlinks` already restores perms (purge.rs:252-254), which shows the right pattern.
-
-Fix: read `zip_file.unix_mode()` from the entry and `fs::set_permissions` the output.
-
 ### 2. Weak AES key derivation — PBKDF2 with 1000 iterations
 The `zip` crate derives the AES-256 key with `pbkdf2::pbkdf2::<Sha1>(password, salt, ITERATION_COUNT)` where `ITERATION_COUNT = 1000` (verified in `zip-8.6.0/src/aes.rs`). 1000 iterations is far below the ~600k-1M recommended for a KDF; an offline brute-force of a weak password is feasible. This is the crate's default, not dfm's code, but since dfm's whole value proposition is "encrypted dotfiles", it should be surfaced in the README (or mitigated by wrapping the archive in an `age`-style envelope / using a stronger-derivation container).
 
