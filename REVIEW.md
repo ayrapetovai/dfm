@@ -78,14 +78,6 @@ Status codes (`"MM"`, `"M "`, `"!?"`, `"LL"`) as `&'static str` throughout
 retries up to 1s "for CI latency" — this is the mtime-granularity workaround
 leaking into tests. It is the symptom of A10.
 
-### A10. Dead/contradictory config surface
-
-`manage_symlinks`, `dotfiles_only`, `hooks` are parsed but never used;
-README/context.txt/code disagree on AES-128 vs AES-256 and on the merge-tool
-default argument order (`README:392` says `{target} {source} {result}`;
-`context.txt` says `{result} {source}`; code `lib.rs:567` is
-`{target} {source} {result}`).
-
 ### Minor
 
 - Both `lazy_static` **and** `once_cell::sync::Lazy` imported; two global-cache

@@ -30,7 +30,7 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config).
 
 ```
 src/main.rs          clap Args/Command enum + dispatch; loads state+config, merges settings
-src/lib.rs           DfmError, Settings, Config, HookFile, StateObject, SyncTime,
+src/lib.rs           DfmError, Settings, Config, StateObject, SyncTime,
                      path helpers, ignore helpers, compare_files_by_timestamps,
                      list_directory, ProgressLine, config read/write, #[test]s
 src/crypt.rs         AES-256 zip write/read, password cache, obtain_password
@@ -48,10 +48,9 @@ tests/test_*.sh      140 shell integration tests
   `From<regex::Error>`. Build with `DfmError::other(msg)`.
 - **`Settings`** (lib.rs) — merged runtime config: `source_dir`, `target_dir`,
   `dot_prefix` ("dot_"), `symlink_postfix` (".symlink"), `encrypted_postfix`
-  (".encrypted"), `manage_symlinks` (unused), `hooks` (always empty — never
-  executed), `dotfiles_only` (unused), `force_encryption_for` (default
-  `\.ssh`), `obtain_password_shell_command`, `merge_tool_command` (default
-  `vimdiff {target} {result} {source}`).
+  (".encrypted"), `force_encryption_for` (default `\.ssh`),
+  `obtain_password_shell_command`, `merge_tool_command` (default
+  `vimdiff {target} {source} {result}`).
 - **`Config`** (lib.rs) — same fields as `Settings`, optional, TOML-serialized.
   **source_dir/target_dir are NOT in config** — they come from the state file.
 - **`StateObject`** — `{ source_directory, target_directory,
@@ -197,9 +196,9 @@ edge cases). Errors with `"timestamps ... inconsistent"` otherwise.
 
 ## Encryption (crypt.rs)
 
-- `write_zip_file` — single-entry zip, **AES-256** (`AesMode::Aes256`, Bzip2;
-  README says AES-128 — wrong), inner name = target-rel path, preserves unix
-  permissions. Prints `file <path> needs an encryption password` to **stderr**.
+- `write_zip_file` — single-entry zip, **AES-256** (`AesMode::Aes256`, Bzip2),
+  inner name = target-rel path, preserves unix permissions. Prints
+  `file <path> needs an encryption password` to **stderr**.
 - `read_zip_file` — decrypts entry index 0. On `InvalidPassword`, clears the
   cache and re-prompts exactly once (fresh archive opened each attempt).
 - `obtain_password` — caches password in a process-global `Mutex<Option<String>>`.
@@ -266,8 +265,6 @@ edge cases). Errors with `"timestamps ... inconsistent"` otherwise.
 - **`--force` on add/pull** also removes the matching target-ignore pattern
   from the ignore file after success.
 - **merge_tool_command** runs directly (no shell) — `|`, `>`, `$VAR` don't work.
-- **hooks**: parsed into `Config`, but `merge_settings` always sets
-  `Settings.hooks = vec![]` — no hook logic exists.
 - main.rs requires the state file for add/pull/forget/merge/status
   (`NotFound` otherwise); init/config/purge/ignore/paths work without it.
 

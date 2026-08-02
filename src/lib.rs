@@ -414,17 +414,7 @@ pub struct Config {
     pub dot_prefix: Option<String>,
     pub symlink_postfix: Option<String>,
     pub encrypted_postfix: Option<String>,
-    pub manage_symlinks: Option<bool>,
     // pub compare_content: Option<bool>, compare files by content
-
-    // assign shell commands (with args of dfm) on the events of dfm
-    // like: pre_add, post_add, on_add_failed, on_add_success
-    // pre_add_merge, post_add_merge, on_add_merge_failed
-    pub hooks: Option<Vec<HookFile>>,
-
-    // if true ignore files and directories in the target directory
-    // that don't start with a dot, by default - false
-    pub dotfiles_only: Option<bool>,
 
     #[serde(with = "serde_regex")]
     pub force_encryption_for: Vec<Regex>,
@@ -438,23 +428,11 @@ impl Config {
             dot_prefix: Some(settings.dot_prefix.clone()),
             symlink_postfix: Some(settings.symlink_postfix.clone()),
             encrypted_postfix: Some(settings.encrypted_postfix.clone()),
-            manage_symlinks: Some(settings.manage_symlinks),
-            hooks: Some(settings.hooks.clone().into_iter().map(|h| HookFile {
-                when: h.when,
-                execute: h.execute
-            }).collect()),
-            dotfiles_only: Some(settings.dotfiles_only),
             force_encryption_for: settings.force_encryption_for.clone(),
             obtain_password_shell_command: settings.obtain_password_shell_command.clone(),
             merge_tool_command: settings.merge_tool_command.clone(),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct HookFile {
-    pub when: String,
-    pub execute: String,
 }
 
 /// Runtime settings after merging defaults + config file + state.
@@ -466,29 +444,11 @@ pub struct Settings {
     pub dot_prefix: String,
     pub symlink_postfix: String,
     pub encrypted_postfix: String,
-    pub manage_symlinks: bool,
     // pub compare_content: Option<bool>, compare files by content
 
-    // assign shell commands (with args of dfm) on the events of dfm
-    // like: pre_add, post_add, on_add_failed, on_add_success
-    // pre_add_merge, post_add_merge, on_add_merge_failed
-    pub hooks:Vec<Hook>,
-
-    // if true ignore files and directories in the target directory
-    // that don't start with a dot, by default - false
-    pub dotfiles_only: bool,
-
-    // ignore `.dfm_root`, `.dfm_source_ignored`, `.dfm_target_ignored` by default
-    // default_ignored: Vec<Regex>,
     pub force_encryption_for: Vec<Regex>,
     pub obtain_password_shell_command: Option<String>,
     pub merge_tool_command: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Hook {
-    pub when: String,
-    pub execute: String,
 }
 
 pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<(), DfmError> {
@@ -559,9 +519,6 @@ pub fn create_default_settings() -> Settings {
         dot_prefix: "dot_".to_owned(),
         symlink_postfix: ".symlink".to_owned(),
         encrypted_postfix: ".encrypted".to_owned(),
-        manage_symlinks: true,
-        hooks: vec![],
-        dotfiles_only: false,
         force_encryption_for: BY_DEFAULT_FORCE_ENCRYPTION_FILES.to_vec(),
         obtain_password_shell_command: Some("".to_owned()), // TODO need to make serde to add empty files to file
         merge_tool_command: Some("vimdiff {target} {source} {result}".to_owned()),
@@ -610,15 +567,6 @@ pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_obj
                 encrypted_postfix: match &custom.encrypted_postfix {
                     Some(v) => v.clone(),
                     None => default.encrypted_postfix.to_string()
-                },
-                manage_symlinks: match custom.manage_symlinks {
-                    Some(v) => v,
-                    None => default.manage_symlinks.to_owned()
-                },
-                hooks: vec![], // TODO implement hooks
-                dotfiles_only: match custom.dotfiles_only {
-                    Some(v) => v,
-                    None => default.dotfiles_only.to_owned()
                 },
                 force_encryption_for: if !custom.force_encryption_for.is_empty() {
                     custom.force_encryption_for.clone()

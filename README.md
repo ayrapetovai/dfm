@@ -37,7 +37,7 @@ git push
 | `git` | Git-info line in `status` output | Shows branch and dirty state of the source directory. Silently skipped if the source directory is not a git repository. |
 | `sh` (POSIX) | `obtain_password_shell_command` | The command is piped to `sh` stdin (not exposed in `ps`). Falls back to interactive password prompt when unset. |
 | A merge tool (`vimdiff` by default) | `merge` subcommand | Configured via `merge_tool_command`. Any command that accepts `{target}`, `{source}`, `{result}` placeholders works (e.g., `vimdiff`, `nvim -d`, `meld`). |
-| `7z` (p7zip) | Manual decryption of `.encrypted` files | Encrypted files are standard AES-128 ZIP archives and can be decrypted with any compatible tool. `7z` is recommended in the documentation. |
+| `7z` (p7zip) | Manual decryption of `.encrypted` files | Encrypted files are standard AES-256 ZIP archives and can be decrypted with any compatible tool. `7z` is recommended in the documentation. |
 
 ---
 
@@ -380,13 +380,9 @@ The config file is read from `$XDG_CONFIG_HOME/dfm/config.toml` (or `~/.dfm.toml
 ### Default settings
 
 ```toml
-source_dir = "/path/to/dotfiles"
-target_dir = "/home/user"
 dot_prefix = "dot_"
 symlink_postfix = ".symlink"
 encrypted_postfix = ".encrypted"
-manage_symlinks = true
-dotfiles_only = false
 force_encryption_for = ["\\.ssh"]
 obtain_password_shell_command = ""
 merge_tool_command = "vimdiff {target} {source} {result}"
@@ -396,18 +392,14 @@ merge_tool_command = "vimdiff {target} {source} {result}"
 
 | Property | Type | Description |
 |---|---|---|
-| `source_dir` | String (path) | Path to the source directory. |
-| `target_dir` | String (path) | Path to the target directory (usually `$HOME`). |
 | `dot_prefix` | String | Prefix to replace leading `.` in filenames inside the source directory. |
 | `symlink_postfix` | String | Suffix appended to symlink pointer files in the source directory. |
 | `encrypted_postfix` | String | Suffix appended to encrypted source files. |
-| `manage_symlinks` | Boolean | Whether to track symlinks (unused in current command logic). |
-| `dotfiles_only` | Boolean | If `true`, only process files starting with `.` (unused in current command logic). |
 | `force_encryption_for` | Array of regex | File paths matching these regexes are always encrypted on `add`. |
 | `obtain_password_shell_command` | String (shell command) | Command to obtain the encryption password. See [Encryption](#4-encryption). |
 | `merge_tool_command` | String (template) | Merge tool command with `{target}`, `{source}`, `{result}` placeholders. |
 
-> **Note:** `manage_symlinks` and `dotfiles_only` are parsed from the config file but not currently consulted by any command. Their behavior is always equivalent to `true` / `false` respectively.
+The source and target directories are **not** stored in the config file — they come from the state file (`state.toml`).
 
 ---
 
@@ -430,7 +422,7 @@ The password is cached in memory for the duration of the process, so you are pro
 
 ### Decryption manually
 
-Encrypted files (suffix `.encrypted`) are standard ZIP archives with AES-128 encryption. They can be decrypted with any tool that supports AES-encrypted ZIP, such as `7z`:
+Encrypted files (suffix `.encrypted`) are standard ZIP archives with AES-256 encryption. They can be decrypted with any tool that supports AES-encrypted ZIP, such as `7z`:
 
 ```bash
 # will ask for the password
