@@ -105,14 +105,21 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                 continue;
             }
 
-            let current_dir = env::current_dir()?;
-
-            let target_symlink_abs_path_raw = PathBuf::from_iter(vec![current_dir, target_path.clone()]);
+            // `target_path` is absolute when it came from a traversal rooted at
+            // `target_dir_abs`, but may be relative when the user named it
+            // explicitly (e.g. `dfm add .bashrc`). Join with the current dir
+            // only in that case; an absolute path must not be prefixed.
+            let target_symlink_abs_path_raw = if target_path.is_absolute() {
+                target_path.clone()
+            } else {
+                env::current_dir()?.join(&target_path)
+            };
+            // canonicalize() would resolve the symlink itself, so canonicalize
+            // only its parent directory and re-append the (still-symlink) name.
             let root = PathBuf::from("/");
             let mut target_symlink_abs_path = fs::canonicalize(target_symlink_abs_path_raw.parent().get_or_insert(&root))?;
             target_symlink_abs_path.push(target_symlink_abs_path_raw.file_name()
                 .ok_or_else(|| DfmError::InvalidInput("path has no file name".into()))?);
-            let target_symlink_abs_path = target_symlink_abs_path;
 
             let symlink_rel = file_path_relative_to(&target_symlink_abs_path, &target_dir_abs_path);
             if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &symlink_rel) {

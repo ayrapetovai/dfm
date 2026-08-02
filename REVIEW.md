@@ -25,13 +25,6 @@ The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore
 
 ---
 
-## P1 — Shrinkable / duplicated code
-
-### 18. `add.rs` symlink branch joins `current_dir` with an already-absolute path
-`add.rs:93-101`: `PathBuf::from_iter(vec![current_dir, target_path.clone()])` — `target_path` comes from `list_directory` rooted at the absolute `target_dir_abs`, so it is absolute and **replaces** `current_dir` on push; the `current_dir` computation is dead. The subsequent canonicalize-parent+re-push dance is also redundant for paths already canonical-ish. Simplify or document.
-
----
-
 ## P2 — Design patterns / robustness
 
 - **Inconsistent matcher**: `check_path_matches_regex` (full-path substring, lib.rs:219) survives only for `force_encryption_for`; everything else uses component-wise matching. Either switch encryption matching to the same matcher or document why absolute-path substring is intended here.
