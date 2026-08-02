@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use log::{debug, info, warn};
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use microxdg::Xdg;
 use super::{run_merge, source_rel_to_target_rel, resolve_dry_run, msg_dry_run};
 
 /// Look up a source-relative path in state, trying known postfixes.
@@ -29,7 +30,7 @@ fn resolve_state_key(
     None
 }
 
-pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
+pub fn merge_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Merge { paths, dry_run } = &args.command else {
         return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `merge`", args.command)));
     };
@@ -43,7 +44,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
         info!("{}", msg_dry_run());
     }
 
-    let target_ignore_file_path = calc_local_ignore_file()?;
+    let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
     // Build list of (source_abs, target_abs, sync_time) tuples to check

@@ -8,19 +8,6 @@ analysis (explicit, testable, and free of hidden global state).
 
 ## A. Bad patterns found
 
-### A1. Global, env-bound `static` that can panic — `src/lib.rs:135`
-
-```rust
-static XDG: Lazy<Xdg> = Lazy::new(|| Xdg::new().expect("XDG directories must be available"));
-```
-
-- Reads `HOME`/`USER` from the process env at first touch, and **panics** if both
-  are unset.
-- Every path resolver (`calc_state_file_path`, `calc_config_file_path`,
-  `calc_local_ignore_file`, ...) silently depends on this global. Nothing can be
-  injected, which is exactly why a test could not sandbox its paths and
-  destroyed the real `~/.local/state/dfm` (see `tests/test_purge_unresolvable_env.sh`).
-
 ### A2. `&Args` drilled into every command + `unreachable code reached` boilerplate
 
 Every command starts with (e.g. `add.rs:17-25`):

@@ -11,6 +11,7 @@ use super::{sync_file_copy, resolve_dry_run, require_force,
             update_sync_state, get_sync_time, source_rel_to_target_rel,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
             prune_ignore_file};
+use microxdg::Xdg;
 
 #[derive(Debug)]
 enum PullTask {
@@ -60,7 +61,7 @@ fn handle_encrypted_timestamps(
     Ok(())
 }
 
-pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
+pub fn pull_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Pull {
         paths,
         force,
@@ -91,7 +92,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
     debug!("traversing result is {:?}", traversed_paths);
 
 
-    let target_ignore_file_path = calc_local_ignore_file()?;
+    let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
     let mut tasks: Vec<PullTask> = vec![];
@@ -417,7 +418,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
     if !dry_run && !patterns_to_remove.is_empty() {
         let removed = prune_ignore_file(
-            &calc_local_ignore_file()?,
+            &calc_local_ignore_file(xdg)?,
             |t| patterns_to_remove.iter().any(|p| *p == t),
             dry_run,
         )?;

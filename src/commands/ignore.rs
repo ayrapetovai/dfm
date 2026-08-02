@@ -25,8 +25,9 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
 use dfm::*;
 use crate::{Args, Command, DfmError};
 use super::{resolve_dry_run, msg_dry_run, msg_nothing_to_do, prune_ignore_file};
+use microxdg::Xdg;
 
-pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
+pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: &Args) -> Result<(), DfmError> {
     let Command::Ignore {
         paths,
         patterns,
@@ -41,11 +42,11 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     debug!("ignore paths {:?}, patterns {:?}, remove {:?}, dry-run {}", paths, patterns, remove, dry_run);
 
     if let Some(records) = remove {
-        return remove_ignore_records(records, dry_run);
+        return remove_ignore_records(xdg, records, dry_run);
     }
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
-    let local_ignore_file_path = calc_local_ignore_file()?;
+    let local_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&local_ignore_file_path)?;
 
     let source_ignore_file_path = calc_source_ignore_file(&source_dir_abs_path)?;
@@ -160,7 +161,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         if !dry_run {
             ensure_trailing_newline(&local_ignore_file_path)?;
         }
-        let mut target_ignore_file = open_or_create_target_ignore_file()?;
+        let mut target_ignore_file = open_or_create_target_ignore_file(xdg)?;
         for ignore_path in target_ignore_paths {
             info!("add path {:?} to {:?}", ignore_path, local_ignore_file_path);
             if dry_run {
@@ -178,7 +179,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         if !dry_run {
             ensure_trailing_newline(&local_ignore_file_path)?;
         }
-        let mut target_ignore_file = open_or_create_target_ignore_file()?;
+        let mut target_ignore_file = open_or_create_target_ignore_file(xdg)?;
         for pattern in target_ignore_regexps {
             info!("add regex /{}/ to {:?}", pattern, local_ignore_file_path);
             if dry_run {
@@ -235,8 +236,8 @@ fn migrate_ignore_line(ignore_file_path: &PathBuf, old: &str, new: &str) -> Resu
     Ok(())
 }
 
-fn remove_ignore_records(records: &[String], dry_run: bool) -> Result<(), DfmError> {
-    let ignore_file_path = calc_local_ignore_file()?;
+fn remove_ignore_records(xdg: &Xdg, records: &[String], dry_run: bool) -> Result<(), DfmError> {
+    let ignore_file_path = calc_local_ignore_file(xdg)?;
 
     let removed = prune_ignore_file(&ignore_file_path, |t| {
         records.iter().any(|r| r.as_str() == t || regex::escape(r.as_str()) == t)

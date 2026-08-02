@@ -6,9 +6,10 @@ use log::{debug, info, trace, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use microxdg::Xdg;
 use super::{resolve_dry_run, msg_dry_run, msg_nothing_to_do};
 
-pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
+pub fn init_command(settings: &Settings, xdg: &Xdg, args: &Args) -> Result<(), DfmError> {
     let Command::Init {
         path_to_source,
         path_to_target: path_to_target_opt,
@@ -86,14 +87,14 @@ pub fn init_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     };
 
     debug!("using target directory {:?}", target_abs_path);
-    let state_file_path = calc_state_file_path()?;
+    let state_file_path = calc_state_file_path(xdg)?;
     if state_file_path.exists() {
         debug!("state file already exists, no need to create");
     } else {
         tasks.push(InitTask::CreateStateFile(state_file_path.clone(), target_abs_path, source_dir_path.clone()));
     }
 
-    let target_config_file_path = calc_config_file_path();
+    let target_config_file_path = calc_config_file_path(xdg);
     if let Ok(config_file) = target_config_file_path {
         if !config_file.exists() {
             tasks.push(InitTask::CreateDefaultConfigFile(config_file));

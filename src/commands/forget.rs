@@ -6,6 +6,7 @@ use log::{debug, error, info, warn};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use microxdg::Xdg;
 use super::{resolve_dry_run, require_force, get_sync_time, remove_sync_state,
             source_rel_to_target_rel, list_directory_or_error,
             msg_dry_run, msg_nothing_to_do, report_progress};
@@ -16,7 +17,7 @@ fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String
     rel.to_str().unwrap().to_string()
 }
 
-pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
+pub fn forget_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Forget {
         paths,
         force,
@@ -38,7 +39,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
         None => vec![target_dir_abs_path.clone()]
     };
 
-    let target_ignore_file_path = calc_local_ignore_file()?;
+    let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
     let traversed_paths = list_directory_or_error(

@@ -246,6 +246,8 @@ enum Command {
 fn main_logic() -> Result<(), dfm::DfmError> {
     let args = Args::parse();
 
+    let xdg = microxdg::Xdg::new()?;
+
     if let Err(e) = stderrlog::new()
         .module(module_path!())
         .verbosity(args.verbosity)
@@ -254,7 +256,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         return Err(dfm::DfmError::other(e));
     }
 
-    let path_to_state_file = match calc_state_file_path() {
+    let path_to_state_file = match calc_state_file_path(&xdg) {
         Ok(p) => Some(p),
         Err(e) => {
             warn!("state file path could not be resolved: {}; continuing without state", e);
@@ -270,7 +272,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
     };
 
     let default_settings = create_default_settings();
-    let path_to_config_file = match calc_config_file_path() {
+    let path_to_config_file = match calc_config_file_path(&xdg) {
         Ok(p) => Some(p),
         Err(e) => {
             warn!("config file path could not be resolved: {}; continuing without config", e);
@@ -288,7 +290,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
 
     return match args.command {
         Command::Init { .. } => {
-            init_command(&settings, &args)
+            init_command(&settings, &xdg, &args)
         },
         Command::Config { .. } => {
             match &path_to_config_file {
@@ -297,14 +299,14 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             }
         },
         Command::Purge { .. } => {
-            purge_command(&settings, &args, &path_to_config_file)
+            purge_command(&settings, &xdg, &args, &path_to_config_file)
         },
         Command::Add { .. } => {
             if state_opt.is_none() {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            add_command(&settings, &args, &mut state)?;
+            add_command(&settings, &xdg, &args, &mut state)?;
             write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
         Command::Pull { .. } => {
@@ -312,7 +314,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            pull_command(&settings, &args, &mut state)?;
+            pull_command(&settings, &xdg, &args, &mut state)?;
             write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
         Command::Forget { .. } => {
@@ -320,22 +322,22 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            let result = forget_command(&settings, &args, &mut state);
+            let result = forget_command(&settings, &xdg, &args, &mut state);
             write_state(path_to_state_file.as_ref().unwrap(), &state)?;
             result
         },
         Command::Ignore { .. } => {
-            ignore_command(&settings, &args)
+            ignore_command(&settings, &xdg, &args)
         },
         Command::Paths => {
-            paths_command(&settings, &path_to_config_file, &path_to_state_file)
+            paths_command(&settings, &xdg, &path_to_config_file, &path_to_state_file)
         },
         Command::Merge { .. } => {
             if state_opt.is_none() {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            merge_command(&settings, &args, &mut state)?;
+            merge_command(&settings, &xdg, &args, &mut state)?;
             write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
         Command::Status { .. } => {
@@ -343,7 +345,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let state = state_opt.unwrap();
-            status_command(&settings, &args, &state)
+            status_command(&settings, &xdg, &args, &state)
         },
     };
 }

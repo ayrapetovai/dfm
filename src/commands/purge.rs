@@ -5,9 +5,10 @@ use log::{debug, info};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use microxdg::Xdg;
 use super::{resolve_dry_run, msg_dry_run, source_rel_to_target_rel};
 
-pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Option<PathBuf>) -> Result<(), DfmError> {
+pub fn purge_command(settings: &Settings, xdg: &Xdg, args: &Args, path_to_config_file: &Option<PathBuf>) -> Result<(), DfmError> {
     let Command::Purge {
         dry_run,
         keep_source,
@@ -19,7 +20,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Opt
 
     let dry_run = resolve_dry_run(*dry_run, args.dry_run);
 
-    let state_directory_path = match calc_state_directory_path() {
+    let state_directory_path = match calc_state_directory_path(xdg) {
         Ok(path) => Some(path),
         Err(e) => {
             info!("state directory path could not be resolved: {}; skipping state directory", e);
@@ -45,7 +46,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Opt
     // step below, so there is nothing to lose for them.
     if !*keep_source && !*force {
         if let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
-            (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path())
+            (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path(xdg))
         {
             if let Ok(state) = read_state(&state_path) {
                 let mut un_pulled = vec![];
@@ -129,7 +130,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Opt
     // the files they point to. Runs before the source directory removal.
     if !*keep_source {
         if let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
-            (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path())
+            (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path(xdg))
         {
             if let Ok(state) = read_state(&state_path) {
                 replace_managed_symlinks(settings, target_dir_abs_path, source_dir_abs_path, &state, dry_run, &mut errors);

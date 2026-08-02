@@ -18,7 +18,6 @@ use serde::Serialize;
 use thiserror::Error;
 use toml::{Table, Value};
 use walkdir::{DirEntry, WalkDir};
-use once_cell::sync::Lazy;
 use lazy_static::lazy_static;
 
 // ---------------------------------------------------------------------------
@@ -68,6 +67,12 @@ impl DfmError {
 impl From<regex::Error> for DfmError {
     fn from(e: regex::Error) -> Self {
         DfmError::Other(e.to_string())
+    }
+}
+
+impl From<microxdg::XdgError> for DfmError {
+    fn from(e: microxdg::XdgError) -> Self {
+        DfmError::other(e)
     }
 }
 
@@ -140,22 +145,14 @@ mod sync_time_ser {
     }
 }
 
-static XDG : Lazy<Xdg> = Lazy::new(|| Xdg::new().expect("XDG directories must be available"));
-
-pub fn calc_local_ignore_file() -> Result<PathBuf, DfmError> {
+pub fn calc_local_ignore_file(xdg: &Xdg) -> Result<PathBuf, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
-     match XDG.state_file(&state_file_name) {
-        Ok(p) => Ok(p),
-        Err(e) => Err(DfmError::other(e)),
-    }
+    Ok(xdg.state_file(&state_file_name)?)
 }
 
-pub fn open_or_create_target_ignore_file() -> Result<File, DfmError> {
+pub fn open_or_create_target_ignore_file(xdg: &Xdg) -> Result<File, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
-    let p = match XDG.state_file(&state_file_name) {
-        Ok(p) => p,
-        Err(e) => return Err(DfmError::other(e)),
-    };
+    let p = xdg.state_file(&state_file_name)?;
     Ok(OpenOptions::new()
         .write(true)
         .append(true)
@@ -376,21 +373,13 @@ pub fn check_path_matches_regex_component_wise(
     None
 }
 
-pub fn calc_state_directory_path() -> Result<PathBuf, DfmError> {
-    match XDG.state() {
-        Ok(path_to_config) => {
-            Ok(PathBuf::from_iter([&path_to_config, &PathBuf::from(STATE_DIRECTORY_NAME_IN_XDG_STATE)]))
-        },
-        Err(e) => Err(DfmError::other(e))
-    }
+pub fn calc_state_directory_path(xdg: &Xdg) -> Result<PathBuf, DfmError> {
+    Ok(PathBuf::from_iter([xdg.state()?, PathBuf::from(STATE_DIRECTORY_NAME_IN_XDG_STATE)]))
 }
 
-pub fn calc_state_file_path() -> Result<PathBuf, DfmError> {
+pub fn calc_state_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, STATE_FILE_NAME_IN_XDG_STATE);
-    match XDG.state_file(&state_file_name) {
-        Ok(p) => Ok(p),
-        Err(e) => Err(DfmError::other(e)),
-    }
+    Ok(xdg.state_file(&state_file_name)?)
 }
 
 pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, DfmError> {
@@ -491,14 +480,14 @@ pub fn get_home_path() -> Option<PathBuf> {
     }
 }
 
-pub fn calc_config_file_path() -> Result<PathBuf, DfmError>{
+pub fn calc_config_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError>{
     let home_path = match get_home_path() {
         Some(p) => p,
         None => return Err(DfmError::Unsupported("Environment variable $HOME is not set".into()))
     };
     let config_in_home = PathBuf::from_iter(vec![home_path, PathBuf::from(CONFIG_FILE_NAME_IN_HOME)]);
 
-    let path_to_config_file = match XDG.config() {
+    let path_to_config_file = match xdg.config() {
         Ok(path_to_config_dir) => {
             let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, CONFIG_FILE_NAME_IN_XDG_CONFIG);
             let config_path = PathBuf::from_iter(vec![path_to_config_dir.to_str().unwrap(), &state_file_name]);

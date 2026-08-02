@@ -10,6 +10,7 @@ use log::{debug, info};
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
+use microxdg::Xdg;
 use super::{source_rel_to_target_rel, list_directory, report_progress};
 
 // ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ struct StatusEntry {
 // Status command entry point
 // ---------------------------------------------------------------------------
 
-pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> Result<(), DfmError> {
+pub fn status_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &StateObject) -> Result<(), DfmError> {
     let Command::Status {
         all,
         short,
@@ -49,15 +50,15 @@ pub fn status_command(settings: &Settings, args: &Args, state: &StateObject) -> 
 
     let (target_dir_abs, source_dir_abs) = calc_working_dir_paths(&settings)?;
 
-    let target_ignore_file = calc_local_ignore_file()?;
+    let target_ignore_file = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file)?;
 
     let source_ignore_file = calc_source_ignore_file(&source_dir_abs)?;
     let _source_ignore_regex = load_ignore_regex(&source_ignore_file)?;
 
     // Paths to dfm's own internal files (skip in unmanaged detection)
-    let state_file_path = calc_state_file_path().ok();
-    let config_file_path = calc_config_file_path().ok();
+    let state_file_path = calc_state_file_path(xdg).ok();
+    let config_file_path = calc_config_file_path(xdg).ok();
 
     // ------------------------------------------------------------------
     // Phase 1 — Process every state entry (managed files)

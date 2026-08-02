@@ -9,12 +9,13 @@ use regex::RegexSet;
 
 use dfm::*;
 use crate::{Args, Command};
+use microxdg::Xdg;
 use super::{sync_file_copy, resolve_dry_run, require_force,
             update_sync_state, remove_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
             prune_ignore_file};
 
-pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
+pub fn add_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
         paths,
         force,
@@ -39,9 +40,9 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
     // These files (state, config, target-ignore) are dfm's own files — the user
     // should never manage them via `add`.
     let internal_dfm_paths: Vec<PathBuf> = [
-        calc_state_file_path(),
-        calc_config_file_path(),
-        calc_local_ignore_file(),
+        calc_state_file_path(xdg),
+        calc_config_file_path(xdg),
+        calc_local_ignore_file(xdg),
     ].into_iter().filter_map(|r| r.ok()).collect();
 
     let paths = match paths {
@@ -49,7 +50,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         None => vec![target_dir_abs_path.clone()]
     };
 
-    let target_ignore_file_path = calc_local_ignore_file()?;
+    let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
     let traversed_paths = list_directory_or_error(
@@ -435,7 +436,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
 
     if !dry_run && !patterns_to_remove.is_empty() {
         let removed = prune_ignore_file(
-            &calc_local_ignore_file()?,
+            &calc_local_ignore_file(xdg)?,
             |t| patterns_to_remove.iter().any(|p| *p == t),
             dry_run,
         )?;
