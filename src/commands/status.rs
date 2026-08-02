@@ -481,7 +481,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
     }
 
     // Helper to write a group
-    let write_group = |out: &mut String, header: &str, items: &[&StatusEntry], is_last_goup: bool| {
+    let write_group = |out: &mut String, header: &str, items: &[&StatusEntry], is_last_group: bool| {
         if items.is_empty() {
             return;
         }
@@ -571,7 +571,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
             }
         }
         // Do not print after the last group in list as 'ls -lR' shell command
-        if !is_last_goup {
+        if !is_last_group {
             out.push('\n');
         }
     };

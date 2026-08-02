@@ -159,7 +159,7 @@ else
     echo "running $TEST_COUNT tests"
 fi
 
-SUCCED_COUNTER=0
+SUCCEEDED_COUNTER=0
 FAILED_COUNTER=0
 
 run_test() {
@@ -185,7 +185,7 @@ if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
     test_name="$(basename $TEST_FILE_TO_RUN_ABS)"
     if run_test "$TEST_FILE_TO_RUN_ABS"; then
         echo "---- $test_name ✅"
-        SUCCED_COUNTER=$((SUCCED_COUNTER + 1))
+        SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
     else
         echo "---- $test_name ❌"
         FAILED_COUNTER=$((FAILED_COUNTER + 1))
@@ -197,7 +197,7 @@ else
         # launch test
         if run_test "$test_case"; then
             echo "---- $test_name ✅"
-            SUCCED_COUNTER=$((SUCCED_COUNTER + 1))
+            SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
         else
             echo "---- $test_name ❌"
             FAILED_COUNTER=$((FAILED_COUNTER + 1))
@@ -208,7 +208,7 @@ else
     done;
 fi
 
-echo "succed $SUCCED_COUNTER"
+echo "succeeded $SUCCEEDED_COUNTER"
 echo "failed $FAILED_COUNTER"
 
 test $FAILED_COUNTER -eq 0

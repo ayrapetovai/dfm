@@ -224,7 +224,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                     }
                 }
 
-                // also the case is handled when the symlink pints inside the source directory but
+                // also the case is handled when the symlink points inside the source directory but
                 // to the wrong file
                 tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_str().unwrap().to_string()));
                 continue;

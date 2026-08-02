@@ -1,5 +1,5 @@
 # Status: ignore patterns, stale patterns, ignored files
-# Note: ignore patterns live in XDG state dir (~/.local/share/dfm/ignore_file),
+# Note: ignore patterns live in XDG state dir (~/.local/state/dfm/ignore_file),
 # not in .dfm-ignore. Use `dfm ignore -p` to add patterns.
 
 dfm init dotfiles

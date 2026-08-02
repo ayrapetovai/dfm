@@ -35,10 +35,10 @@ pub fn config_command(args: &Args, path_to_config_file: &PathBuf) -> Result<(), 
     match set {
         Some(params) => {
             let param_name = params[0].clone();
-            let param_new_vlue = params[1].clone();
+            let param_new_value = params[1].clone();
             if args.dry_run {
                 debug!("dry-run specified, nothing will be changed");
-            } else if let Err(e) = write_property_to_config(&path_to_config_file, &param_name, &param_new_vlue) {
+            } else if let Err(e) = write_property_to_config(&path_to_config_file, &param_name, &param_new_value) {
                 return Err(DfmError::other(format!("failed to save config parameter value {:?}", e)));
             }
         },

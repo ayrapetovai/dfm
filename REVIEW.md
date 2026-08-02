@@ -88,12 +88,8 @@ default argument order (`README:392` says `{target} {source} {result}`;
 
 ### Minor
 
-- Typos: `SUCCED_COUNTER`, `is_last_goup`, `target_dir_abs_apth`,
-  `param_new_vlue`, `pints`.
 - Both `lazy_static` **and** `once_cell::sync::Lazy` imported; two global-cache
   styles (`PASSWORD_CACHE` Mutex vs `XDG` Lazy).
-- `test_status_ignored.sh:2` comments say `~/.local/share` where it is really the
-  state dir — share vs state confusion recurs.
 
 ## B. Patterns clearer for AI analysis
 
