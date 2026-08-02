@@ -60,11 +60,6 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
     )?;
     debug!("traversing result is {:?}", traversed_paths);
 
-    // Determine whether the user's input paths include a directory.
-    // During directory traversal, already-managed files are silently skipped
-    // instead of setting `conflict_detected`.
-    let is_dir_traversal = paths.iter().any(|p| p.is_dir());
-
     #[derive(Debug)]
     enum AddTask {
         Copy(PathBuf, PathBuf),
@@ -270,25 +265,18 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
             // conflict cases
             match cmp {
                 CompareByTimestamp::BothModified => {
+                    conflict_detected = true;
                     if !force {
                         warn!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
                             target_abs_path, source_abs_path);
-                        // When traversing a directory (e.g. `dfm add .`), already-managed
-                        // files are silently skipped.  Only set conflict_detected when the
-                        // user explicitly named this file.
-                        if !is_dir_traversal {
-                            conflict_detected = true;
-                        }
                         continue;
                     }
                 },
                 CompareByTimestamp::SourceModified => {
+                    conflict_detected = true;
                     if !force {
                         warn!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source",
                               source_abs_path, target_abs_path);
-                        if !is_dir_traversal {
-                            conflict_detected = true;
-                        }
                         continue;
                     }
                 },
@@ -313,9 +301,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                         tasks.push(AddTask::UpdateSync(source_abs_path.clone(), target_abs_path.clone()));
                         continue;
                     }
-                    if !is_dir_traversal {
-                        conflict_detected = true;
-                    }
+                    conflict_detected = true;
                     if !force {
                         warn!("target {:?}\n\tand source {:?}\n\tare different and were never synchronized. Use --force to overwrite", target_abs_path, source_abs_path);
                         continue;

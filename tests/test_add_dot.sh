@@ -1,5 +1,6 @@
-# dfm add . must succeed even when there are already-managed files
-# in any state (clean, source-modified, both-modified, etc.)
+# dfm add . must handle conflicts exactly like dfm add <file>: a conflict is
+# a hard error (unless --force), and unmanaged files are added when no
+# conflict exists.
 
 dfm init dotfiles
 
@@ -17,20 +18,23 @@ echo "source modified content" > "$PWD/dotfiles/newfile.txt"
 
 dfm status --short | grep -q "^ M newfile.txt$"
 
-# dfm add . must NOT fail just because a managed file has M state
-dfm add .
+# dfm add . must FAIL on the managed M file, exactly like dfm add newfile.txt
+assert_fail dfm add .
+assert_fail dfm add newfile.txt
 
 # the managed file must still show M
 dfm status --short | grep -q "^ M newfile.txt$"
 
-# an unmanaged file alongside a managed M file
+# an unmanaged file alongside a managed M file: add . aborts on the conflict
 write "yet another" "extra.txt"
+assert_fail dfm add .
+assert_no_source "extra.txt"
 
-dfm add .
+# --force clears the conflict and adds both files
+dfm add . --force
 
 assert_source "extra.txt"
-# managed file still M
-dfm status --short | grep -q "^ M newfile.txt$"
+dfm status --short | grep -q "^-- newfile.txt$"
 
 # clean up
 rm extra.txt
