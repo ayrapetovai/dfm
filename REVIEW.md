@@ -35,25 +35,6 @@ Repeated 10 times. It is dead defensive code — the dispatcher already matched
 the variant. It also forces `*force`, `args.dry_run` re-reading and makes every
 command signature `(settings, &Args, ...)`.
 
-### A3. Two different path-matching engines with confusing names
-
-- `check_path_matches_regex` (substring match) — used **only** for
-  `force_encryption_for` (`add.rs:196`).
-- `check_path_matches_regex_component_wise` — used for ignore files everywhere
-  else.
-
-Same-looking API, opposite semantics. And in `ignore.rs:85,97` the "already
-ignored" check computes the relative path against the ignore **file path** (not
-the target/source dir) and relies on substring matching to accidentally pass:
-
-```rust
-let rel_path = file_path_relative_to(&abs_path, &local_ignore_file_path); // base is a FILE
-if target_ignore_regex.matches(rel_path.to_str().unwrap()).matched_any() { // substring match
-```
-
-It works today only because `RegexSet::matches` substrings the dotted
-`./../../..` path. Latent bug.
-
 ### A4. `.unwrap()` / `to_str().unwrap()` on user-controlled paths
 
 Non-UTF-8 paths panic. `to_str().unwrap()` appears ~30 times;
@@ -137,9 +118,7 @@ default argument order (`README:392` says `{target} {source} {result}`;
    `Action::{Skip, Conflict, Task(_)}`.
 
 4. **One decision table, not two matching functions.** Rename to state behavior:
-   `matches_substring` (encryption) vs `matches_component_wise` (ignore). Fix
-   `ignore.rs` to compute rel against the directory, not the file. Add the
-   `file_abs_path` → rel-to-dir helper used consistently.
+   `matches_substring` (encryption) vs `matches_component_wise` (ignore).
 
 5. **Newtypes + typed errors over `PathBuf` + `String` keys.** `type StateKey =
    String` (with a `from_source_rel` constructor), `StatusCode` enum with

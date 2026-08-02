@@ -59,7 +59,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     debug!("traversing result is {:?}", traversed_paths);
 
     let mut target_ignore_paths = vec![];
-    let mut source_ignore_paths = vec![];
+    let mut source_ignore_lines = vec![];
 
     for path in traversed_paths {
         debug!("check path {:?}", path);
@@ -82,20 +82,35 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         //  report error, ignore is failed.
 
         if abs_path.starts_with(&source_dir_abs_path) {
-            let rel_path = file_path_relative_to(&abs_path, &source_ignore_file_path);
-            if source_ignore_regex.matches(rel_path.to_str().unwrap()).matched_any() {
-                info!("source path {:?} is ignored already", path);
+            let rel_path = file_path_relative_to(&abs_path, &source_dir_abs_path);
+            // Ignoring a source-side file should ignore the actual target file,
+            // so the stored entry is the source-relative path with the dot
+            // prefix stripped (e.g. source `dot_my.log` -> target `.my.log`
+            // stored as `^my\.log$`).
+            let canonical = rel_path.to_str().unwrap().replace(&settings.dot_prefix, "");
+            let canonical_line = format!("^{}$", regex::escape(&canonical));
+            let matched = check_path_matches_regex_component_wise(&source_ignore_regex, &rel_path)
+                .or_else(|| check_path_matches_regex_component_wise(&source_ignore_regex, &PathBuf::from(&canonical)));
+            if let Some(matched) = matched {
+                if matched == canonical_line {
+                    info!("source path {:?} is ignored already", path);
+                } else {
+                    info!("source path {:?} is ignored already, migrating entry {:?} to {:?}", path, matched, canonical_line);
+                    if !dry_run {
+                        migrate_ignore_line(&source_ignore_file_path, &matched, &canonical_line)?;
+                    }
+                }
                 continue;
             } else {
                 debug!("adding path {:?} to source ignore file {:?}", path, source_ignore_file_path);
-                source_ignore_paths.push(path);
+                source_ignore_lines.push(canonical_line);
                 continue;
             }
         }
 
         if abs_path.starts_with(&target_dir_abs_path) {
-            let rel_path = file_path_relative_to(&abs_path, &local_ignore_file_path);
-            if target_ignore_regex.matches(rel_path.to_str().unwrap()).matched_any() {
+            let rel_path = file_path_relative_to(&abs_path, &target_dir_abs_path);
+            if check_path_matches_regex_component_wise(&target_ignore_regex, &rel_path).is_some() {
                 info!("target path {:?} is ignored already", path);
                 continue;
             } else {
@@ -128,7 +143,7 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
     }
 
     if target_ignore_paths.is_empty() &&
-        source_ignore_paths.is_empty() &&
+        source_ignore_lines.is_empty() &&
         target_ignore_regexps.is_empty()
     {
         info!("{}", msg_nothing_to_do());
@@ -176,24 +191,47 @@ pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> 
         }
     }
 
-    if !source_ignore_paths.is_empty() {
+    if !source_ignore_lines.is_empty() {
         if !dry_run {
             ensure_trailing_newline(&source_ignore_file_path)?;
         }
         let mut source_ignore_file = open_or_create_file(&source_ignore_file_path)?;
-        for ignore_path in source_ignore_paths {
-            info!("add path {:?} to {:?}", ignore_path, source_ignore_file_path);
+        for ignore_line in source_ignore_lines {
+            info!("add path {:?} to {:?}", ignore_line, source_ignore_file_path);
             if dry_run {
                 continue;
             }
 
-            let escaped_path_str = regex::escape(ignore_path.to_str().unwrap());
-            if let Err(e) = writeln!(source_ignore_file, "{}", escaped_path_str) {
+            if let Err(e) = writeln!(source_ignore_file, "{}", ignore_line) {
                 return Err(e.into());
             }
         }
     }
 
+    Ok(())
+}
+
+/// Replace `old` with `new` in the ignore file, keeping all other lines.
+/// If `new` is already present, `old` is only dropped (no duplicate).
+fn migrate_ignore_line(ignore_file_path: &PathBuf, old: &str, new: &str) -> Result<(), DfmError> {
+    let content = fs::read_to_string(ignore_file_path)?;
+    let out: Vec<String> = content
+        .lines()
+        .filter(|l| *l != old)
+        .map(|l| l.to_string())
+        .collect();
+    let out = if out.iter().any(|l| *l == new) {
+        out
+    } else {
+        let mut out = out;
+        out.push(new.to_owned());
+        out
+    };
+    let mut text = out.join("\n");
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    fs::write(ignore_file_path, text)?;
     Ok(())
 }
 
