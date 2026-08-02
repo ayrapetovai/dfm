@@ -27,9 +27,6 @@ The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore
 
 ## P1 — Shrinkable / duplicated code
 
-### 17. Per-task `if dry_run { continue; }`
-Every arm of `AddTask`/`PullTask`/`InitTask`/`ForgetTask` match repeats the same guard. Guard once at the top of the loop and keep only the mutating logic in the arms.
-
 ### 18. `add.rs` symlink branch joins `current_dir` with an already-absolute path
 `add.rs:93-101`: `PathBuf::from_iter(vec![current_dir, target_path.clone()])` — `target_path` comes from `list_directory` rooted at the absolute `target_dir_abs`, so it is absolute and **replaces** `current_dir` on push; the `current_dir` computation is dead. The subsequent canonicalize-parent+re-push dance is also redundant for paths already canonical-ish. Simplify or document.
 

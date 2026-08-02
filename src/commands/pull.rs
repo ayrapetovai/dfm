@@ -31,6 +31,18 @@ enum PullTask {
     Decrypt(PathBuf, PathBuf),
 }
 
+/// Human-readable description of a task, shown before it runs (and during
+/// --dry-run when it does not run).
+fn describe_pull_task(task: &PullTask) -> String {
+    match task {
+        PullTask::Copy(target, source) => format!("copy source {:?}\n\tto target {:?}", source, target),
+        PullTask::CreateOrUpdateSymlink(target, points_to) => {
+            format!("create symlink {:?} pointing\n\tto {:?}", target, points_to)
+        }
+        PullTask::Decrypt(target, source) => format!("decrypt source {:?}\n\tto target {:?}", source, target),
+    }
+}
+
 /// Handle the encrypted-source timestamp comparison for pull.
 /// Pushes a `Decrypt` task or returns an error via `require_force`.
 fn handle_encrypted_timestamps(
@@ -445,23 +457,17 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
     }
 
     debug!("::copy procedure begins, {} tasks", tasks.len());
-
-    for task in tasks.iter() {
+for task in tasks.iter() {
+        // Print what each task would do even under --dry-run.
+        info!("{}", describe_pull_task(task));
+        if dry_run {
+            continue;
+        }
         match task {
             PullTask::Copy(target_file, source_file) => {
-                info!("copy source {:?}\n\tto target {:?}", source_file, target_file);
-                if dry_run {
-                    continue;
-                }
-
                 sync_file_copy(source_file, target_file, source_file, state, &source_dir_abs_path)?;
             },
             PullTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
-                info!("create symlink {:?} pointing\n\tto {:?}", target_symlink_file_path, points_to);
-                if dry_run {
-                    continue;
-                }
-
                 if let Err(e) = symlink::remove_symlink_file(target_symlink_file_path) {
                     match e.kind() {
                         std::io::ErrorKind::NotFound => {
@@ -482,11 +488,6 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
                 debug!("target symlink {:?} updated", target_symlink_file_path)
             },
             PullTask::Decrypt(target_file, source_file) => {
-                info!("decrypt source {:?}\n\tto target {:?}", source_file, target_file);
-                if dry_run {
-                    continue;
-                }
-
                 dfm::crypt::read_zip_file(settings, source_file, target_file)?;
 
                 update_sync_state(state, source_file, target_file, &source_dir_abs_path)?;

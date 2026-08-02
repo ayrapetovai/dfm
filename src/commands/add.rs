@@ -69,6 +69,21 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         UpdateSync(PathBuf, PathBuf),
     }
 
+    /// Human-readable description of a task, shown before it runs (and during
+    /// --dry-run when it does not run).
+    fn describe_add_task(task: &AddTask) -> String {
+        match task {
+            AddTask::Copy(target, source) => format!("copy target {:?} to source {:?}", target, source),
+            AddTask::CopyEncryptedFile(target, source) => format!("copy encrypted target {:?} to source {:?}", target, source),
+            AddTask::CreateSymlinkFilePointer(source_symlink, _target, points_to) =>
+                format!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to),
+            AddTask::CopyAndSymlink(target, source) => {
+                format!("copy target {:?} to source {:?} and replace target with symlink", target, source)
+            }
+            AddTask::UpdateSync(source, _target) => format!("recording sync state for {:?}", source),
+        }
+    }
+
     let mut tasks: Vec<AddTask> = Vec::new();
 
     debug!("::check state procedure begins");
@@ -344,21 +359,16 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
     debug!("::copy procedure begins, {} tasks", tasks.len());
 
     for task in tasks {
+        // Print what each task would do even under --dry-run.
+        info!("{}", describe_add_task(&task));
+        if dry_run {
+            continue;
+        }
         match task {
             AddTask::Copy(target_file, source_file) => {
-                info!("copy target {:?} to source {:?}", target_file, source_file);
-                if dry_run {
-                    continue;
-                }
-
                 sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path)?;
             },
             AddTask::CopyAndSymlink(target_file, source_file) => {
-                info!("copy target {:?} to source {:?} and replace target with symlink", target_file, source_file);
-                if dry_run {
-                    continue;
-                }
-
                 // 1. Copy file content to source
                 sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path)?;
 
@@ -373,11 +383,6 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                 symlink::symlink_file(&link_target, &target_file)?;
             },
             AddTask::CopyEncryptedFile(target_file, source_file) => {
-                info!("copy encrypted target {:?} to source {:?}", target_file, source_file);
-                if dry_run {
-                    continue;
-                }
-
                 dfm::crypt::write_zip_file(settings, &target_file, &source_file)?;
 
                 update_sync_state(state, &source_file, &target_file, &source_dir_abs_path)?;
@@ -394,11 +399,6 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                 }
             },
             AddTask::CreateSymlinkFilePointer(source_symlink, target_abs, points_to) => {
-                info!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to);
-                if dry_run {
-                    continue;
-                }
-
                 // open if exists or create, if it doesn't
                 let mut symlink_file = File::create(&source_symlink)?;
                 symlink_file.write_all(points_to.as_bytes())?;
@@ -406,10 +406,6 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                 update_sync_state(state, &source_symlink, &target_abs, &source_dir_abs_path)?;
             },
             AddTask::UpdateSync(source_file, target_file) => {
-                info!("recording sync state for {:?}", source_file);
-                if dry_run {
-                    continue;
-                }
                 update_sync_state(state, &source_file, &target_file, &source_dir_abs_path)?;
             },
         }

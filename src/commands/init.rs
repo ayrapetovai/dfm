@@ -29,6 +29,17 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         CreateDefaultConfigFile(PathBuf)
     }
 
+    /// Human-readable description of a task, shown before it runs (and during
+    /// --dry-run when it does not run).
+    fn describe_init_task(task: &InitTask) -> String {
+        match task {
+            InitTask::CreateSourceRootFile(path) => format!("create source root file {:?}", path),
+            InitTask::CreateSourceIgnoreFile() => format!("create source ignore file"),
+            InitTask::CreateStateFile(path, _, _) => format!("create state file {:?}", path),
+            InitTask::CreateDefaultConfigFile(path) => format!("create config file {:?}", path),
+        }
+    }
+
     if !path_to_source.exists() {
         info!("source dir {:?} does not exist, creating", path_to_source);
         if dry_run {
@@ -111,12 +122,13 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
     debug!("::init procedure begins, {} tasks", tasks.len());
 
     for task in tasks {
+        // Print what each task would do even under --dry-run.
+        info!("{}", describe_init_task(&task));
+        if dry_run {
+            continue;
+        }
         match task {
             InitTask::CreateSourceRootFile(path) => {
-                info!("create source root file {:?}", path);
-                if dry_run {
-                    continue;
-                }
                 fs::create_dir_all(path.parent().unwrap())?;
                 fs::write(&path, ".")?;
             },
@@ -126,11 +138,6 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                 ignore_file_records.push(".git");
                 ignore_file_records.push(".dfm_ignore_source");
                 ignore_file_records.push(".dfm_ignore_target");
-
-                info!("add file names to source ignore file {:?}", source_ignore_file_path);
-                if dry_run {
-                    continue;
-                }
 
                 fs::create_dir_all(source_ignore_file_path.parent().unwrap())?;
                 let mut source_ignore_file = open_or_create_file(&source_ignore_file_path)?;
@@ -144,22 +151,12 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                 }
             },
             InitTask::CreateStateFile(path, target_dir, source_dir) => {
-                info!("create state file {:?}", path);
-                if dry_run {
-                    continue;
-                }
-
                 fs::create_dir_all(path.parent().unwrap())?;
 
                 let empty_state = StateObject::new(target_dir, source_dir);
                 write_state(&path, &empty_state)?;
             },
             InitTask::CreateDefaultConfigFile(path) => {
-                info!("create config file {:?}", path);
-                if dry_run {
-                    continue;
-                }
-
                 let config_file = Config::from_settings(settings);
                 write_config(&path, &config_file)?;
             }
