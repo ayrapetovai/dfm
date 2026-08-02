@@ -3,21 +3,6 @@
 Review date: 2026-08-02. Scope: all of `src/` (3532 lines), `tests/launcher.sh` (213 lines), `Cargo.toml`.
 Builds clean, all 12 Rust unit tests pass. The shell suite (161 tests) was not re-run.
 
-## Overview
-
-| File | LOC | Verdict |
-|---|---|---|
-| `src/lib.rs` | 1207 | Solid core; 2 hand-rolled path helpers are overcomplicated, 1 dead field |
-| `src/main.rs` | 390 | Repetitive dispatch boilerplate, `unwrap()` noise |
-| `src/commands/status.rs` | 800 | Presentation mixed into data (causes 2 real bugs); one dense 180-line formatter |
-| `src/commands/forget.rs` | 382 | Analysis loop is a 180-line nested if/else maze |
-| `src/commands/pull.rs` | 432 | Source-path branch has hard-to-follow fall-through control flow |
-| `src/commands/add.rs` | 433 | Dead/confusing code in symlink branch; per-file RegexSet rebuild |
-| `src/crypt.rs` | 170 | **1 security issue (permissions), 1 footgun (password newline)** |
-| `src/commands/{merge,init,ignore,purge,config,paths}.rs` | ~950 | Generally fine; merge leaks temp dir on error |
-
-Priorities: **P0** = security/correctness, **P1** = overcomplicated/shrink, **P2** = hygiene.
-
 ---
 
 ## P0 — Security
@@ -58,9 +43,6 @@ Every arm of `AddTask`/`PullTask`/`InitTask`/`ForgetTask` match repeats the same
 
 ## P2 — Design patterns / robustness
 
-- **Task-enum queue pattern** (analyze → queue enum → single execution loop) is consistent and good across add/pull/forget/init. Keep it; it's what makes the traversal/execution split readable.
-- **Typed per-command args structs + `resolve_dry_run`** — good.
-- **Silent error swallowing**: `main.rs:266-288` discards both `read_state` and `read_config` errors (`Err(_) => None`), so a corrupt `state.toml` or `config.toml` makes dfm silently run with defaults — destructive commands (add/pull/forget) could then act on an empty state. At minimum `warn!` the parse failure (mirroring the path-resolution warnings above).
 - **Inconsistent matcher**: `check_path_matches_regex` (full-path substring, lib.rs:219) survives only for `force_encryption_for`; everything else uses component-wise matching. Either switch encryption matching to the same matcher or document why absolute-path substring is intended here.
 - **`compare_files_by_timestamps` fallback clauses** (`lib.rs:961-968`) rely on `SystemTime` `==`/`<` which is coarse; the mtime-vs-sync comparisons are the classic source of spurious "inconsistent state" errors. The sha256-based `compare_files_by_content` already removed this risk for plain files; consider content comparison for encrypted files too (compare decrypted bytes vs a stored plaintext hash) so mtime granularity never breaks encryption sync.
 - **`state_opt.unwrap()` + `path_to_state_file.as_ref().unwrap()`** — see #15.
@@ -69,25 +51,14 @@ Every arm of `AddTask`/`PullTask`/`InitTask`/`ForgetTask` match repeats the same
 ## AI / token-readability notes (what costs a model most to parse)
 
 1. `add.rs` + `pull.rs` + `forget.rs` (~1250 lines combined) are dense loops where every branch ends in `continue`/`return` and the "which state is each binding in" question is hard to answer statically. Splitting per-scenario functions (#10, #11) would roughly halve the parse cost.
-2. `pattern_matches_path_components` (`lib.rs:263-359`) is the densest pure function, but it is well-documented and has 8 focused unit tests — this is *justified* complexity; do not shrink it blind.
-3. Avoid the status #5 anti-pattern (computed/colored strings in domain structs) elsewhere — it forces the reader (human or model) to mentally strip formatting when tracing data flow.
-4. Repeated `PathBuf::from_iter(vec![a, b])` where `a.join(b)` reads better and is unambiguous about the replace-on-absolute semantics.
 
 ## Suggested priorities
 
 | # | Item | Effort | Payoff |
 |---|---|---|---|
-| 1 | Restore permissions on decrypt (crypt.rs) | S | Security fix |
-| 2 | Strip color from `StatusEntry.path`, color at render (status.rs) | S | Fixes 2 bugs + porcelain contract |
 | 3 | `with_state()` helper in main.rs | S | Removes ~5x boilerplate + unwraps |
 | 4 | Hoist force-encryption RegexSet (add.rs) | S | Perf |
-| 5 | `.current_merge` cleanup on error (mod.rs) | S | Hygiene |
 | 6 | Trim shell-command password (crypt.rs) | S | Footgun |
 | 7 | Reject `..` in state keys (lib.rs) | S | Hardening |
-| 8 | Refactor `remove_dots_from_path` (keep tests as spec) | M | Complexity |
-| 9 | Split `forget.rs` / `pull.rs` analysis into scenario functions | M | Readability |
-| 10 | Remove dead field + unused deps + unused ignore load | S | Hygiene |
-| 11 | Document PBKDF2-1000 limitation / consider stronger envelope | M | Security |
-| 12 | Unit tests for the changed paths (currently only `lib.rs` has them) | M | Regression safety |
 
 Strong overall: the conflict-detection abstraction, the task-enum execution split, and the component-wise ignore matcher are well-designed. The main debt is concentrated in four spots: path string-handling in `lib.rs`, the analysis loops in `forget.rs`/`pull.rs`, color-inside-data in `status.rs`, and the duplicated dispatch in `main.rs`.
