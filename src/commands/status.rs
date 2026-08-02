@@ -511,6 +511,69 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 // Default categorized output
 // ---------------------------------------------------------------------------
 
+/// Collapse a set of paths (code, path, matched-pattern) so that a directory
+/// with ≥2 entries beneath it is shown as a single `{dir}/*` entry.
+///
+/// Iteration is deepest-first: each pass picks the deepest ancestor directory
+/// that has ≥2 descendants, replaces everything under it with one `{dir}/*`,
+/// and repeats until no ancestor has more than one child, so `a/b/x +
+/// a/b/y` becomes `a/b/*` and then propagates to `a/*`. Paths already marked
+/// `*` are never collapsed further. The `matched_pattern` is dropped from a
+/// collapsed entry (a collapsed set has no single pattern).
+fn collapse_shared_dirs(paths: &[(StatusCode, String, Option<String>)]) -> Vec<(StatusCode, String, Option<String>)> {
+    let mut paths = paths.to_vec();
+    loop {
+        // Count every ancestor directory (not just immediate parents) so that
+        // e.g. `snap/dir1/b.txt` and `snap/a.txt` both make "snap" reach 2.
+        let mut ancestor_counts: BTreeMap<String, usize> = BTreeMap::new();
+        for (_, path, _) in &paths {
+            let parts: Vec<&str> = path.split('/').collect();
+            let mut prefix = String::new();
+            for (i, part) in parts.iter().enumerate() {
+                if *part == "*" {
+                    break; // don't collapse through a wildcard marker
+                }
+                if i > 0 {
+                    prefix.push('/');
+                }
+                prefix.push_str(part);
+                // This ancestor has something deeper beneath it.
+                if i + 1 < parts.len() {
+                    *ancestor_counts.entry(prefix.clone()).or_default() += 1;
+                }
+            }
+        }
+
+        // Find the deepest ancestor with ≥2 entries beneath it.
+        let Some(collapsed_dir) = ancestor_counts
+            .into_iter()
+            .filter(|(_, count)| *count >= 2)
+            .max_by_key(|(prefix, _)| prefix.matches('/').count())
+            .map(|(prefix, _)| prefix)
+        else {
+            break;
+        };
+
+        // Replace every entry under `collapsed_dir` with a single
+        // `collapsed_dir/*` entry.
+        let mut next = Vec::new();
+        let mut collapsed_added = false;
+        let dir_prefix = format!("{}/", collapsed_dir);
+        for (code, path, pattern) in &paths {
+            if path == &collapsed_dir || path.starts_with(&dir_prefix) {
+                if !collapsed_added {
+                    next.push((*code, format!("{}/*", collapsed_dir), None));
+                    collapsed_added = true;
+                }
+                continue;
+            }
+            next.push((*code, path.clone(), pattern.clone()));
+        }
+        paths = next;
+    }
+    paths
+}
+
 /// Color a path by its status code. Only used in the human-readable default
 /// output; porcelain/short paths stay raw so their output is deterministic.
 fn color_path(code: StatusCode, path: &str) -> String {
@@ -573,64 +636,11 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
         }
         out.push_str(&format!("{}:\n", header));
 
-        // Build display paths, then iteratively collapse the deepest shared
-        // directory up to the root.
-        let mut paths: Vec<(StatusCode, String, Option<String>)> = items.iter()
+        // Build display paths, then collapse shared directories (e.g.
+        // multiple files under dir/ to a single dir/* entry).
+        let paths = collapse_shared_dirs(&items.iter()
             .map(|item| (item.code, item.path.clone(), item.matched_pattern.clone()))
-            .collect();
-
-        loop {
-            // Count all ancestor directories (not just immediate parents)
-            // so that e.g. snap/dir1/b.txt and snap/a.txt both contribute to "snap".
-            let mut ancestor_counts: BTreeMap<String, usize> = BTreeMap::new();
-            for (_, path, _) in &paths {
-                let parts: Vec<&str> = path.split('/').collect();
-                let mut prefix = String::new();
-                for (i, part) in parts.iter().enumerate() {
-                    if *part == "*" {
-                        break; // don't go through a wildcard marker
-                    }
-                    if i > 0 {
-                        prefix.push('/');
-                    }
-                    prefix.push_str(part);
-                    // This ancestor has something deeper beneath it
-                    if i + 1 < parts.len() {
-                        *ancestor_counts.entry(prefix.clone()).or_default() += 1;
-                    }
-                }
-            }
-
-            // Find the deepest ancestor with ≥2 children.
-            let to_collapse: Option<String> = ancestor_counts
-                .into_iter()
-                .filter(|(_, count)| *count >= 2)
-                .max_by_key(|(prefix, _)| prefix.matches('/').count())
-                .map(|(prefix, _)| prefix);
-
-            let Some(collapsed_dir) = to_collapse else {
-                break;
-            };
-
-            // Rebuild paths: replace every entry under collapsed_dir with a
-            // single collapsed_dir/* entry.
-            let mut next = Vec::new();
-            let mut collapsed_added = false;
-            let dir_prefix = format!("{}/", collapsed_dir);
-
-            for (code, path, pattern) in &paths {
-                if path == &collapsed_dir || path.starts_with(&dir_prefix) {
-                    if !collapsed_added {
-                        next.push((*code, format!("{}/*", collapsed_dir), None));
-                        collapsed_added = true;
-                    }
-                    continue;
-                }
-                next.push((*code, path.clone(), pattern.clone()));
-            }
-
-            paths = next;
-        }
+            .collect::<Vec<_>>());
 
         // Build the final display list.
         struct DispLine {
