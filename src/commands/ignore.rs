@@ -23,21 +23,20 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
 }
 
 use dfm::*;
-use crate::{Args, Command, DfmError};
-use super::{resolve_dry_run, msg_dry_run, msg_nothing_to_do, prune_ignore_file};
+use crate::DfmError;
+use super::{msg_dry_run, msg_nothing_to_do, prune_ignore_file};
 use microxdg::Xdg;
 
-pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: &Args) -> Result<(), DfmError> {
-    let Command::Ignore {
-        paths,
-        patterns,
-        remove,
-        dry_run,
-    } = &args.command else {
-        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `ignore`", args.command)));
-    };
+/// Typed, per-command arguments for `ignore` (built by the dispatcher).
+pub struct IgnoreArgs {
+    pub paths: Option<Vec<PathBuf>>,
+    pub patterns: Option<Vec<String>>,
+    pub remove: Option<Vec<String>>,
+    pub dry_run: bool,
+}
 
-    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
+pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Result<(), DfmError> {
+    let IgnoreArgs { ref paths, ref patterns, ref remove, dry_run } = args;
 
     debug!("ignore paths {:?}, patterns {:?}, remove {:?}, dry-run {}", paths, patterns, remove, dry_run);
 

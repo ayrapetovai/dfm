@@ -5,21 +5,19 @@ use std::path::PathBuf;
 use log::{debug, info, trace, warn};
 
 use dfm::*;
-use crate::{Args, Command, DfmError};
+use crate::DfmError;
 use microxdg::Xdg;
-use super::{resolve_dry_run, msg_dry_run, msg_nothing_to_do};
+use super::{msg_dry_run, msg_nothing_to_do};
 
-pub fn init_command(settings: &Settings, xdg: &Xdg, args: &Args) -> Result<(), DfmError> {
-    let Command::Init {
-        path_to_source,
-        path_to_target: path_to_target_opt,
-        dry_run,
-        ..
-    } = &args.command else {
-        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `init`", args.command)));
-    };
+/// Typed, per-command arguments for `init` (built by the dispatcher).
+pub struct InitArgs {
+    pub path_to_source: PathBuf,
+    pub path_to_target: Option<PathBuf>,
+    pub dry_run: bool,
+}
 
-    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
+pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<(), DfmError> {
+    let InitArgs { ref path_to_source, path_to_target: ref path_to_target_opt, dry_run } = args;
 
     debug!("init with source path {:?}", path_to_source);
     debug!("init with target path {:?}", path_to_target_opt);

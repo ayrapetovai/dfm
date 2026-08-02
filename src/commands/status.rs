@@ -9,9 +9,24 @@ use colored::Colorize;
 use log::{debug, info};
 
 use dfm::*;
-use crate::{Args, Command, DfmError};
+use crate::DfmError;
 use microxdg::Xdg;
 use super::{source_rel_to_target_rel, list_directory, report_progress};
+
+/// Typed, per-command arguments for `status` (built by the dispatcher).
+pub struct StatusArgs {
+    pub all: bool,
+    pub short: bool,
+    pub porcelain: bool,
+    pub conflicted: bool,
+    pub modified: bool,
+    pub unmanaged: bool,
+    pub managed: bool,
+    pub unpulled: bool,
+    pub ignored: bool,
+    pub ignored_patterns: bool,
+    pub unused_patterns: bool,
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,22 +46,20 @@ struct StatusEntry {
 // Status command entry point
 // ---------------------------------------------------------------------------
 
-pub fn status_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &StateObject) -> Result<(), DfmError> {
-    let Command::Status {
-        all,
-        short,
-        porcelain,
-        conflicted,
-        modified,
-        unmanaged,
-        managed,
-        unpulled,
-        ignored,
-        ignored_patterns,
-        unused_patterns,
-    } = &args.command else {
-        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `status`", args.command)));
-    };
+pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &StateObject) -> Result<(), DfmError> {
+    let StatusArgs {
+        ref all,
+        ref short,
+        ref porcelain,
+        ref conflicted,
+        ref modified,
+        ref unmanaged,
+        ref managed,
+        ref unpulled,
+        ref ignored,
+        ref ignored_patterns,
+        ref unused_patterns,
+    } = args;
 
     let (target_dir_abs, source_dir_abs) = calc_working_dir_paths(&settings)?;
 

@@ -4,21 +4,25 @@ use std::path::PathBuf;
 use log::{debug, info};
 
 use dfm::*;
-use crate::{Args, Command, DfmError};
+use crate::DfmError;
 use microxdg::Xdg;
-use super::{resolve_dry_run, msg_dry_run, source_rel_to_target_rel};
+use super::{msg_dry_run, source_rel_to_target_rel};
 
-pub fn purge_command(settings: &Settings, xdg: &Xdg, args: &Args, path_to_config_file: &Option<PathBuf>) -> Result<(), DfmError> {
-    let Command::Purge {
+/// Typed, per-command arguments for `purge` (built by the dispatcher).
+pub struct PurgeArgs {
+    pub dry_run: bool,
+    pub keep_source: bool,
+    pub keep_config_file: bool,
+    pub force: bool,
+}
+
+pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_config_file: &Option<PathBuf>) -> Result<(), DfmError> {
+    let PurgeArgs {
         dry_run,
-        keep_source,
-        keep_config_file,
-        force
-    } = &args.command else {
-        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `purge`", args.command)));
-    };
-
-    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
+        ref keep_source,
+        ref keep_config_file,
+        ref force,
+    } = args;
 
     let state_directory_path = match calc_state_directory_path(xdg) {
         Ok(path) => Some(path),

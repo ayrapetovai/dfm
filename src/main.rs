@@ -289,63 +289,95 @@ fn main_logic() -> Result<(), dfm::DfmError> {
     let settings =  merge_settings(&default_settings, &config_from_file, state_opt.as_ref());
 
     return match args.command {
-        Command::Init { .. } => {
-            init_command(&settings, &xdg, &args)
+        Command::Init { path_to_source, path_to_target, dry_run } => {
+            init_command(&settings, &xdg, InitArgs {
+                path_to_source,
+                path_to_target,
+                dry_run: resolve_dry_run(dry_run, args.dry_run),
+            })
         },
-        Command::Config { .. } => {
+        Command::Config { get, set, list } => {
             match &path_to_config_file {
-                Some(p) => config_command(&args, p),
+                Some(p) => config_command(ConfigArgs { get, set, list, dry_run: args.dry_run }, p),
                 None => Err(dfm::DfmError::NotFound("config file path could not be resolved".into()))
             }
         },
-        Command::Purge { .. } => {
-            purge_command(&settings, &xdg, &args, &path_to_config_file)
+        Command::Purge { dry_run, keep_source, keep_config_file, force } => {
+            purge_command(&settings, &xdg, PurgeArgs {
+                dry_run: resolve_dry_run(dry_run, args.dry_run),
+                keep_source,
+                keep_config_file,
+                force,
+            }, &path_to_config_file)
         },
-        Command::Add { .. } => {
+        Command::Add { paths, force, symlink, encrypt, dry_run } => {
             if state_opt.is_none() {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            add_command(&settings, &xdg, &args, &mut state)?;
+            add_command(&settings, &xdg, AddArgs {
+                paths,
+                force,
+                symlink,
+                encrypt,
+                dry_run: resolve_dry_run(dry_run, args.dry_run),
+            }, &mut state)?;
             write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
-        Command::Pull { .. } => {
+        Command::Pull { paths, force, symlink, dry_run } => {
             if state_opt.is_none() {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            pull_command(&settings, &xdg, &args, &mut state)?;
+            pull_command(&settings, &xdg, PullArgs {
+                paths,
+                force,
+                symlink,
+                dry_run: resolve_dry_run(dry_run, args.dry_run),
+            }, &mut state)?;
             write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
-        Command::Forget { .. } => {
+        Command::Forget { paths, force, dry_run } => {
             if state_opt.is_none() {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            let result = forget_command(&settings, &xdg, &args, &mut state);
+            let result = forget_command(&settings, &xdg, ForgetArgs {
+                paths,
+                force,
+                dry_run: resolve_dry_run(dry_run, args.dry_run),
+            }, &mut state);
             write_state(path_to_state_file.as_ref().unwrap(), &state)?;
             result
         },
-        Command::Ignore { .. } => {
-            ignore_command(&settings, &xdg, &args)
+        Command::Ignore { paths, patterns, remove, dry_run } => {
+            ignore_command(&settings, &xdg, IgnoreArgs {
+                paths,
+                patterns,
+                remove,
+                dry_run: resolve_dry_run(dry_run, args.dry_run),
+            })
         },
         Command::Paths => {
-            paths_command(&settings, &xdg, &path_to_config_file, &path_to_state_file)
+            paths_command(&settings, &xdg, PathsArgs {}, &path_to_config_file, &path_to_state_file)
         },
-        Command::Merge { .. } => {
+        Command::Merge { paths, dry_run } => {
             if state_opt.is_none() {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let mut state = state_opt.unwrap();
-            merge_command(&settings, &xdg, &args, &mut state)?;
+            merge_command(&settings, &xdg, MergeArgs {
+                paths,
+                dry_run: resolve_dry_run(dry_run, args.dry_run),
+            }, &mut state)?;
             write_state(path_to_state_file.as_ref().unwrap(), &state)
         },
-        Command::Status { .. } => {
+        Command::Status { all, short, porcelain, conflicted, modified, unmanaged, managed, unpulled, ignored, ignored_patterns, unused_patterns } => {
             if state_opt.is_none() {
                 return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
             }
             let state = state_opt.unwrap();
-            status_command(&settings, &xdg, &args, &state)
+            status_command(&settings, &xdg, StatusArgs { all, short, porcelain, conflicted, modified, unmanaged, managed, unpulled, ignored, ignored_patterns, unused_patterns }, &state)
         },
     };
 }

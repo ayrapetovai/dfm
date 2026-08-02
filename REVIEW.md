@@ -8,20 +8,6 @@ analysis (explicit, testable, and free of hidden global state).
 
 ## A. Bad patterns found
 
-### A2. `&Args` drilled into every command + `unreachable code reached` boilerplate
-
-Every command starts with (e.g. `add.rs:17-25`):
-
-```rust
-let Command::Add { .. } = &args.command else {
-    return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `add`", args.command)));
-};
-```
-
-Repeated 10 times. It is dead defensive code — the dispatcher already matched
-the variant. It also forces `*force`, `args.dry_run` re-reading and makes every
-command signature `(settings, &Args, ...)`.
-
 ### A4. `.unwrap()` / `to_str().unwrap()` on user-controlled paths
 
 Non-UTF-8 paths panic. `to_str().unwrap()` appears ~30 times;

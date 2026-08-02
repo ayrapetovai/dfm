@@ -1,9 +1,15 @@
 use std::path::PathBuf;
 use log::{debug, info, warn};
 use dfm::*;
-use crate::{Args, Command, DfmError};
+use crate::DfmError;
 use microxdg::Xdg;
-use super::{run_merge, source_rel_to_target_rel, resolve_dry_run, msg_dry_run};
+use super::{run_merge, source_rel_to_target_rel, msg_dry_run};
+
+/// Typed, per-command arguments for `merge` (built by the dispatcher).
+pub struct MergeArgs {
+    pub paths: Option<Vec<PathBuf>>,
+    pub dry_run: bool,
+}
 
 /// Look up a source-relative path in state, trying known postfixes.
 /// Returns the matching state key (which may include encrypted/symlink postfix).
@@ -30,12 +36,8 @@ fn resolve_state_key(
     None
 }
 
-pub fn merge_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
-    let Command::Merge { paths, dry_run } = &args.command else {
-        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `merge`", args.command)));
-    };
-
-    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
+pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mut StateObject) -> Result<(), DfmError> {
+    let MergeArgs { ref paths, dry_run } = args;
     let paths_provided = paths.is_some();
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;

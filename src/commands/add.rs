@@ -8,25 +8,24 @@ use log::{debug, error, info, warn};
 use regex::RegexSet;
 
 use dfm::*;
-use crate::{Args, Command};
 use microxdg::Xdg;
-use super::{sync_file_copy, resolve_dry_run, require_force,
+use super::{sync_file_copy, require_force,
             update_sync_state, remove_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
             prune_ignore_file};
 
-pub fn add_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
-    let Command::Add {
-        paths,
-        force,
-        symlink,
-        encrypt,
-        dry_run,
-    } = &args.command else {
-        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `add`", args.command)));
-    };
+/// Typed, pre-resolved arguments for the `add` command (built by the
+/// dispatcher from the matching clap subcommand).
+pub struct AddArgs {
+    pub paths: Option<Vec<PathBuf>>,
+    pub force: bool,
+    pub symlink: bool,
+    pub encrypt: bool,
+    pub dry_run: bool,
+}
 
-    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
+pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut StateObject) -> Result<(), DfmError> {
+    let AddArgs { ref paths, ref force, ref symlink, ref encrypt, dry_run } = args;
 
     debug!("add paths {:?}, force {}, symlink {}, encrypt {}", paths, force, symlink, encrypt);
 

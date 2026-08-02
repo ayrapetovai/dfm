@@ -5,11 +5,18 @@ use std::path::PathBuf;
 use log::{debug, error, info, warn};
 
 use dfm::*;
-use crate::{Args, Command, DfmError};
+use crate::DfmError;
 use microxdg::Xdg;
-use super::{resolve_dry_run, require_force, get_sync_time, remove_sync_state,
+use super::{require_force, get_sync_time, remove_sync_state,
             source_rel_to_target_rel, list_directory_or_error,
             msg_dry_run, msg_nothing_to_do, report_progress};
+
+/// Typed, per-command arguments for `forget` (built by the dispatcher).
+pub struct ForgetArgs {
+    pub paths: Option<Vec<PathBuf>>,
+    pub force: bool,
+    pub dry_run: bool,
+}
 
 fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String {
     let rel = file_path_relative_to(source_abs, source_dir_abs);
@@ -17,17 +24,8 @@ fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String
     rel.to_str().unwrap().to_string()
 }
 
-pub fn forget_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
-    let Command::Forget {
-        paths,
-        force,
-        dry_run,
-        ..
-    } = &args.command else {
-        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `forget`", args.command)));
-    };
-
-    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
+pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &mut StateObject) -> Result<(), DfmError> {
+    let ForgetArgs { ref paths, ref force, dry_run } = args;
 
     debug!("forget paths {:?}, force {}, dry-run {}", paths, force, dry_run);
 

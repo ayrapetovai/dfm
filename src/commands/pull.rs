@@ -6,12 +6,20 @@ use regex::RegexSet;
 use walkdir::WalkDir;
 
 use dfm::*;
-use crate::{Args, Command, DfmError};
-use super::{sync_file_copy, resolve_dry_run, require_force,
+use crate::DfmError;
+use super::{sync_file_copy, require_force,
             update_sync_state, get_sync_time, source_rel_to_target_rel,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
             prune_ignore_file};
 use microxdg::Xdg;
+
+/// Typed, per-command arguments for `pull` (built by the dispatcher).
+pub struct PullArgs {
+    pub paths: Option<Vec<PathBuf>>,
+    pub force: bool,
+    pub symlink: bool,
+    pub dry_run: bool,
+}
 
 #[derive(Debug)]
 enum PullTask {
@@ -61,17 +69,8 @@ fn handle_encrypted_timestamps(
     Ok(())
 }
 
-pub fn pull_command(settings: &Settings, xdg: &Xdg, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
-    let Command::Pull {
-        paths,
-        force,
-        symlink: target_must_be_symlink,
-        dry_run,
-    } = &args.command else {
-        return Err(DfmError::Unsupported(format!("unreachable code reached: command {:?} is not `pull`", args.command)));
-    };
-
-    let dry_run = resolve_dry_run(*dry_run, args.dry_run);
+pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut StateObject) -> Result<(), DfmError> {
+    let PullArgs { ref paths, ref force, symlink: ref target_must_be_symlink, dry_run } = args;
 
     debug!("pull paths {:?}, force {}, dry-run {}", paths, force, dry_run);
 

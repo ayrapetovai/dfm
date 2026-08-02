@@ -20,6 +20,17 @@ pub(crate) use pull::pull_command;
 pub(crate) use purge::purge_command;
 pub(crate) use status::status_command;
 
+pub(crate) use add::AddArgs;
+pub(crate) use config::ConfigArgs;
+pub(crate) use forget::ForgetArgs;
+pub(crate) use ignore::IgnoreArgs;
+pub(crate) use init::InitArgs;
+pub(crate) use merge::MergeArgs;
+pub(crate) use paths::PathsArgs;
+pub(crate) use pull::PullArgs;
+pub(crate) use purge::PurgeArgs;
+pub(crate) use status::StatusArgs;
+
 use std::fs;
 use crate::DfmError;
 use std::os::unix::fs::PermissionsExt;

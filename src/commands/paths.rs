@@ -4,7 +4,11 @@ use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
 
-pub fn paths_command(settings: &Settings, xdg: &Xdg, path_to_config_file: &Option<PathBuf>, path_to_state_file: &Option<PathBuf>) -> Result<(), DfmError> {
+/// Typed, per-command arguments for `paths` (built by the dispatcher).
+pub struct PathsArgs {}
+
+pub fn paths_command(settings: &Settings, xdg: &Xdg, args: PathsArgs, path_to_config_file: &Option<PathBuf>, path_to_state_file: &Option<PathBuf>) -> Result<(), DfmError> {
+    let PathsArgs {} = args;
     let (target_dir_abs_path, ref source_dir_abs_path) = calc_working_dir_paths_unchecked(&settings)?;
     println!("Source: {}", source_dir_abs_path.to_str().unwrap());
     println!("Target: {}", target_dir_abs_path.to_str().unwrap());
