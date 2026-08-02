@@ -442,7 +442,6 @@ impl Config {
 /// Runtime settings after merging defaults + config file + state.
 #[derive(Debug, Clone)]
 pub struct Settings {
-    pub config_file_found: bool,
     pub source_dir: String,
     pub target_dir: String,
     pub dot_prefix: String,
@@ -517,7 +516,6 @@ pub fn calc_config_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError>{
 
 pub fn create_default_settings() -> Settings {
     Settings {
-        config_file_found: false,
         source_dir: "".to_owned(),
         target_dir: "$HOME".to_owned(), // TODO read HOME depending on operating system
         dot_prefix: "dot_".to_owned(),
@@ -549,43 +547,32 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, DfmError> {
 
 pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_object: Option<&StateObject>) -> Settings {
     match custom_opt {
-        Some(custom) =>
+        Some(custom) => {
+            let source_dir = state_object
+                .map(|s| s.source_directory.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let target_dir = state_object
+                .map(|s| s.target_directory.to_string_lossy().into_owned())
+                .unwrap_or_default();
             Settings {
-                config_file_found: true,
-                source_dir: match state_object {
-                    Some(state) => state.source_directory.to_string_lossy().into_owned(),
-                    None => "".to_string()
-                },
-                target_dir: match state_object {
-                    Some(state) => state.target_directory.to_string_lossy().into_owned(),
-                    None => "".to_string()
-                },
-                dot_prefix: match &custom.dot_prefix {
-                    Some(v) => v.clone(),
-                    None => default.dot_prefix.to_string()
-                },
-                symlink_postfix: match &custom.symlink_postfix {
-                    Some(v) => v.clone(),
-                    None => default.symlink_postfix.to_string()
-                },
-                encrypted_postfix: match &custom.encrypted_postfix {
-                    Some(v) => v.clone(),
-                    None => default.encrypted_postfix.to_string()
-                },
-                force_encryption_for: if !custom.force_encryption_for.is_empty() {
-                    custom.force_encryption_for.clone()
-                } else {
+                source_dir,
+                target_dir,
+                dot_prefix: custom.dot_prefix.clone().unwrap_or_else(|| default.dot_prefix.clone()),
+                symlink_postfix: custom.symlink_postfix.clone().unwrap_or_else(|| default.symlink_postfix.clone()),
+                encrypted_postfix: custom.encrypted_postfix.clone().unwrap_or_else(|| default.encrypted_postfix.clone()),
+                // `force_encryption_for` is a plain Vec, not an Option: an
+                // explicitly empty list in config still means "use defaults".
+                force_encryption_for: if custom.force_encryption_for.is_empty() {
                     default.force_encryption_for.clone()
+                } else {
+                    custom.force_encryption_for.clone()
                 },
-                obtain_password_shell_command: match &custom.obtain_password_shell_command {
-                    Some(s) => Some(s.clone()),
-                    None => default.obtain_password_shell_command.clone()
-                },
-                merge_tool_command: match &custom.merge_tool_command {
-                    Some(s) => Some(s.clone()),
-                    None => default.merge_tool_command.clone()
-                },
-            },
+                obtain_password_shell_command: custom.obtain_password_shell_command.clone()
+                    .or_else(|| default.obtain_password_shell_command.clone()),
+                merge_tool_command: custom.merge_tool_command.clone()
+                    .or_else(|| default.merge_tool_command.clone()),
+            }
+        }
         None => default.clone()
     }
 }
@@ -1093,6 +1080,63 @@ fn test_remove_dots_from_path() {
     assert_eq!(remove_dots_from_path(&PathBuf::from("..")), PathBuf::from(".."));
     assert_eq!(remove_dots_from_path(&PathBuf::from("/a/..")), PathBuf::from("/"));
     assert_eq!(remove_dots_from_path(&PathBuf::from("/a/../../b")), PathBuf::from("../b"));
+}
+
+#[test]
+fn test_merge_settings() {
+    let default = create_default_settings();
+    let state = StateObject::new(
+        PathBuf::from("/home/user"),
+        PathBuf::from("/home/user/dotfiles"),
+    );
+
+    // No config file -> plain defaults; the state is not consulted.
+    let no_custom = merge_settings(&default, &None, Some(&state));
+    assert_eq!(no_custom.source_dir, "");
+    assert_eq!(no_custom.target_dir, "$HOME");
+    assert_eq!(no_custom.dot_prefix, default.dot_prefix);
+
+    // Config present -> state supplies the working directories.
+    let custom = Config {
+        dot_prefix: Some("cfg_".to_string()),
+        symlink_postfix: None,
+        encrypted_postfix: None,
+        force_encryption_for: vec![],
+        obtain_password_shell_command: None,
+        merge_tool_command: Some("meld {target} {source} {result}".to_string()),
+    };
+    let merged = merge_settings(&default, &Some(custom), Some(&state));
+    assert_eq!(merged.source_dir, "/home/user/dotfiles");
+    assert_eq!(merged.target_dir, "/home/user");
+    // Config values win per field.
+    assert_eq!(merged.dot_prefix, "cfg_");
+    assert_eq!(merged.merge_tool_command, Some("meld {target} {source} {result}".to_string()));
+    // Missing config fields fall back to defaults.
+    assert_eq!(merged.symlink_postfix, default.symlink_postfix);
+    assert_eq!(merged.encrypted_postfix, default.encrypted_postfix);
+    assert_eq!(merged.obtain_password_shell_command, default.obtain_password_shell_command);
+    // An explicitly empty force_encryption_for means "use defaults".
+    assert_eq!(patterns(&merged.force_encryption_for), patterns(&default.force_encryption_for));
+
+    // Non-empty force_encryption_for is taken from the config.
+    let custom = Config {
+        dot_prefix: None,
+        symlink_postfix: None,
+        encrypted_postfix: None,
+        force_encryption_for: vec![Regex::new(r"\.ssh").unwrap()],
+        obtain_password_shell_command: None,
+        merge_tool_command: None,
+    };
+    let merged = merge_settings(&default, &Some(custom), None);
+    assert_eq!(patterns(&merged.force_encryption_for), vec![r"\.ssh"]);
+    // Without state the dirs stay empty even with a config.
+    assert_eq!(merged.source_dir, "");
+    assert_eq!(merged.target_dir, "");
+}
+
+#[cfg(test)]
+fn patterns(regexes: &[Regex]) -> Vec<&str> {
+    regexes.iter().map(Regex::as_str).collect()
 }
 
 #[test]

@@ -69,9 +69,6 @@ The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore
 ### 12. `filepath_in_source_dir` (`lib.rs:617-646`)
 Builds the source path with two regexes over filename+parent strings and string concatenation (`String::from_iter([dirname, filename])`). Same dot→`dot_prefix` mapping is reimplemented ad hoc in several commands. Iterate path components and map each leading `.` component to `dot_prefix` once.
 
-### 13. `merge_settings` (`lib.rs:549-590`)
-~40 lines of per-field `match Some/None` that could be a small `unwrap_or_else` per field (or a per-field helper). Low risk, low priority. Note `source_dir`/`target_dir` take the state values but `merge_tool_command` etc. fall back per-field — fine, just verbose.
-
 ### 14. `status.rs format_default` directory-collapse (`514-692`)
 The iterative deepest-ancestor-collapse loop is ~80 lines of subtle `BTreeMap` bookkeeping. It works and is isolated, but deserves a standalone helper with a comment, or a simpler "collapse under the common ancestor that has ≥2 entries" formulation.
 
