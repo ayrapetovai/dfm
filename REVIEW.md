@@ -15,13 +15,6 @@ State keys are joined onto `source_dir` and passed through `remove_dots_from_pat
 
 ---
 
-## P0 — Correctness
-
-### 6. `add`: force-encryption RegexSet rebuilt for every file
-`add.rs:192` builds a `RegexSet` from `settings.force_encryption_for` inside the traversal loop → O(files × patterns) regex compilation. Hoist it next to `target_ignore_regex`.
-
----
-
 ## P2 — Design patterns / robustness
 
 - **Inconsistent matcher**: `check_path_matches_regex` (full-path substring, lib.rs:219) survives only for `force_encryption_for`; everything else uses component-wise matching. Either switch encryption matching to the same matcher or document why absolute-path substring is intended here.

@@ -51,6 +51,11 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
 
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
+    // Compiled once per command, not per file: building force-encryption
+    // patterns inside the traversal loop was O(files × patterns) compaction work.
+    let encryption_regex_set = RegexSet::new(
+        settings.force_encryption_for.iter().map(|r| r.as_str().to_owned())
+    )?;
 
     let traversed_paths = list_directory_or_error(
         &paths,
@@ -206,8 +211,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
             }
         }
 
-        let to_be_encrypted_regex_set = RegexSet::new(settings.force_encryption_for.iter().map(|r| r.as_str().to_owned())).unwrap();
-        let encrypt = if let Some(pattern) = check_path_matches_regex(&to_be_encrypted_regex_set, &target_abs_path) {
+        let encrypt = if let Some(pattern) = check_path_matches_regex(&encryption_regex_set, &target_abs_path) {
             debug!("target {:?} is forced to be encrypted by regex /{}/ from config file", target_abs_path, pattern);
             true
         } else {
