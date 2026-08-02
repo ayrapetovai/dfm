@@ -23,7 +23,7 @@ pub(crate) use status::status_command;
 use std::fs;
 use crate::DfmError;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use filetime_creation::{set_file_mtime, FileTime};
 use log::{error, info, trace, log_enabled};
@@ -157,6 +157,35 @@ pub(crate) fn resolve_dry_run(cmd_dry_run: bool, args_dry_run: bool) -> bool {
 /// When `force` is `true` the caller still needs to handle the case
 /// (e.g. skip the conflict, or proceed despite errors); this helper
 /// only covers the "reject without force" half.
+/// Drop lines from an ignore file whose trimmed content makes `should_ignore`
+/// return true. Blank lines and the full original text of kept lines are
+/// preserved. A missing file is a no-op. When `dry_run` is true the file is not
+/// written; the set of would-be-removed lines is still returned.
+pub(crate) fn prune_ignore_file(
+    ignore_file_path: &Path,
+    should_ignore: impl Fn(&str) -> bool,
+    dry_run: bool,
+) -> Result<Vec<String>, DfmError> {
+    if !ignore_file_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(ignore_file_path)?;
+    let mut removed = Vec::new();
+    let mut kept = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || !should_ignore(&trimmed) {
+            kept.push(line.to_string());
+        } else {
+            removed.push(trimmed.to_string());
+        }
+    }
+    if !removed.is_empty() && !dry_run {
+        fs::write(ignore_file_path, kept.join("\n"))?;
+    }
+    Ok(removed)
+}
+
 #[inline]
 pub(crate) fn require_force(force: bool, msg: impl std::fmt::Display) -> Result<(), DfmError> {
     if force {

@@ -24,7 +24,7 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
 
 use dfm::*;
 use crate::{Args, Command, DfmError};
-use super::{resolve_dry_run, msg_dry_run, msg_nothing_to_do};
+use super::{resolve_dry_run, msg_dry_run, msg_nothing_to_do, prune_ignore_file};
 
 pub fn ignore_command(settings: &Settings, args: &Args) -> Result<(), DfmError> {
     let Command::Ignore {
@@ -238,44 +238,15 @@ fn migrate_ignore_line(ignore_file_path: &PathBuf, old: &str, new: &str) -> Resu
 fn remove_ignore_records(records: &[String], dry_run: bool) -> Result<(), DfmError> {
     let ignore_file_path = calc_local_ignore_file()?;
 
-    if !ignore_file_path.exists() {
-        info!("ignore file {:?} does not exist, nothing to remove", ignore_file_path);
-        return Ok(());
-    }
-
-    let content = fs::read_to_string(&ignore_file_path)?;
-    let lines: Vec<&str> = content.lines().collect();
-    let mut removed = Vec::new();
-    let remaining: Vec<String> = lines
-        .iter()
-        .filter(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || records.iter().any(|r| {
-                r.as_str() == trimmed || regex::escape(r.as_str()) == trimmed
-            }) {
-                if !trimmed.is_empty() {
-                    removed.push(trimmed.to_string());
-                }
-                false
-            } else {
-                true
-            }
-        })
-        .map(|l| l.to_string())
-        .collect();
+    let removed = prune_ignore_file(&ignore_file_path, |t| {
+        records.iter().any(|r| r.as_str() == t || regex::escape(r.as_str()) == t)
+    }, dry_run)?;
 
     if removed.is_empty() {
         info!("no matching records found in ignore file");
         return Ok(());
     }
 
-    if dry_run {
-        info!("dry run specified, would remove {} record(s) from {:?}: {:?}",
-              removed.len(), ignore_file_path, removed);
-        return Ok(());
-    }
-
-    fs::write(&ignore_file_path, remaining.join("\n"))?;
     info!("removed {} record(s) from {:?}: {:?}",
           removed.len(), ignore_file_path, removed);
     Ok(())

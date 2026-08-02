@@ -11,7 +11,8 @@ use dfm::*;
 use crate::{Args, Command};
 use super::{sync_file_copy, resolve_dry_run, require_force,
             update_sync_state, remove_sync_state, get_sync_time,
-            list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress};
+            list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
+            prune_ignore_file};
 
 pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) -> Result<(), DfmError> {
     let Command::Add {
@@ -433,18 +434,12 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
     }
 
     if !dry_run && !patterns_to_remove.is_empty() {
-        let ignore_file_path = calc_local_ignore_file()?;
-        if ignore_file_path.exists() {
-            let content = fs::read_to_string(&ignore_file_path)?;
-            let remaining: Vec<&str> = content.lines()
-                .filter(|line| {
-                    let trimmed = line.trim();
-                    trimmed.is_empty() || !patterns_to_remove.iter().any(|p| p == trimmed)
-                })
-                .collect();
-            fs::write(&ignore_file_path, remaining.join("\n"))?;
-            info!("removed {} pattern(s) from ignore file", patterns_to_remove.len());
-        }
+        let removed = prune_ignore_file(
+            &calc_local_ignore_file()?,
+            |t| patterns_to_remove.iter().any(|p| *p == t),
+            dry_run,
+        )?;
+        info!("removed {} pattern(s) from ignore file", removed.len());
     }
 
     Ok(())

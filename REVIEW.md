@@ -42,13 +42,6 @@ Non-UTF-8 paths panic. `to_str().unwrap()` appears ~30 times;
 by string-concatenation (`lib.rs:694`, `status.rs:73`, `forget.rs:271`).
 `context.txt` even admits this ("many `to_str().unwrap()`").
 
-### A5. Ignore-file edit logic copy-pasted 3 times
-
-The "remove `--force`d patterns from ignore file" filter appears in
-`add.rs:436-449` and `pull.rs:417-431`; record removal in `ignore.rs:200-244`.
-Three near-identical read/filter/write blocks — they have already started to
-drift.
-
 ### A7. Subtle behavioral divergence hidden in a flag
 
 `add.rs:65` `is_dir_traversal` switches a conflict from "error" to "silent skip"
