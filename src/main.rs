@@ -311,44 +311,34 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             }, &path_to_config_file)
         },
         Command::Add { paths, force, symlink, encrypt, dry_run } => {
-            if state_opt.is_none() {
-                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
-            }
-            let mut state = state_opt.unwrap();
-            add_command(&settings, &xdg, AddArgs {
-                paths,
-                force,
-                symlink,
-                encrypt,
-                dry_run: resolve_dry_run(dry_run, args.dry_run),
-            }, &mut state)?;
-            write_state(path_to_state_file.as_ref().unwrap(), &state)
+            with_state(state_opt, path_to_state_file.as_ref(), |state| {
+                add_command(&settings, &xdg, AddArgs {
+                    paths,
+                    force,
+                    symlink,
+                    encrypt,
+                    dry_run: resolve_dry_run(dry_run, args.dry_run),
+                }, state)
+            })
         },
         Command::Pull { paths, force, symlink, dry_run } => {
-            if state_opt.is_none() {
-                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
-            }
-            let mut state = state_opt.unwrap();
-            pull_command(&settings, &xdg, PullArgs {
-                paths,
-                force,
-                symlink,
-                dry_run: resolve_dry_run(dry_run, args.dry_run),
-            }, &mut state)?;
-            write_state(path_to_state_file.as_ref().unwrap(), &state)
+            with_state(state_opt, path_to_state_file.as_ref(), |state| {
+                pull_command(&settings, &xdg, PullArgs {
+                    paths,
+                    force,
+                    symlink,
+                    dry_run: resolve_dry_run(dry_run, args.dry_run),
+                }, state)
+            })
         },
         Command::Forget { paths, force, dry_run } => {
-            if state_opt.is_none() {
-                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
-            }
-            let mut state = state_opt.unwrap();
-            let result = forget_command(&settings, &xdg, ForgetArgs {
-                paths,
-                force,
-                dry_run: resolve_dry_run(dry_run, args.dry_run),
-            }, &mut state);
-            write_state(path_to_state_file.as_ref().unwrap(), &state)?;
-            result
+            with_state_even_if_error(state_opt, path_to_state_file.as_ref(), |state| {
+                forget_command(&settings, &xdg, ForgetArgs {
+                    paths,
+                    force,
+                    dry_run: resolve_dry_run(dry_run, args.dry_run),
+                }, state)
+            })
         },
         Command::Ignore { paths, patterns, remove, dry_run } => {
             ignore_command(&settings, &xdg, IgnoreArgs {
@@ -362,24 +352,42 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             paths_command(&settings, &xdg, PathsArgs {}, &path_to_config_file, &path_to_state_file)
         },
         Command::Merge { paths, dry_run } => {
-            if state_opt.is_none() {
-                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
-            }
-            let mut state = state_opt.unwrap();
-            merge_command(&settings, &xdg, MergeArgs {
-                paths,
-                dry_run: resolve_dry_run(dry_run, args.dry_run),
-            }, &mut state)?;
-            write_state(path_to_state_file.as_ref().unwrap(), &state)
+            with_state(state_opt, path_to_state_file.as_ref(), |state| {
+                merge_command(&settings, &xdg, MergeArgs {
+                    paths,
+                    dry_run: resolve_dry_run(dry_run, args.dry_run),
+                }, state)
+            })
         },
         Command::Status { all, short, porcelain, conflicted, modified, unmanaged, managed, unpulled, ignored, ignored_patterns, unused_patterns } => {
-            if state_opt.is_none() {
-                return Err(dfm::DfmError::NotFound(format!("state file is not found {:?}", path_to_state_file)));
-            }
-            let state = state_opt.unwrap();
+            let state = state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
             status_command(&settings, &xdg, StatusArgs { all, short, porcelain, conflicted, modified, unmanaged, managed, unpulled, ignored, ignored_patterns, unused_patterns }, &state)
         },
     };
+}
+
+/// Unwrap the state file, run a mutating command against it, then persist the
+/// result back to disk. Converts "state missing" into an error instead of a
+/// panic and removes the repetitive `state_opt.unwrap()` /
+/// `path_to_state_file.unwrap()` noise.
+fn with_state<T>(state_opt: Option<StateObject>, path_to_state_file: Option<&PathBuf>,
+                 f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>) -> Result<T, dfm::DfmError> {
+    let mut state = state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+    let result = f(&mut state)?;
+    write_state(path_to_state_file.unwrap(), &state)?;
+    Ok(result)
+}
+
+/// Like `with_state`, but always persists the state file even when the
+/// command returns an error. Used by `forget`: the in-memory state entry is
+/// cleaned up before the source deletion runs, so on a filesystem error the
+/// entry must still be written back (and the deletion error reported).
+fn with_state_even_if_error<T>(state_opt: Option<StateObject>, path_to_state_file: Option<&PathBuf>,
+                               f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>) -> Result<T, dfm::DfmError> {
+    let mut state = state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+    let result = f(&mut state);
+    write_state(path_to_state_file.unwrap(), &state)?;
+    result
 }
 
 fn main() {
