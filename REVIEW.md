@@ -48,9 +48,6 @@ State keys are joined onto `source_dir` and passed through `remove_dots_from_pat
 ### 7. `ignore --remove` silently drops `PATH`/`--patterns`
 The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore.rs:43` returns early when `remove` is present, discarding any co-issued paths/patterns without a message. Either make the group mutually exclusive or process all inputs.
 
-### 8. `run_merge` leaks `.current_merge/` on error paths
-`commands/mod.rs:282-347`: `create_dir_all` at line 284, then `fs::copy` (304), `read_zip_file`/`fs::copy` (306-309), and `resolve_merge_command` (310) all `return …?` without cleanup; only the tool-failure paths call `remove_dir_all`. A stale `.current_merge/` dir accumulates in the source repo. Clean up via a guard/defer pattern.
-
 ---
 
 ## P1 — Overcomplicated / hard-to-parse code

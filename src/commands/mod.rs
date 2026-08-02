@@ -317,6 +317,16 @@ fn resolve_merge_command(settings: &Settings) -> Result<String, DfmError> {
     ))
 }
 
+/// RAII guard that removes a directory on drop, so temp dirs like
+/// `.current_merge/` are cleaned up on every exit path (including `?` returns).
+struct DirGuard(PathBuf);
+
+impl Drop for DirGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Run the merge tool inside `.current_merge/` in the source directory.
 ///
 /// Creates temporary copies named `target.<file>` (working dir side),
@@ -324,8 +334,7 @@ fn resolve_merge_command(settings: &Settings) -> Result<String, DfmError> {
 /// `result.<file>` for the merge tool's output.  The merge tool must
 /// write the merged result into `{result}` — after it succeeds the
 /// result file is copied back to both the target and the source, and
-/// the sync state is updated.  The `.current_merge/` directory is
-/// removed before returning.
+/// the sync state is updated.
 pub(crate) fn run_merge(
     settings: &Settings,
     source_abs_path: &PathBuf,
@@ -335,6 +344,7 @@ pub(crate) fn run_merge(
 ) -> Result<(), DfmError> {
     let source_dir = PathBuf::from(&settings.source_dir);
     let merge_dir = source_dir.join(".current_merge");
+    let _guard = DirGuard(merge_dir.clone());
     fs::create_dir_all(&merge_dir)?;
 
     let file_name = target_abs_path
@@ -367,7 +377,6 @@ pub(crate) fn run_merge(
     // with {target}, {source} and {result} replaced by actual temp file paths.
     let parts: Vec<&str> = command.split_whitespace().collect();
     if parts.is_empty() {
-        let _ = fs::remove_dir_all(&merge_dir);
         return Err(DfmError::Other("merge command is empty".into()));
     }
     let (prog, args) = parts.split_first().unwrap();
@@ -375,6 +384,7 @@ pub(crate) fn run_merge(
     let source_str = source_path.to_string_lossy();
     let result_str = result_path.to_string_lossy();
     let args: Vec<String> = args.iter().map(|a| {
+
         a.replace("{target}", target_str.as_ref())
          .replace("{source}", source_str.as_ref())
          .replace("{result}", result_str.as_ref())
@@ -385,13 +395,9 @@ pub(crate) fn run_merge(
     let status = std::process::Command::new(prog)
         .args(&args)
         .status()
-        .map_err(|e| {
-            let _ = fs::remove_dir_all(&merge_dir);
-            DfmError::Io(e)
-        })?;
+        .map_err(DfmError::Io)?;
 
     if !status.success() || !result_path.exists() {
-        let _ = fs::remove_dir_all(&merge_dir);
         let reason = if !status.success() {
             format!("merge tool exited with status {}", status)
         } else {
@@ -410,8 +416,6 @@ pub(crate) fn run_merge(
 
     // Update sync state and mtimes
     update_sync_state(state, source_abs_path, target_abs_path, source_dir_abs_path)?;
-
-    let _ = fs::remove_dir_all(&merge_dir);
 
     info!("merge completed for {:?}", target_abs_path);
     Ok(())
