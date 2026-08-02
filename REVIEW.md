@@ -49,15 +49,6 @@ The "remove `--force`d patterns from ignore file" filter appears in
 Three near-identical read/filter/write blocks — they have already started to
 drift.
 
-### A6. Swallowed errors / lossy error messages
-
-- `config.rs:19` — `if let Ok(value_opt) = read_property_from_config(...)`
-  discards the actual I/O error and reports a generic "config files does not exists".
-- `add.rs:341-346` — errors collected as strings, then flattened into
-  `require_force(*force, "error occurred")`, losing which file and why.
-- `purge.rs` does this well (aggregates `Vec<String>`, returns a joined message)
-  — that is the pattern to copy.
-
 ### A7. Subtle behavioral divergence hidden in a flag
 
 `add.rs:65` `is_dir_traversal` switches a conflict from "error" to "silent skip"

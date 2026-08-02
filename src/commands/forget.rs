@@ -295,7 +295,9 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
     progress.clear();
 
     if !error_messages.is_empty() {
-        require_force(*force, "forget failed")?;
+        let joined = format!("forget failed: {}", error_messages.join("; "));
+        error!("{}", joined);
+        require_force(*force, joined)?;
     }
 
     if tasks.is_empty() {

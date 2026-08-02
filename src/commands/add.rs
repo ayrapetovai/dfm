@@ -339,10 +339,9 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
     progress.clear();
 
     if !error_messages.is_empty() {
-        for error_message in &error_messages {
-            error!("{}", error_message);
-        }
-        require_force(*force, "error occurred")?;
+        let joined = format!("add failed: {}", error_messages.join("; "));
+        error!("{}", joined);
+        require_force(*force, joined)?;
     }
 
     if conflict_detected {

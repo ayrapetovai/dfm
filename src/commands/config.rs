@@ -16,18 +16,17 @@ pub fn config_command(args: &Args, path_to_config_file: &PathBuf) -> Result<(), 
 
     match get {
         Some(param_name ) => {
-            if let Ok(value_opt) = read_property_from_config(&path_to_config_file, param_name) {
-                match value_opt {
-                    Some(v) => {
-                        println!("{}", v);
-                    },
-                    None => {
-                        warn!("parameter {} is not found", param_name);
-                    }
+            match read_property_from_config(&path_to_config_file, param_name) {
+                Ok(Some(v)) => {
+                    println!("{}", v);
+                },
+                Ok(None) => {
+                    warn!("parameter {} is not found", param_name);
+                },
+                Err(e) => {
+                    return Err(e);
                 }
-            } else {
-                return Err(DfmError::other("config files does not exists"));
-            };
+            }
         },
         None => {},
     }
@@ -38,23 +37,17 @@ pub fn config_command(args: &Args, path_to_config_file: &PathBuf) -> Result<(), 
             let param_new_value = params[1].clone();
             if args.dry_run {
                 debug!("dry-run specified, nothing will be changed");
-            } else if let Err(e) = write_property_to_config(&path_to_config_file, &param_name, &param_new_value) {
-                return Err(DfmError::other(format!("failed to save config parameter value {:?}", e)));
+            } else {
+                write_property_to_config(&path_to_config_file, &param_name, &param_new_value)?;
             }
         },
         None => {}
     }
 
     if *list {
-        match read_properties_from_config(&path_to_config_file) {
-            Ok(props) => {
-                for line in props {
-                    println!("{}", line)
-                }
-            },
-            Err(e) => {
-                return Err(DfmError::other(format!("failed to read config {:?}", e)));
-            },
+        let props = read_properties_from_config(&path_to_config_file)?;
+        for line in props {
+            println!("{}", line)
         }
     }
 
