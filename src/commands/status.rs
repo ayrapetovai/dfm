@@ -769,9 +769,12 @@ fn terminal_height() -> Option<usize> {
 
 fn get_git_info(source_dir: &PathBuf) -> Option<String> {
     let source_dir_str = source_dir.to_string_lossy();
-    // Check if source_dir is a git repo
+    // Single call, not two: `--branch` emits a `## <branch>...<upstream>
+    // [ahead N, behind M]` header line plus one line per uncommitted change, so
+    // the branch name, the dirty/clean state and the ahead/behind delta all
+    // come from the porcelain output.
     let output = ProcessCmd::new("git")
-        .args(["-C", source_dir_str.as_ref(), "rev-parse", "--abbrev-ref", "HEAD"])
+        .args(["-C", source_dir_str.as_ref(), "status", "--porcelain", "-b"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
@@ -781,23 +784,38 @@ fn get_git_info(source_dir: &PathBuf) -> Option<String> {
         return None;
     }
 
-    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    if branch.is_empty() || branch == "HEAD" {
+    let text = String::from_utf8(output.stdout).ok()?;
+    let mut lines = text.lines();
+    // First line is always the branch header, e.g. `## main...origin/main [behind 2]`.
+    let header = lines.next()?.trim().trim_start_matches("## ");
+
+    // Branch name = first token, minus any `...upstream` suffix. Detached
+    // (`HEAD (no branch)`) and unborn (`No commits yet on …`) heads have no
+    // branch to report — nothing useful to show.
+    let branch = header.split_whitespace().next()?.split("...").next()?;
+    if branch == "HEAD" || header.contains("No commits yet") || branch.is_empty() {
         return None;
     }
 
-    // Check if dirty
-    let status_output = ProcessCmd::new("git")
-        .args(["-C", source_dir_str.as_ref(), "status", "--porcelain"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    // dirty = any remaining non-empty line beyond the header, i.e. uncommitted
+    // working-tree changes (ahead/behind commits do not count as dirty).
+    let dirty = lines.any(|l| !l.trim().is_empty());
 
-    let dirty = !status_output.stdout.is_empty();
-    let state = if dirty { "dirty" } else { "clean" };
+    // ahead/behind delta from the `[ … ]` section of the header, if present.
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(bracket) = header
+        .find('[')
+        .and_then(|i| header[i + 1..].split(']').next())
+    {
+        for item in bracket.split(',').map(str::trim) {
+            if item.starts_with("ahead ") || item.starts_with("behind ") {
+                parts.push(item.to_string());
+            }
+        }
+    }
+    parts.push(if dirty { "dirty" } else { "clean" }.to_string());
 
-    Some(format!("branch: {}, {}", branch, state))
+    Some(format!("branch: {}, {}", branch, parts.join(", ")))
 }
 
 // ---------------------------------------------------------------------------

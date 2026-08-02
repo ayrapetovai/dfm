@@ -67,9 +67,6 @@ Every arm of `AddTask`/`PullTask`/`InitTask`/`ForgetTask` match repeats the same
 - Unused direct dependencies in `Cargo.toml`: **`once_cell`**, **`aead`** (both already pulled transitively by other crates). Remove.
 - `crypt.rs:48` `eprint!(": ");` always prints, even when `obtain_password_shell_command` is set — stray prompt character before command output.
 
-### 20. `get_git_info` runs `git` twice (`status.rs:749-780`)
-`rev-parse` then `status --porcelain`. Could do one `status --porcelain -b` call and parse the branch from the header line.
-
 ---
 
 ## P2 — Design patterns / robustness
