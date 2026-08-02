@@ -58,9 +58,6 @@ The iterative deepest-ancestor-collapse loop is ~80 lines of subtle `BTreeMap` b
 
 ## P1 — Shrinkable / duplicated code
 
-### 16. "Prune matching ignore patterns after success" duplicated
-`add.rs:423-430` and `pull.rs:422-429` are identical tails (`patterns_to_remove` + `prune_ignore_file`). Hoist into `commands/mod.rs`.
-
 ### 17. Per-task `if dry_run { continue; }`
 Every arm of `AddTask`/`PullTask`/`InitTask`/`ForgetTask` match repeats the same guard. Guard once at the top of the loop and keep only the mutating logic in the arms.
 

@@ -37,6 +37,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use filetime_creation::{set_file_mtime, FileTime};
+use microxdg::Xdg;
 use log::{error, info, trace, log_enabled};
 
 use dfm::*;
@@ -251,6 +252,26 @@ pub(crate) fn prune_ignore_file(
         fs::write(ignore_file_path, kept.join("\n"))?;
     }
     Ok(removed)
+}
+
+/// After a successful add/pull, drop the ignore patterns that were matched by
+/// the affected files, so those files no longer remain ignored. No-op on
+/// dry-run or when nothing matched.
+pub(crate) fn prune_matched_ignore_patterns(
+    xdg: &Xdg,
+    patterns_to_remove: &[String],
+    dry_run: bool,
+) -> Result<(), DfmError> {
+    if dry_run || patterns_to_remove.is_empty() {
+        return Ok(());
+    }
+    let removed = prune_ignore_file(
+        &calc_local_ignore_file(xdg)?,
+        |t| patterns_to_remove.iter().any(|p| *p == t),
+        dry_run,
+    )?;
+    info!("removed {} pattern(s) from ignore file", removed.len());
+    Ok(())
 }
 
 #[inline]

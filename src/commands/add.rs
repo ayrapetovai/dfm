@@ -12,7 +12,7 @@ use microxdg::Xdg;
 use super::{sync_file_copy, require_force, symlink_pointer_matches,
             update_sync_state, remove_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
-            prune_ignore_file};
+            prune_matched_ignore_patterns};
 
 /// Typed, pre-resolved arguments for the `add` command (built by the
 /// dispatcher from the matching clap subcommand).
@@ -415,14 +415,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         }
     }
 
-    if !dry_run && !patterns_to_remove.is_empty() {
-        let removed = prune_ignore_file(
-            &calc_local_ignore_file(xdg)?,
-            |t| patterns_to_remove.iter().any(|p| *p == t),
-            dry_run,
-        )?;
-        info!("removed {} pattern(s) from ignore file", removed.len());
-    }
+    prune_matched_ignore_patterns(xdg, &patterns_to_remove, dry_run)?;
 
     Ok(())
 }

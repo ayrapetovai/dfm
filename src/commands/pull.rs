@@ -10,7 +10,7 @@ use crate::DfmError;
 use super::{sync_file_copy, require_force, read_symlink_pointer,
             update_sync_state, get_sync_time, source_rel_to_target_rel,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
-            prune_ignore_file};
+            prune_matched_ignore_patterns};
 use microxdg::Xdg;
 
 /// Typed, per-command arguments for `pull` (built by the dispatcher).
@@ -494,14 +494,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
         }
     }
 
-    if !dry_run && !patterns_to_remove.is_empty() {
-        let removed = prune_ignore_file(
-            &calc_local_ignore_file(xdg)?,
-            |t| patterns_to_remove.iter().any(|p| *p == t),
-            dry_run,
-        )?;
-        info!("removed {} pattern(s) from ignore file", removed.len());
-    }
+    prune_matched_ignore_patterns(xdg, &patterns_to_remove, dry_run)?;
 
     Ok(())
 }
