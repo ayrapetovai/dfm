@@ -9,7 +9,7 @@ use regex::RegexSet;
 
 use dfm::*;
 use microxdg::Xdg;
-use super::{sync_file_copy, require_force,
+use super::{sync_file_copy, require_force, symlink_pointer_matches,
             update_sync_state, remove_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
             prune_ignore_file};
@@ -120,13 +120,8 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
             let source_symlink_file_exists = source_symlink_file_abs_path.exists();
             let target_pointee_rel_str = target_symlink_pointee_rel_path.to_string_lossy().into_owned();
             let source_symlink_file_points_to_right_target = if source_symlink_file_exists {
-                 match fs::read_to_string(&source_symlink_file_abs_path) {
-                    Ok(file_content) => {
-                        debug!("source symlink file {:?}\n\tpoints to \"{}\"", source_symlink_file_abs_path, file_content);
-                        file_content.trim().eq(&target_pointee_rel_str)
-                    },
-                    _ => false
-                }
+                symlink_pointer_matches(&source_symlink_file_abs_path, &target_pointee_rel_str)
+                    .unwrap_or(false)
             } else {
                 false
             };

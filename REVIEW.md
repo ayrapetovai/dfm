@@ -63,9 +63,6 @@ The clap ArgGroup allows `paths`, `patterns`, and `remove` together, but `ignore
 
 ## P1 — Overcomplicated / hard-to-parse code
 
-### 10. `forget.rs` analysis loop (`66-243`) — the maze
-~180 lines of `if symlink { … }` / `if canonicalize fails { … } else { … }` with `continue` terminating every branch and the same file-format logic re-derived three times (plain/encrypted/symlink source lookup repeated at 109-145 and 189-199). The README already specifies the behavior as scenario tables (forget.rs:20-31) — mirror that: one small function per scenario (`handle_target_symlink`, `handle_missing_target`, `handle_target_file`, `handle_source_path`), each returning the tasks to queue.
-
 ### 11. `pull.rs` source-path branch (`113-180`) — fall-through reassignment
 `target_abs_path` is shadowed and then reassigned from inside an `if/else` where several inner branches `continue` and one falls through. Following which statements are reachable after the branch is genuinely hard. Extract a `resolve_source_to_target(...) -> Option<(target_abs, pending_task)>` function so the `continue`s become early returns.
 

@@ -154,6 +154,60 @@ pub(crate) fn msg_nothing_to_do() -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// Shared symlink-pointer / source-variant helpers
+// ---------------------------------------------------------------------------
+
+/// Read a symlink pointer file's content with surrounding whitespace trimmed.
+pub(crate) fn read_symlink_pointer(pointer_file: &Path) -> Result<String, DfmError> {
+    Ok(fs::read_to_string(pointer_file)?.trim().to_string())
+}
+
+/// Whether a symlink pointer file's (trimmed) content equals the pointee path.
+pub(crate) fn symlink_pointer_matches(pointer_file: &Path, pointee: &str) -> Result<bool, DfmError> {
+    Ok(read_symlink_pointer(pointer_file)? == pointee)
+}
+
+/// Which storage form a source file takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SourceVariant {
+    Plain,
+    Encrypted,
+    Symlink,
+}
+
+/// Resolve the existing source counterpart(s) for `target_abs_path`, tried in
+/// priority order: plain, encrypted, symlink pointer. Returns the first that
+/// exists on disk, or `None` when the target has no source at all.
+pub(crate) fn resolve_source_variant(
+    settings: &Settings,
+    target_dir_abs_path: &PathBuf,
+    source_dir_abs_path: &PathBuf,
+    target_abs_path: &PathBuf,
+) -> Option<(SourceVariant, PathBuf)> {
+    let plain = filepath_in_source_dir(
+        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path, None,
+    );
+    if plain.exists() {
+        return Some((SourceVariant::Plain, plain));
+    }
+    let encrypted = filepath_in_source_dir(
+        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path,
+        Some(&settings.encrypted_postfix),
+    );
+    if encrypted.exists() {
+        return Some((SourceVariant::Encrypted, encrypted));
+    }
+    let symlink = filepath_in_source_dir(
+        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path,
+        Some(&settings.symlink_postfix),
+    );
+    if symlink.exists() {
+        return Some((SourceVariant::Symlink, symlink));
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Shared --dry-run / --force helpers
 // ---------------------------------------------------------------------------
 
