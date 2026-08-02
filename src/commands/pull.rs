@@ -161,9 +161,9 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
             } else if target_file_abs_path.exists() && source_name.ends_with(&settings.encrypted_postfix) {
                 debug!("target {:?} exists, source is encrypted, checking timestamps", target_file_abs_path);
 
-                let cmp = compare_files_by_timestamps(
-                    &target_file_abs_path, &source_file_abs_path,
-                    get_sync_time(state, &source_file_abs_path, &source_dir_abs_path).map(|st| &**st),
+                let cmp = compare_files(
+                    &settings.encrypted_postfix, &target_file_abs_path, &source_file_abs_path,
+                    get_sync_time(state, &source_file_abs_path, &source_dir_abs_path),
                 )?;
 
                     handle_encrypted_timestamps(cmp, &source_file_abs_path, &target_file_abs_path, *force, &mut tasks)?;
@@ -238,9 +238,9 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
                 if source_encrypted_abs_path.exists() {
                     debug!("target {:?} exists, encrypted source found, checking timestamps", target_abs_path);
 
-                    let cmp = compare_files_by_timestamps(
-                        &target_abs_path, &source_encrypted_abs_path,
-                        get_sync_time(state, &source_encrypted_abs_path, &source_dir_abs_path).map(|st| &**st),
+                    let cmp = compare_files(
+                        &settings.encrypted_postfix, &target_abs_path, &source_encrypted_abs_path,
+                        get_sync_time(state, &source_encrypted_abs_path, &source_dir_abs_path),
                     )?;
 
                     handle_encrypted_timestamps(cmp, &source_encrypted_abs_path, &target_abs_path, *force, &mut tasks)?;
@@ -252,7 +252,7 @@ pub fn pull_command(settings: &Settings, args: &Args, state: &mut StateObject) -
 
             let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
 
-            let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt.map(|st| &**st))?;
+            let cmp = compare_files(&settings.encrypted_postfix, &target_abs_path, &source_abs_path, sync_time_opt)?;
 
             match cmp {
                 CompareByTimestamp::BothModified => {

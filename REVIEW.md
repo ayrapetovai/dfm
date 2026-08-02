@@ -72,12 +72,6 @@ Status codes (`"MM"`, `"M "`, `"!?"`, `"LL"`) as `&'static str` throughout
 (`pull.rs:83`) is an unlabeled constant; `"."`/`"x"` sentinels in
 `is_dir_ignored`.
 
-### A9. Test fragility masks the design
-
-`launcher.sh` sleeps `0.002s` after every write/dfm call and `assert_source`
-retries up to 1s "for CI latency" — this is the mtime-granularity workaround
-leaking into tests. It is the symptom of A10.
-
 ### Minor
 
 - Both `lazy_static` **and** `once_cell::sync::Lazy` imported; two global-cache

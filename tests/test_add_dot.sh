@@ -13,7 +13,6 @@ dfm add .
 assert_source "newfile.txt"
 
 # now modify the source to create SourceModified state
-sleep 0.02
 echo "source modified content" > "$PWD/dotfiles/newfile.txt"
 
 dfm status --short | grep -q "^ M newfile.txt$"

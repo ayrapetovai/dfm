@@ -67,7 +67,8 @@ pub(crate) fn update_sync_state(
     let sync_creation = SystemTime::now();
     let source_rel_path = file_path_relative_to(source_abs, source_dir_abs);
     let source_rel_path = remove_dots_from_path(&source_rel_path);
-    state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), SyncTime(sync_creation));
+    let sha256 = compute_sha256(source_abs)?;
+    state.syncs.insert(source_rel_path.to_str().unwrap().to_string(), SyncTime { mtime: sync_creation, sha256 });
     let ft = FileTime::from_system_time(sync_creation);
     set_file_mtime(target_abs, ft)?;
     set_file_mtime(source_abs, ft)?;

@@ -62,7 +62,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Opt
                     let source_path = PathBuf::from(source_dir_abs_path).join(rel_path);
                     if let Ok(meta) = source_path.metadata() {
                         if let Ok(mtime) = meta.modified() {
-                            if mtime > sync_time.0 {
+                            if mtime > sync_time.mtime {
                                 un_pulled.push(rel_path.clone());
                             }
                         }
@@ -70,7 +70,7 @@ pub fn purge_command(settings: &Settings, args: &Args, path_to_config_file: &Opt
 
                     if let Ok(meta) = target_abs.metadata() {
                         if let Ok(mtime) = meta.modified() {
-                            if mtime > sync_time.0 {
+                            if mtime > sync_time.mtime {
                                 un_pushed.push(target_rel);
                             }
                         }

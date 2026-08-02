@@ -102,33 +102,41 @@ impl StateObject {
     }
 }
 
-/// Wrapper around `SystemTime` that serialises as `"<secs>;<nanos>"`.
-#[derive(Clone, Debug)]
-pub struct SyncTime(pub SystemTime);
+/// A sync record: the mtime assigned to both sides after a successful sync,
+/// plus a SHA-256 hash of the synced content. Content hashing makes change
+/// detection deterministic — it does not depend on filesystem mtime
+/// granularity.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SyncTime {
+    #[serde(with = "sync_time_ser")]
+    pub mtime: SystemTime,
+    pub sha256: String,
+}
 
 impl std::ops::Deref for SyncTime {
     type Target = SystemTime;
-    fn deref(&self) -> &SystemTime { &self.0 }
+    fn deref(&self) -> &SystemTime { &self.mtime }
 }
 
-impl Serialize for SyncTime {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let dur = self.0.duration_since(SystemTime::UNIX_EPOCH)
-            .map_err(|_| serde::ser::Error::custom("timestamp is before UNIX epoch"))?;
+mod sync_time_ser {
+    use serde::{de::Error as DeError, ser::Error as SerError, Deserialize, Deserializer, Serializer};
+    use std::time::SystemTime;
+
+    pub fn serialize<S: Serializer>(t: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
+        let dur = t.duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| S::Error::custom("timestamp is before UNIX epoch"))?;
         let line = format!("{};{}", dur.as_secs(), dur.subsec_nanos());
         s.serialize_str(&line)
     }
-}
 
-impl<'de> Deserialize<'de> for SyncTime {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<SystemTime, D::Error> {
         let line = <String as Deserialize>::deserialize(d)?;
         let (secs, nanos) = line.split_once(';')
-            .ok_or_else(|| serde::de::Error::custom("expected \"<secs>;<nanos>\""))?;
-        let secs: u64 = secs.parse().map_err(serde::de::Error::custom)?;
-        let nanos: u32 = nanos.parse().map_err(serde::de::Error::custom)?;
+            .ok_or_else(|| D::Error::custom("expected \"<secs>;<nanos>\""))?;
+        let secs: u64 = secs.parse().map_err(D::Error::custom)?;
+        let nanos: u32 = nanos.parse().map_err(D::Error::custom)?;
         let dur = std::time::Duration::new(secs, nanos);
-        Ok(SyncTime(SystemTime::UNIX_EPOCH + dur))
+        Ok(SystemTime::UNIX_EPOCH + dur)
     }
 }
 
@@ -978,6 +986,56 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
     }
 
     Err(DfmError::other("the timestamps of the files under comparison are in inconsistent state"))
+}
+
+/// SHA-256 of the file contents, hex-encoded.
+pub fn compute_sha256(path: &PathBuf) -> Result<String, DfmError> {
+    use sha2::{Digest, Sha256};
+    let content = fs::read(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&content);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Content-based conflict detection for plain files. A side is "modified"
+/// iff its current content hash differs from the hash stored at the last sync.
+/// No mtime comparison is involved, so the result does not depend on
+/// filesystem timestamp granularity.
+pub fn compare_files_by_content(
+    target_abs_path: &PathBuf,
+    source_abs_path: &PathBuf,
+    sync_time_opt: Option<&SyncTime>,
+) -> Result<CompareByTimestamp, DfmError> {
+    let sync = match sync_time_opt {
+        Some(s) => s,
+        None => return Ok(CompareByTimestamp::NeverSynchronized),
+    };
+
+    let target_modified = compute_sha256(target_abs_path)? != sync.sha256;
+    let source_modified = compute_sha256(source_abs_path)? != sync.sha256;
+
+    match (target_modified, source_modified) {
+        (true, true) => Ok(CompareByTimestamp::BothModified),
+        (true, false) => Ok(CompareByTimestamp::TargetModified),
+        (false, true) => Ok(CompareByTimestamp::SourceModified),
+        (false, false) => Ok(CompareByTimestamp::NonModified),
+    }
+}
+
+/// Conflict detection that dispatches on the source file type: encrypted
+/// sources (`.encrypted`) are compared by mtime (re-encryption produces
+/// different bytes, so hashing is meaningless), plain files by content.
+pub fn compare_files(
+    encrypted_postfix: &str,
+    target_abs_path: &PathBuf,
+    source_abs_path: &PathBuf,
+    sync_time_opt: Option<&SyncTime>,
+) -> Result<CompareByTimestamp, DfmError> {
+    if source_abs_path.to_str().unwrap().ends_with(encrypted_postfix) {
+        compare_files_by_timestamps(target_abs_path, source_abs_path, sync_time_opt.map(|s| &s.mtime))
+    } else {
+        compare_files_by_content(target_abs_path, source_abs_path, sync_time_opt)
+    }
 }
 
 pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str) -> Result<Option<String>, DfmError> {

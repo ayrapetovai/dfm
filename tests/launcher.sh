@@ -32,11 +32,11 @@ else
 fi
 export EXECUTABLE
 
-eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@" && sleep 0.002s; }'
+eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@"; }'
 export "$PROGRAMM_NAME_IN_SHELL"
 
 function write() {
-    mkdir -p "$(dirname "$2")" && echo "$1" > "$2" && sleep 0.002
+    mkdir -p "$(dirname "$2")" && echo "$1" > "$2"
 }
 export write;
 
@@ -66,7 +66,6 @@ function assert_fail() {
 export assert_fail
 
 # Assert that a file exists in the source directory ($PWD/dotfiles/).
-# Retries for up to ~1s to handle CI filesystem latency.
 function assert_source() {
     local file="$PWD/dotfiles/$1"
     [ -f "$file" ] && return 0
@@ -82,7 +81,6 @@ function assert_no_source() {
 export -f assert_no_source
 
 # Assert that a file's content matches the expected string.
-# Retries for up to ~1s to handle CI filesystem latency.
 function assert_content_eq() {
     local file="$1"
     local expected="$2"

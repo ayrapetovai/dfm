@@ -208,7 +208,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
                 // Converting from plain to encrypted.  The plain source will be
                 // deleted after encryption, so check if it has un-synced changes.
                 let sync_time_opt = get_sync_time(state, &regular_source_abs_path, &source_dir_abs_path);
-                let cmp = compare_files_by_timestamps(&target_abs_path, &regular_source_abs_path, sync_time_opt.map(|st| &**st))?;
+                let cmp = compare_files(&settings.encrypted_postfix, &target_abs_path, &regular_source_abs_path, sync_time_opt)?;
 
                 match cmp {
                     CompareByTimestamp::BothModified => {
@@ -263,7 +263,7 @@ pub fn add_command(settings: &Settings, args: &Args, state: &mut StateObject) ->
         if source_abs_path.exists() {
             let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
 
-            let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt.map(|st| &**st))?;
+            let cmp = compare_files(&settings.encrypted_postfix, &target_abs_path, &source_abs_path, sync_time_opt)?;
 
             // conflict cases
             match cmp {

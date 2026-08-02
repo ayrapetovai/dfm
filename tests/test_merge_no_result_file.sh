@@ -17,7 +17,7 @@ assert_source "file.txt"
 
 # modify both target and source so they become BothModified
 write "$MODIFIED" file.txt
-write "$CONTENT" "$PWD/dotfiles/file.txt"
+write "$MODIFIED" "$PWD/dotfiles/file.txt"
 
 # Act: dfm merge — merge tool succeeds but writes no result
 assert_fail dfm merge 2>/dev/null

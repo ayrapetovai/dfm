@@ -199,7 +199,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
 
                 let sync_time_opt = get_sync_time(state, &source_abs_path, &source_dir_abs_path);
 
-                let cmp = compare_files_by_timestamps(&target_abs_path, &source_abs_path, sync_time_opt.map(|st| &**st))?;
+                let cmp = compare_files(&settings.encrypted_postfix, &target_abs_path, &source_abs_path, sync_time_opt)?;
                 if CompareByTimestamp::SourceModified == cmp {
                     if *force {
                         info!("source {:?} was modified, removing source", source_abs_path);
@@ -275,7 +275,7 @@ pub fn forget_command(settings: &Settings, args: &Args, state: &mut StateObject)
             let sync_time = &state.syncs[&key];
             let source_meta = source_abs.metadata()?;
             let source_mtime = source_meta.modified()?;
-            if source_mtime > sync_time.0 {
+            if source_mtime > sync_time.mtime {
                 if *force {
                     info!("source {:?} was modified, removing with --force", key);
                     tasks.push(ForgetTask::Delete(source_abs));

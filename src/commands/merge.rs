@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::time::SystemTime;
 use log::{debug, info, warn};
 use dfm::*;
 use crate::{Args, Command, DfmError};
@@ -48,7 +47,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
     // Build list of (source_abs, target_abs, sync_time) tuples to check
-    let mut candidates: Vec<(PathBuf, PathBuf, SystemTime)> = vec![];
+    let mut candidates: Vec<(PathBuf, PathBuf, SyncTime)> = vec![];
 
     if let Some(paths) = paths {
         for path in paths {
@@ -77,7 +76,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
                 let inferred_target_abs = remove_dots_from_path(&inferred_target_abs);
 
                 if let Some(sync_time) = state.syncs.get(source_rel_str) {
-                    candidates.push((source_abs, inferred_target_abs, sync_time.0.clone()));
+                    candidates.push((source_abs, inferred_target_abs, sync_time.clone()));
                 } else {
                     warn!("{:?} is not in the state file, skipping...", source_rel);
                 }
@@ -108,7 +107,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
                     let source_abs = remove_dots_from_path(&source_abs);
                     let sync_time = &state.syncs[&state_key];
 
-                    candidates.push((source_abs, target_abs, sync_time.0.clone()));
+                    candidates.push((source_abs, target_abs, sync_time.clone()));
                 } else {
                     warn!("{:?} is not in the state file, skipping...", target_abs);
                 }
@@ -128,7 +127,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
             let target_abs = PathBuf::from_iter([target_dir_abs_path.to_str().unwrap(), &target_rel]);
             let target_abs = remove_dots_from_path(&target_abs);
 
-            candidates.push((source_abs, target_abs, sync_time.0.clone()));
+            candidates.push((source_abs, target_abs, sync_time.clone()));
         }
     }
 
@@ -155,7 +154,7 @@ pub fn merge_command(settings: &Settings, args: &Args, state: &mut StateObject) 
             continue;
         }
 
-        let cmp = compare_files_by_timestamps(target_abs, source_abs, Some(sync_time))?;
+        let cmp = compare_files(&settings.encrypted_postfix, target_abs, source_abs, Some(sync_time))?;
         if !matches!(cmp, CompareByTimestamp::BothModified) && !paths_provided {
             debug!("{:?} is not BothModified, skipping", source_abs);
             continue;

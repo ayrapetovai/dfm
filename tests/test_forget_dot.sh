@@ -16,9 +16,9 @@ dfm add root-b.txt
 dfm add sub/dir/nested.txt
 
 # confirm state entries exist
-assert_succ grep -Fq '"root-a.txt" = ' "$STATE_FILE"
-assert_succ grep -Fq '"root-b.txt" = ' "$STATE_FILE"
-assert_succ grep -Fq '"sub/dir/nested.txt" = ' "$STATE_FILE"
+assert_succ grep -Fq '"root-a.txt"' "$STATE_FILE"
+assert_succ grep -Fq '"root-b.txt"' "$STATE_FILE"
+assert_succ grep -Fq '"sub/dir/nested.txt"' "$STATE_FILE"
 
 dfm forget .
 
@@ -36,9 +36,9 @@ assert_content_eq "root-b.txt" "root-b"
 assert_content_eq "sub/dir/nested.txt" "nested"
 
 # state entries must be removed
-assert_fail grep -Fq '"root-a.txt" = ' "$STATE_FILE"
-assert_fail grep -Fq '"root-b.txt" = ' "$STATE_FILE"
-assert_fail grep -Fq '"sub/dir/nested.txt" = ' "$STATE_FILE"
+assert_fail grep -Fq '"root-a.txt"' "$STATE_FILE"
+assert_fail grep -Fq '"root-b.txt"' "$STATE_FILE"
+assert_fail grep -Fq '"sub/dir/nested.txt"' "$STATE_FILE"
 
 # pull must not recreate anything
 rm root-a.txt root-b.txt sub/dir/nested.txt
