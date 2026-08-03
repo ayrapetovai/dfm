@@ -398,12 +398,44 @@ pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, DfmError>
         }
     };
 
-    return match toml::from_str(&state_file_content) {
+    let mut state: StateObject = match toml::from_str(&state_file_content) {
         Err(e) => {
             return Err(DfmError::other(e));
         },
-        Ok(s) => Ok(s)
+        Ok(s) => s
     };
+
+    state.syncs = state.syncs
+        .into_iter()
+        .map(|(key, sync)| {
+            validate_state_key(&key)?;
+            Ok((key, sync))
+        })
+        .collect::<Result<HashMap<_, _>, DfmError>>()?;
+
+    Ok(state)
+}
+
+/// State keys are source-relative paths that get joined onto `source_dir` and
+/// passed through lexical `..` resolution. Reject keys that could escape the
+/// source directory (parent components, absolute paths, drive prefixes) when a
+/// `state.toml` is tampered with. This is hardening, not an active exploit.
+fn validate_state_key(key: &str) -> Result<(), DfmError> {
+    let path = Path::new(key);
+    for component in path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                return Err(DfmError::InvalidData(format!(
+                    "state key {:?} contains path component that escapes the source directory",
+                    key
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<(), DfmError> {
@@ -1086,6 +1118,44 @@ fn test_remove_dots_from_path() {
     assert_eq!(remove_dots_from_path(&PathBuf::from("..")), PathBuf::from(".."));
     assert_eq!(remove_dots_from_path(&PathBuf::from("/a/..")), PathBuf::from("/"));
     assert_eq!(remove_dots_from_path(&PathBuf::from("/a/../../b")), PathBuf::from("../b"));
+}
+
+#[test]
+fn test_read_state_rejects_traversal_keys() {
+    let dir = std::env::temp_dir().join(format!("dfm_state_test_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("state.toml");
+
+    let good = r#"
+source_directory = "/home/user/dotfiles"
+target_directory = "/home/user"
+[syncs]
+"dot_bashrc" = { mtime = "0;0", sha256 = "" }
+"dot_config/foo" = { mtime = "0;0", sha256 = "" }
+"#;
+    std::fs::write(&path, good).unwrap();
+    let state = read_state(&path).unwrap();
+    assert_eq!(state.syncs.len(), 2);
+
+    let bad = r#"
+source_directory = "/home/user/dotfiles"
+target_directory = "/home/user"
+[syncs]
+"../../.bashrc" = { mtime = "0;0", sha256 = "" }
+"#;
+    std::fs::write(&path, bad).unwrap();
+    assert!(read_state(&path).is_err());
+
+    let bad_abs = r#"
+source_directory = "/home/user/dotfiles"
+target_directory = "/home/user"
+[syncs]
+"/etc/passwd" = { mtime = "0;0", sha256 = "" }
+"#;
+    std::fs::write(&path, bad_abs).unwrap();
+    assert!(read_state(&path).is_err());
+
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

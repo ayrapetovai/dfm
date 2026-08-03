@@ -5,13 +5,6 @@ Builds clean, all 12 Rust unit tests pass. The shell suite (161 tests) was not r
 
 ---
 
-## P0 — Security
-
-### 3. Path traversal via tampered state keys
-State keys are joined onto `source_dir` and passed through `remove_dots_from_path`, which resolves `..` lexically. A key like `../../.bashrc` in a tampered `state.toml` would, e.g., make `forget` orphan-processing (forget.rs:272-294) delete a file outside the source directory. The state file is user-owned so this is hardening rather than an active exploit, but a `syncs` key containing a `..` component should be rejected (or escaped) at `read_state` time.
-
----
-
 ## P2 — Design patterns / robustness
 
 - **Inconsistent matcher**: `check_path_matches_regex` (full-path substring, lib.rs:219) survives only for `force_encryption_for`; everything else uses component-wise matching. Either switch encryption matching to the same matcher or document why absolute-path substring is intended here.
