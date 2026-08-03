@@ -7,6 +7,7 @@ use std::io::Write;
 
 use colored::Colorize;
 use log::{debug, info};
+use regex::RegexSet;
 
 use dfm::*;
 use crate::DfmError;
@@ -245,7 +246,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // Pre-compute canonical source dir for robust path comparison
     let canon_source_dir = fs::canonicalize(&source_dir_abs).unwrap_or_else(|_| source_dir_abs.clone());
 
-    for (i, target_abs) in traversed_target.iter().enumerate() {
+for (i, target_abs) in traversed_target.iter().enumerate() {
         report_progress(&mut progress, i + 1, traversed_target.len());
         // Skip files inside the source directory — normalize via canonicalize
         // to avoid path-comparison edge cases (symlinks, double slashes, etc.)
@@ -276,116 +277,17 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         let rel = remove_dots_from_path(&rel);
         let rel_str = rel.to_string_lossy().into_owned();
 
-        // ------------------------------------------------------------------
-        // Symlink handling
-        // ------------------------------------------------------------------
         if target_abs.is_symlink() {
-            // Check if this symlink is managed — either directly via pointer file
-            // in state, or via its resolved pointee having a managed source copy.
-            let pointer_path = filepath_in_source_dir(
-                &settings.dot_prefix, &target_dir_abs, &source_dir_abs,
-                target_abs, Some(&settings.symlink_postfix),
+            classify_target_symlink(
+                &settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
+                target_abs, &rel_str, &state_keys, *all, *ignored, &mut entries,
             );
-            let pointer_rel = file_path_relative_to(&pointer_path, &source_dir_abs);
-            let pointer_rel = remove_dots_from_path(&pointer_rel);
-            let pointer_in_state = state_keys.contains(pointer_rel.to_str().unwrap_or(""));
-
-            let pointee_in_state = fs::read_link(target_abs)
-                .ok()
-                .and_then(|link_target| {
-                    let abs = target_abs.parent().unwrap_or(std::path::Path::new(".")).join(&link_target);
-                    fs::canonicalize(&abs).ok()
-                })
-                .map(|pointee_abs| {
-                    // Only consider pointee managed when it points into the source dir
-                    // (the --symlink pattern). A pointee inside the target dir or elsewhere
-                    // does NOT make the symlink itself managed — if it's not in state.syncs
-                    // it should appear as ?L so the user can decide to add it.
-                    if pointee_abs.starts_with(&source_dir_abs) {
-                        let rel = file_path_relative_to(&pointee_abs, &source_dir_abs);
-                        let rel = remove_dots_from_path(&rel);
-                        state_keys.contains(rel.to_str().unwrap_or(""))
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false);
-
-            if pointer_in_state || pointee_in_state {
-                // Managed symlink — only shown with --all
-                if *all {
-                    entries.push(StatusEntry {
-                        code: StatusCode::ManagedSymlink,
-                        path: rel_str.clone(),
-                        matched_pattern: None,
-                    });
-                }
-                continue;
-            }
-
-            // Check ignore patterns
-            if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&rel_str)) {
-                if *all || *ignored {
-                    entries.push(StatusEntry {
-                        code: StatusCode::IgnoredSymlink,
-                        path: rel_str,
-                        matched_pattern: Some(pattern),
-                    });
-                }
-                continue;
-            }
-
-            // Unmanaged symlink
-            entries.push(StatusEntry {
-                code: StatusCode::UnmanagedSymlink,
-                path: rel_str,
-                matched_pattern: None,
-            });
-            continue;
+        } else {
+            classify_target_file(
+                &settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
+                target_abs, &rel_str, &state_keys, *all, *ignored, &mut entries,
+            );
         }
-
-        // ------------------------------------------------------------------
-        // Regular file handling
-        // ------------------------------------------------------------------
-
-        // Check if this target file is already in state (via source-rel mapping)
-        let source_abs = filepath_in_source_dir(
-            &settings.dot_prefix, &target_dir_abs, &source_dir_abs,
-            target_abs, None,
-        );
-        let source_rel = file_path_relative_to(&source_abs, &source_dir_abs);
-        let source_rel = remove_dots_from_path(&source_rel);
-        let source_rel_str = source_rel.to_string_lossy().into_owned();
-
-        // Also try encrypted/symlink postfix variants
-        let enc_key = format!("{}{}", source_rel_str, settings.encrypted_postfix);
-        let sym_key = format!("{}{}", source_rel_str, settings.symlink_postfix);
-
-        if state_keys.contains(&source_rel_str)
-            || state_keys.contains(&enc_key)
-            || state_keys.contains(&sym_key)
-        {
-            continue; // already in state — covered by Phase 1
-        }
-
-        // Check ignore
-        if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&rel_str)) {
-            if *all || *ignored {
-                entries.push(StatusEntry {
-                    code: StatusCode::Ignored,
-                    path: rel_str,
-                    matched_pattern: Some(pattern),
-                });
-            }
-            continue;
-        }
-
-        // Unmanaged regular file
-        entries.push(StatusEntry {
-            code: StatusCode::Unmanaged,
-            path: rel_str,
-            matched_pattern: None,
-        });
     }
     progress.clear();
 
@@ -502,6 +404,138 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 classifiers (target directory walk)
+// ---------------------------------------------------------------------------
+
+/// A target path is a symlink. Classify it as a managed symlink (`LL`, only
+/// shown with `--all`), an ignored symlink (`!L`), or an unmanaged symlink
+/// (`?L`). A symlink counts as managed when either its pointer file is in
+/// state or its resolved pointee maps to a managed source copy.
+#[allow(clippy::too_many_arguments)]
+fn classify_target_symlink(
+    settings: &Settings,
+    target_dir_abs: &PathBuf,
+    source_dir_abs: &PathBuf,
+    target_ignore_regex: &RegexSet,
+    target_abs: &PathBuf,
+    rel_str: &str,
+    state_keys: &HashSet<String>,
+    all: bool,
+    ignored: bool,
+    entries: &mut Vec<StatusEntry>,
+) {
+    // Managed via a source symlink pointer file in state.
+    let pointer_path = filepath_in_source_dir(
+        &settings.dot_prefix, target_dir_abs, source_dir_abs,
+        target_abs, Some(&settings.symlink_postfix),
+    );
+    let pointer_rel = file_path_relative_to(&pointer_path, source_dir_abs);
+    let pointer_rel = remove_dots_from_path(&pointer_rel);
+    let pointer_in_state = state_keys.contains(pointer_rel.to_str().unwrap_or(""));
+
+    // Or via a managed pointee that resolves into the source directory — the
+    // `--symlink` pattern. A pointee inside the target dir or elsewhere does
+    // NOT make the symlink managed: if it is not in state.syncs it should
+    // appear as `?L` so the user can decide to add it.
+    let pointee_in_state = fs::read_link(target_abs)
+        .ok()
+        .and_then(|link_target| {
+            let abs = target_abs.parent().unwrap_or(std::path::Path::new(".")).join(&link_target);
+            fs::canonicalize(&abs).ok()
+        })
+        .map(|pointee_abs| {
+            if pointee_abs.starts_with(source_dir_abs) {
+                let rel = file_path_relative_to(&pointee_abs, source_dir_abs);
+                let rel = remove_dots_from_path(&rel);
+                state_keys.contains(rel.to_str().unwrap_or(""))
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
+
+    if pointer_in_state || pointee_in_state {
+        if all {
+            entries.push(StatusEntry {
+                code: StatusCode::ManagedSymlink,
+                path: rel_str.to_string(),
+                matched_pattern: None,
+            });
+        }
+        return;
+    }
+
+    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(rel_str)) {
+        if all || ignored {
+            entries.push(StatusEntry {
+                code: StatusCode::IgnoredSymlink,
+                path: rel_str.to_string(),
+                matched_pattern: Some(pattern),
+            });
+        }
+        return;
+    }
+
+    entries.push(StatusEntry {
+        code: StatusCode::UnmanagedSymlink,
+        path: rel_str.to_string(),
+        matched_pattern: None,
+    });
+}
+
+/// A target path is a regular file. Classify it as already-managed (skip),
+/// ignored (`!!`), or unmanaged (`??`).
+#[allow(clippy::too_many_arguments)]
+fn classify_target_file(
+    settings: &Settings,
+    target_dir_abs: &PathBuf,
+    source_dir_abs: &PathBuf,
+    target_ignore_regex: &RegexSet,
+    target_abs: &PathBuf,
+    rel_str: &str,
+    state_keys: &HashSet<String>,
+    all: bool,
+    ignored: bool,
+    entries: &mut Vec<StatusEntry>,
+) {
+    // Already in state (plain, encrypted, or symlink variant) — covered by Phase 1.
+    let source_abs = filepath_in_source_dir(
+        &settings.dot_prefix, target_dir_abs, source_dir_abs,
+        target_abs, None,
+    );
+    let source_rel = file_path_relative_to(&source_abs, source_dir_abs);
+    let source_rel = remove_dots_from_path(&source_rel);
+    let source_rel_str = source_rel.to_string_lossy().into_owned();
+
+    let enc_key = format!("{}{}", source_rel_str, settings.encrypted_postfix);
+    let sym_key = format!("{}{}", source_rel_str, settings.symlink_postfix);
+
+    if state_keys.contains(&source_rel_str)
+        || state_keys.contains(&enc_key)
+        || state_keys.contains(&sym_key)
+    {
+        return;
+    }
+
+    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(rel_str)) {
+        if all || ignored {
+            entries.push(StatusEntry {
+                code: StatusCode::Ignored,
+                path: rel_str.to_string(),
+                matched_pattern: Some(pattern),
+            });
+        }
+        return;
+    }
+
+    entries.push(StatusEntry {
+        code: StatusCode::Unmanaged,
+        path: rel_str.to_string(),
+        matched_pattern: None,
+    });
 }
 
 // ---------------------------------------------------------------------------
