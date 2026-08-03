@@ -1,8 +1,8 @@
 mod commands;
 
-use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use log::warn;
+use std::path::PathBuf;
 
 use dfm::*;
 
@@ -14,25 +14,28 @@ use commands::*;
 // xdg https://wiki.archlinux.org/title/XDG_Base_Directory
 // aes https://rust.howtos.io/a-guide-to-symmetric-encryption-in-rust/
 
-static LONG_ABOUT: &'static str = 
-r#"This program is designed to manage dotfiles which are usually
+static LONG_ABOUT: &'static str = r#"This program is designed to manage dotfiles which are usually
 configuration files in user's home directory."#;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Dotfile Manager", long_about = LONG_ABOUT)]
 struct Args {
-
     #[command(subcommand)]
     command: Command,
 
     //arbitrary_command: String,
-
     /// Do not perform actions, only checks and reports.
     #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
     dry_run: bool,
 
     /// Verbosity level: 0 - quite, 1 - brief, 2 - info, 3 - debug.
-    #[arg(long, short = 'v', num_args = 1, default_value_t = 1, value_name = "LEVEL_NUMBER")]
+    #[arg(
+        long,
+        short = 'v',
+        num_args = 1,
+        default_value_t = 1,
+        value_name = "LEVEL_NUMBER"
+    )]
     verbosity: usize, // 0 - don't output anything, 1 - brief info, 2 - info print action, 3 - print debug
 
     /// Use other config.
@@ -42,7 +45,6 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-
     /// Initialize state file and config file with the source directory.
     Init {
         /// Specifies the path to the source directory.
@@ -244,7 +246,7 @@ enum Command {
 
     /// Print paths
     #[command(arg_required_else_help = false)]
-    Paths
+    Paths,
 }
 
 fn main_logic() -> Result<(), dfm::DfmError> {
@@ -256,129 +258,233 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         .module(module_path!())
         .verbosity(args.verbosity)
         .show_level(args.verbosity > 2)
-        .init() {
+        .init()
+    {
         return Err(dfm::DfmError::other(e));
     }
 
     let path_to_state_file = match calc_state_file_path(&xdg) {
         Ok(p) => Some(p),
         Err(e) => {
-            warn!("state file path could not be resolved: {}; continuing without state", e);
+            warn!(
+                "state file path could not be resolved: {}; continuing without state",
+                e
+            );
             None
         }
     };
     let state_opt = match &path_to_state_file {
         Some(p) => match read_state(p) {
             Ok(s) => Some(s),
-            Err(_) => None
+            Err(_) => None,
         },
-        None => None
+        None => None,
     };
 
     let default_settings = create_default_settings();
     let path_to_config_file = match calc_config_file_path(&xdg) {
         Ok(p) => Some(p),
         Err(e) => {
-            warn!("config file path could not be resolved: {}; continuing without config", e);
+            warn!(
+                "config file path could not be resolved: {}; continuing without config",
+                e
+            );
             None
         }
     };
     let config_from_file = match &path_to_config_file {
         Some(p) => match read_config(p) {
             Ok(c) => Some(c),
-            Err(_) => None
+            Err(_) => None,
         },
-        None => None
+        None => None,
     };
-    let settings =  merge_settings(&default_settings, &config_from_file, state_opt.as_ref());
+    let settings = merge_settings(&default_settings, &config_from_file, state_opt.as_ref());
 
-    return match args.command {
-        Command::Init { path_to_source, path_to_target, dry_run } => {
-            init_command(&settings, &xdg, InitArgs {
+    match args.command {
+        Command::Init {
+            path_to_source,
+            path_to_target,
+            dry_run,
+        } => init_command(
+            &settings,
+            &xdg,
+            InitArgs {
                 path_to_source,
                 path_to_target,
                 dry_run: resolve_dry_run(dry_run, args.dry_run),
-            })
+            },
+        ),
+        Command::Config { get, set, list } => match &path_to_config_file {
+            Some(p) => config_command(
+                ConfigArgs {
+                    get,
+                    set,
+                    list,
+                    dry_run: args.dry_run,
+                },
+                p,
+            ),
+            None => Err(dfm::DfmError::NotFound(
+                "config file path could not be resolved".into(),
+            )),
         },
-        Command::Config { get, set, list } => {
-            match &path_to_config_file {
-                Some(p) => config_command(ConfigArgs { get, set, list, dry_run: args.dry_run }, p),
-                None => Err(dfm::DfmError::NotFound("config file path could not be resolved".into()))
-            }
-        },
-        Command::Purge { dry_run, keep_source, keep_config_file, force } => {
-            purge_command(&settings, &xdg, PurgeArgs {
+        Command::Purge {
+            dry_run,
+            keep_source,
+            keep_config_file,
+            force,
+        } => purge_command(
+            &settings,
+            &xdg,
+            PurgeArgs {
                 dry_run: resolve_dry_run(dry_run, args.dry_run),
                 keep_source,
                 keep_config_file,
                 force,
-            }, &path_to_config_file)
-        },
-        Command::Add { paths, force, symlink, encrypt, dry_run } => {
-            with_state(state_opt, path_to_state_file.as_ref(), |state| {
-                add_command(&settings, &xdg, AddArgs {
+            },
+            &path_to_config_file,
+        ),
+        Command::Add {
+            paths,
+            force,
+            symlink,
+            encrypt,
+            dry_run,
+        } => with_state(state_opt, path_to_state_file.as_ref(), |state| {
+            add_command(
+                &settings,
+                &xdg,
+                AddArgs {
                     paths,
                     force,
                     symlink,
                     encrypt,
                     dry_run: resolve_dry_run(dry_run, args.dry_run),
-                }, state)
-            })
-        },
-        Command::Pull { paths, force, symlink, dry_run } => {
-            with_state(state_opt, path_to_state_file.as_ref(), |state| {
-                pull_command(&settings, &xdg, PullArgs {
+                },
+                state,
+            )
+        }),
+        Command::Pull {
+            paths,
+            force,
+            symlink,
+            dry_run,
+        } => with_state(state_opt, path_to_state_file.as_ref(), |state| {
+            pull_command(
+                &settings,
+                &xdg,
+                PullArgs {
                     paths,
                     force,
                     symlink,
                     dry_run: resolve_dry_run(dry_run, args.dry_run),
-                }, state)
-            })
-        },
-        Command::Forget { paths, force, dry_run } => {
-            with_state_even_if_error(state_opt, path_to_state_file.as_ref(), |state| {
-                forget_command(&settings, &xdg, ForgetArgs {
+                },
+                state,
+            )
+        }),
+        Command::Forget {
+            paths,
+            force,
+            dry_run,
+        } => with_state_even_if_error(state_opt, path_to_state_file.as_ref(), |state| {
+            forget_command(
+                &settings,
+                &xdg,
+                ForgetArgs {
                     paths,
                     force,
                     dry_run: resolve_dry_run(dry_run, args.dry_run),
-                }, state)
-            })
-        },
-        Command::Ignore { paths, patterns, remove, dry_run } => {
-            ignore_command(&settings, &xdg, IgnoreArgs {
+                },
+                state,
+            )
+        }),
+        Command::Ignore {
+            paths,
+            patterns,
+            remove,
+            dry_run,
+        } => ignore_command(
+            &settings,
+            &xdg,
+            IgnoreArgs {
                 paths,
                 patterns,
                 remove,
                 dry_run: resolve_dry_run(dry_run, args.dry_run),
-            })
-        },
-        Command::Paths => {
-            paths_command(&settings, &xdg, PathsArgs {}, &path_to_config_file, &path_to_state_file)
-        },
+            },
+        ),
+        Command::Paths => paths_command(
+            &settings,
+            &xdg,
+            PathsArgs {},
+            &path_to_config_file,
+            &path_to_state_file,
+        ),
         Command::Merge { paths, dry_run } => {
             with_state(state_opt, path_to_state_file.as_ref(), |state| {
-                merge_command(&settings, &xdg, MergeArgs {
-                    paths,
-                    dry_run: resolve_dry_run(dry_run, args.dry_run),
-                }, state)
+                merge_command(
+                    &settings,
+                    &xdg,
+                    MergeArgs {
+                        paths,
+                        dry_run: resolve_dry_run(dry_run, args.dry_run),
+                    },
+                    state,
+                )
             })
-        },
-        Command::Status { all, short, porcelain, conflicted, modified, unmanaged, managed, unpulled, ignored, ignored_patterns, unused_patterns } => {
-            let state = state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
-            status_command(&settings, &xdg, StatusArgs { all, short, porcelain, conflicted, modified, unmanaged, managed, unpulled, ignored, ignored_patterns, unused_patterns }, &state)
-        },
-    };
+        }
+        Command::Status {
+            all,
+            short,
+            porcelain,
+            conflicted,
+            modified,
+            unmanaged,
+            managed,
+            unpulled,
+            ignored,
+            ignored_patterns,
+            unused_patterns,
+        } => {
+            let state = state_opt
+                .ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+            status_command(
+                &settings,
+                &xdg,
+                StatusArgs {
+                    all,
+                    short,
+                    porcelain,
+                    conflicted,
+                    modified,
+                    unmanaged,
+                    managed,
+                    unpulled,
+                    ignored,
+                    ignored_patterns,
+                    unused_patterns,
+                },
+                &state,
+            )
+        }
+    }
 }
 
 /// Unwrap the state file, run a mutating command against it, then persist the
 /// result back to disk. Converts a missing state file or state file path into
 /// an error instead of a panic and removes the repetitive `state_opt.unwrap()` /
 /// `path_to_state_file.unwrap()` noise.
-fn with_state<T>(state_opt: Option<StateObject>, path_to_state_file: Option<&PathBuf>,
-                 f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>) -> Result<T, dfm::DfmError> {
-    let mut state = state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
-    let state_path = path_to_state_file
-        .ok_or_else(|| dfm::DfmError::InvalidInput("state file path could not be resolved".into()))?;
+fn with_state<T>(
+    state_opt: Option<StateObject>,
+    path_to_state_file: Option<&PathBuf>,
+    f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>,
+) -> Result<T, dfm::DfmError> {
+    let mut state =
+        state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+    let state_path = path_to_state_file.ok_or_else(|| {
+        dfm::DfmError::InvalidInput("state file path could not be resolved".into())
+    })?;
     let result = f(&mut state)?;
     write_state(state_path, &state)?;
     Ok(result)
@@ -388,11 +494,16 @@ fn with_state<T>(state_opt: Option<StateObject>, path_to_state_file: Option<&Pat
 /// command returns an error. Used by `forget`: the in-memory state entry is
 /// cleaned up before the source deletion runs, so on a filesystem error the
 /// entry must still be written back (and the deletion error reported).
-fn with_state_even_if_error<T>(state_opt: Option<StateObject>, path_to_state_file: Option<&PathBuf>,
-                               f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>) -> Result<T, dfm::DfmError> {
-    let mut state = state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
-    let state_path = path_to_state_file
-        .ok_or_else(|| dfm::DfmError::InvalidInput("state file path could not be resolved".into()))?;
+fn with_state_even_if_error<T>(
+    state_opt: Option<StateObject>,
+    path_to_state_file: Option<&PathBuf>,
+    f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>,
+) -> Result<T, dfm::DfmError> {
+    let mut state =
+        state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+    let state_path = path_to_state_file.ok_or_else(|| {
+        dfm::DfmError::InvalidInput("state file path could not be resolved".into())
+    })?;
     let result = f(&mut state);
     write_state(state_path, &state)?;
     result
