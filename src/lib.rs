@@ -10,7 +10,7 @@ use std::str::FromStr;
 use std::time::SystemTime;
 
 use envmnt::ExpandOptions;
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use microxdg::Xdg;
 use regex::{Regex, RegexSet};
 use serde::Deserialize;
@@ -61,6 +61,11 @@ impl DfmError {
     /// Shorthand for creating an `Other` variant.
     pub fn other(msg: impl std::fmt::Display) -> Self {
         DfmError::Other(msg.to_string())
+    }
+
+    /// Returns `true` when the error is an I/O permission-denied error.
+    pub fn is_permission_denied(&self) -> bool {
+        matches!(self, DfmError::Io(e) if e.kind() == io::ErrorKind::PermissionDenied)
     }
 }
 
@@ -932,6 +937,15 @@ pub fn list_directory(
                 Err(ref e) => match e.io_error() {
                     Some(err) if err.kind() == io::ErrorKind::NotFound => {
                         traversed_paths.push(path.into());
+                    },
+                    Some(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                        // Unreadable objects (strict permissions/ownership) are
+                        // skipped with a warning instead of aborting the command.
+                        warn!(
+                            "skipping unreadable path {:?}: {}",
+                            e.path().unwrap_or(path),
+                            err
+                        );
                     },
                     _ => {
                         error_messages.push(format!("error: {}", e));

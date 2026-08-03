@@ -367,19 +367,31 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         debug!("checking {:?}", target_path);
 
         if target_path.is_symlink() {
-            handle_target_symlink(
+            match handle_target_symlink(
                 &settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
                 &target_ignore_regex, &target_ignore_file_path,
                 *encrypt, *force, &mut tasks, &mut error_messages,
-            )?;
+            ) {
+                Ok(()) => {}
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_path, e);
+                }
+                Err(e) => return Err(e),
+            }
         } else {
-            handle_target_file(
+            match handle_target_file(
                 &settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
                 &target_ignore_regex, &target_ignore_file_path,
                 &internal_dfm_paths, &encryption_regex_set,
                 *symlink, *encrypt, *force, state,
                 &mut tasks, &mut error_messages, &mut conflict_detected, &mut patterns_to_remove,
-            )?;
+            ) {
+                Ok(()) => {}
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_path, e);
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
     progress.clear();
@@ -414,11 +426,23 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         }
         match task {
             AddTask::Copy(target_file, source_file) => {
-                sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path)?;
+                match sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path) {
+                    Ok(()) => {}
+                    Err(e) if e.is_permission_denied() => {
+                        warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    }
+                    Err(e) => return Err(e),
+                }
             },
             AddTask::CopyAndSymlink(target_file, source_file) => {
-                // 1. Copy file content to source
-                sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path)?;
+                match sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path) {
+                    Ok(()) => {}
+                    Err(e) if e.is_permission_denied() => {
+                        warn!("skipping unreadable path {:?}: {}", target_file, e);
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
 
                 // 2. Remove the original target file
                 fs::remove_file(&target_file)?;
@@ -431,7 +455,14 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                 symlink::symlink_file(&link_target, &target_file)?;
             },
             AddTask::CopyEncryptedFile(target_file, source_file) => {
-                dfm::crypt::write_zip_file(settings, &target_file, &source_file)?;
+                match dfm::crypt::write_zip_file(settings, &target_file, &source_file) {
+                    Ok(()) => {}
+                    Err(e) if e.is_permission_denied() => {
+                        warn!("skipping unreadable path {:?}: {}", target_file, e);
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
 
                 update_sync_state(state, &source_file, &target_file, &source_dir_abs_path)?;
 

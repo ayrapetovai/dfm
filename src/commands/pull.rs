@@ -426,20 +426,31 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
                 &settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
                 &target_ignore_regex, &target_ignore_file_path,
                 *target_must_be_symlink, *force, state, &mut tasks, &mut patterns_to_remove,
-            )? {
-                Some(target) => target,
-                None => continue,
+            ) {
+                Ok(Some(target)) => target,
+                Ok(None) => continue,
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_abs_path, e);
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
         } else {
             target_abs_path
         };
 
         // Regular target-path processing.
-        handle_target_path(
+        match handle_target_path(
             &settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
             *target_must_be_symlink, *force, state, &target_ignore_regex,
             &target_ignore_file_path, &mut tasks, &mut patterns_to_remove, &mut error_list,
-        )?;
+        ) {
+            Ok(()) => {}
+            Err(e) if e.is_permission_denied() => {
+                warn!("skipping unreadable path {:?}: {}", target_abs_path, e);
+            }
+            Err(e) => return Err(e),
+        }
     }
     progress.clear();
 
@@ -465,7 +476,13 @@ for task in tasks.iter() {
         }
         match task {
             PullTask::Copy(target_file, source_file) => {
-                sync_file_copy(source_file, target_file, source_file, state, &source_dir_abs_path)?;
+                match sync_file_copy(source_file, target_file, source_file, state, &source_dir_abs_path) {
+                    Ok(()) => {}
+                    Err(e) if e.is_permission_denied() => {
+                        warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    }
+                    Err(e) => return Err(e),
+                }
             },
             PullTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
                 if let Err(e) = symlink::remove_symlink_file(target_symlink_file_path) {
@@ -484,11 +501,25 @@ for task in tasks.iter() {
                 };
                 let pointee = PathBuf::from(points_to);
 
-                symlink::symlink_file(pointee, target_symlink_file_path)?;
+                match symlink::symlink_file(pointee, target_symlink_file_path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        warn!("skipping unreadable path {:?}: {}", target_symlink_file_path, e);
+                        continue;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
                 debug!("target symlink {:?} updated", target_symlink_file_path)
             },
             PullTask::Decrypt(target_file, source_file) => {
-                dfm::crypt::read_zip_file(settings, source_file, target_file)?;
+                match dfm::crypt::read_zip_file(settings, source_file, target_file) {
+                    Ok(()) => {}
+                    Err(e) if e.is_permission_denied() => {
+                        warn!("skipping unreadable path {:?}: {}", target_file, e);
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
 
                 update_sync_state(state, source_file, target_file, &source_dir_abs_path)?;
             },

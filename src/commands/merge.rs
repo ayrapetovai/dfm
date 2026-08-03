@@ -157,7 +157,14 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
             continue;
         }
 
-        let cmp = compare_files(&settings.encrypted_postfix, target_abs, source_abs, Some(sync_time))?;
+        let cmp = match compare_files(&settings.encrypted_postfix, target_abs, source_abs, Some(sync_time)) {
+            Ok(cmp) => cmp,
+            Err(e) if e.is_permission_denied() => {
+                warn!("skipping unreadable path {:?}: {}", target_abs, e);
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         if !matches!(cmp, CompareByTimestamp::BothModified) && !paths_provided {
             debug!("{:?} is not BothModified, skipping", source_abs);
             continue;
@@ -169,7 +176,13 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
             merged_count += 1;
             continue;
         }
-        run_merge(settings, source_abs, target_abs, state, &source_dir_abs_path)?;
+        match run_merge(settings, source_abs, target_abs, state, &source_dir_abs_path) {
+            Ok(()) => {}
+            Err(e) if e.is_permission_denied() => {
+                warn!("skipping unreadable path {:?}: {}", target_abs, e);
+            }
+            Err(e) => return Err(e),
+        }
         info!("merged {:?}", target_abs);
         merged_count += 1;
     }

@@ -6,7 +6,7 @@ use std::process::{Command as ProcessCmd, Stdio};
 use std::io::Write;
 
 use colored::Colorize;
-use log::{debug, info};
+use log::{debug, info, warn};
 use regex::RegexSet;
 
 use dfm::*;
@@ -203,7 +203,14 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             debug!("status: stale state entry {:?}, source missing", source_rel);
             continue;
         } else if target_exists && source_exists {
-            let cmp = compare_files(&settings.encrypted_postfix, &target_abs, &source_abs, Some(sync_time))?;
+            let cmp = match compare_files(&settings.encrypted_postfix, &target_abs, &source_abs, Some(sync_time)) {
+                Ok(cmp) => cmp,
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_abs, e);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             match cmp {
                 CompareByTimestamp::BothModified => (StatusCode::BothModified, target_rel.clone()),
                 CompareByTimestamp::TargetModified => (StatusCode::TargetModified, target_rel.clone()),

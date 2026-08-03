@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 
 use log::{debug, error, info, warn};
@@ -250,14 +251,28 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
 
         // Symlink scenario — fully handled when a pointer file exists; a
         // symlink with no pointer file falls through to pointee processing.
-        if target_path.is_symlink() && handle_target_symlink(
-            &settings, &target_dir_abs_path, &source_dir_abs_path, target_path, *force, &mut tasks,
-        )? {
-            continue;
+        if target_path.is_symlink() {
+            let symlink_handled = match handle_target_symlink(
+                &settings, &target_dir_abs_path, &source_dir_abs_path, target_path, *force, &mut tasks,
+            ) {
+                Ok(v) => v,
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_path, e);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            if symlink_handled {
+                continue;
+            }
         }
 
         let target_abs_path = match fs::canonicalize(target_path) {
             Ok(abs) => abs,
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                warn!("skipping unreadable path {:?}: {}", target_path, e);
+                continue;
+            }
             Err(e) => {
                 if target_path.is_symlink() {
                     debug!("symlink {:?} is broken: {}", target_path, e);
@@ -271,14 +286,26 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         };
 
         if target_abs_path.starts_with(&source_dir_abs_path) {
-            handle_source_path(
+            match handle_source_path(
                 &settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, *force, &mut tasks,
-            )?;
+            ) {
+                Ok(()) => {}
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_abs_path, e);
+                }
+                Err(e) => return Err(e),
+            }
         } else if target_abs_path.starts_with(&target_dir_abs_path) {
-            handle_target_file(
+            match handle_target_file(
                 &settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
                 *force, state, &mut tasks, &mut error_messages,
-            )?;
+            ) {
+                Ok(()) => {}
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_abs_path, e);
+                }
+                Err(e) => return Err(e),
+            }
         } else {
             warn!("target {:?}\n\tresides outside the target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
         }

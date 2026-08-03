@@ -16,8 +16,8 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 ```bash
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
-cargo test                             # 12 unit tests in src/lib.rs
-bash tests/launcher.sh -q              # 161 shell integration tests
+cargo test                             # 14 unit tests in src/lib.rs
+bash tests/launcher.sh -q              # 168 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # one test (shows -x trace)
 ```
 
@@ -32,7 +32,7 @@ src/crypt.rs         AES-256 zip write/read, password cache, obtain_password
 src/commands/mod.rs  re-exports + shared helpers (below)
 src/commands/{add,pull,merge,forget,init,ignore,purge,config,paths,status}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      161 shell tests
+tests/test_*.sh      168 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -48,8 +48,20 @@ tests/test_*.sh      161 shell tests
 - **`Config`** — same fields, optional, TOML. **source_dir/target_dir are NOT
   in config** — they come from the state file.
 - **`StateObject`** — `{ source_directory, target_directory, syncs:
-  HashMap<String, SyncTime> }`. `SyncTime` serializes as `"secs;nanos"`.
-  State file `$XDG_STATE_HOME/dfm/state.toml`. Sync key = source-relative path.
+  HashMap<String, SyncTime> }`. State file `$XDG_STATE_HOME/dfm/state.toml`.
+  Sync key = source-relative path (validated on read via
+  `validate_state_key`: rejects `..`/absolute/drive components — tamper
+  hardening). `read_state` returns an error on any invalid key.
+- **`SyncTime`** — `{ mtime: SystemTime, sha256: String }`. `mtime` serializes
+  via `sync_time_ser` as `"<secs>;<nanos>"`; `sha256` = hex SHA-256 of the
+  content at last sync. Content hashing makes change detection deterministic
+  (independent of filesystem mtime granularity). `Deref<Target=SystemTime>`.
+- **Conflict detection (lib.rs)**: `compare_files(encrypted_postfix, TF, SF, sync)`
+  dispatches on source type: `.encrypted` sources → `compare_files_by_timestamps`
+  (mtime-based, since re-encryption changes bytes); **plain** files →
+  `compare_files_by_content` (compares each side's current `sha256` vs the
+  hash stored in sync → `NonModified | SourceModified | TargetModified |
+  BothModified | NeverSynchronized`). No `NeverSynchronized` → no sync entry.
 
 ## Paths (lib.rs)
 
@@ -78,15 +90,19 @@ is used for all ignore checks. Pattern split on `/`, each sub-pattern anchored
 matches *directory* components (root always matches) — so `abc\.c` ignores
 `dir/` but not `dir/abc.c`. Multi-part patterns match adjacent components
 (sliding window). Trailing-empty segments (from a trailing `/` in pattern or
-path) are dropped → `dirname/` ≡ `dirname`. `check_path_matches_regex` (old
-full-path substring) is used only for `force_encryption_for`.
+path) are dropped → `dirname/` ≡ `dirname`. `check_path_matches_regex_substring`
+(older full-path substring) is used only for `force_encryption_for`; all ignore
+file checks use the component-wise variant. `dir_ignore_pattern`/`is_dir_ignored`
+probe a dir as `R + "/x"` (sentinel) to test whether its subtree is fully ignored.
 
 ## Conflict detection
 
-`compare_files`: `.encrypted` sources compared by mtime, plain by sha256 vs
-state (A9). `compare_files_by_timestamps(TF, SF, sync)` returns
-`BothModified | SourceModified | NonModified | TargetModified |
-NeverSynchronized`, evaluated in order:
+`compare_files(encrypted_postfix, TF, SF, sync)`: `.encrypted` sources →
+`compare_files_by_timestamps` (mtime), **plain** files →
+`compare_files_by_content` (sha256 vs `sync.sha256`).
+
+`compare_files_by_timestamps` returns `BothModified | SourceModified |
+NonModified | TargetModified | NeverSynchronized`, evaluated in order:
 
 ```
 both_not_modified    = TF==sync && sync==SF
@@ -96,20 +112,32 @@ both_modified        = TF>sync && sync<SF
 ```
 
 Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
-"timestamps ... inconsistent".
+"timestamps ... inconsistent". `sync` here is the `sync_time_opt` `SystemTime`.
 
 ## Shared helpers (commands/mod.rs)
 
 - `sync_file_copy(from, to, source_file_in_source_dir, state, source_dir)` —
   copy, preserve permissions, set mtime on both sides, update state.
-- `update_sync_state` — insert `SyncTime(now)`, set mtime on both sides.
+- `update_sync_state` — compute `sha256(source)`, insert `SyncTime{now,
+  sha256}`, set mtime on both sides (via `filetime_creation`).
+- `get_sync_time` / `remove_sync_state` — look up / drop a state entry by
+  source-relative path.
+- `resolve_source_variant(settings, ...)` + `SourceVariant{Plain,Encrypted,
+  Symlink}` — resolve an existing source for a target path, tried in order
+  plain → encrypted → symlink pointer; `None` when the target has no source.
+- `source_rel_to_target_rel(state_key, ...)` — state key → target-rel: strip
+  `dot_prefix`→`.`, drop one trailing symlink/encrypted postfix.
 - `resolve_dry_run(cmd_flag, global_flag)`; `require_force(force, msg)`;
   `prune_ignore_file(path, should_ignore, dry_run)` (keeps blank lines + full
-  kept-line text, writes only when something removed);
-  `list_directory_or_error`; `msg_dry_run()`/`msg_nothing_to_do()`.
-- `report_progress` + `ProgressLine` — single self-overwriting stderr line;
-  shows at `-v 0/1`, suppressed at `-v ≥ 2` (single gate in
-  `ProgressLine::set`, no-op when `log::max_level() >= Info`).
+  kept-line text, returns removed, writes only when something removed and
+  not dry-run); `prune_matched_ignore_patterns(xdg, patterns, dry_run)` (after
+  successful add/pull `--force`, drop the matched target-ignore patterns);
+  `list_directory_or_error`; `msg_dry_run()`/`msg_nothing_to_do()`;
+  `read_symlink_pointer`/`symlink_pointer_matches`.
+- `report_progress` + `ProgressLine` — single self-overwriting stderr line
+  (`\r` + pad); shown at `-v 0/1`, suppressed at `-v ≥ 2` (single gate in
+  `ProgressLine::set`, no-op when `log::max_level() >= Info`). `report_progress`
+  throttles to ~20 updates and is silent below 100 files.
 
 ## Commands (semantics)
 
@@ -145,15 +173,26 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   directly (no shell). Success = exit 0 **and** result exists; copy result to
   both sides (re-encrypt if needed), `update_sync_state`, clean up.
 - **`forget [PATH...] [-f]`** — never deletes targets. No paths → all
-  (traverse target + orphan state keys). Tasks: `Delete(source)`,
+  (traverse target + orphan state keys; orphan source checked modified → needs
+  `--force`). Dispatches per path: `handle_target_symlink` (returns bool: fully
+  handled vs falls through to pointee), `handle_missing_target`,
+  `handle_source_path`, `handle_target_file`. Tasks: `Delete(source)`,
   `RemoveState(key)`, 3 phases: (1) best-effort delete sources (NotFound ok,
   other errors collected → fail), (2) remove state, (3) prune empty parents.
-  `--force` when source modified or symlink pointer mismatches. Symlink
-  pointing into source dir also deletes the target symlink.
-- **`ignore [PATH...] [-p PAT...] [-r REC...]`** — write `regex::escape(rel)` of
-  paths to target/source ignore; `-p` raw patterns; `-r` removes records from
-  the *target* ignore (raw or escaped match); no args → traverse + report.
-  Appends with trailing-newline guard (`ensure_trailing_newline`).
+  `--force` when source modified or symlink pointer mismatches (`SourceModified`
+  /`TargetModified`/`BothModified` all gate on `--force`). Symlink pointing into
+  source dir also deletes the target symlink. Note: main.rs dispatches `forget`
+  through `with_state_even_if_error` (persist state even when the command fails),
+  because the state entry is cleaned up before source deletion runs.
+- **`ignore [PATH...] [-p PAT...] [-r REC...]`** — writes `regex::escape(rel)` of
+  target paths to the target ignore, but a **source-side** path is stored in
+  the *source* ignore as its target-rel form: `^...$` with `dot_prefix` stripped
+  (source `dot_my.log` → target `.my.log` → `^my\.log$`); already-ignored
+  source entries are migrated (`migrate_ignore_line`). `-p` raw patterns
+  (validated); `-r` removes records from the *target* ignore (raw or escaped
+  match). `paths`/`patterns`/`remove` are mutually exclusive (clap ArgGroup
+  required → no args is a CLI error, despite README). Appends with
+  trailing-newline guard (`ensure_trailing_newline`).
 - **`purge [-s] [-c] [-f]`** — abort (unless `-f`) on un-pulled source changes
   (mtime > sync). Removes config (unless `-c`), source dir (unless `-s`), state
   dir. Each component resolved independently; unresolvable → skipped with info
@@ -161,25 +200,38 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - **`config --get|--set|--list`** — TOML properties; `--set` stores strings;
   array fields not settable.
 - **`paths`** — prints Source/Target/Config/State/Local ignore/Source ignore.
-- **`status [--short|--porcelain] [filters]`** — Phase 1 state.syncs → codes;
-  Phase 2 walk target → `??`/`?L` unmanaged, `!!`/`!L` ignored, `LL` only when
-  symlink *pointee* resolves into source dir **and** is in state; Phase 3 stale
-  patterns. Codes: `--` ok, `MM` both modified, `M ` target, ` M` source, `NM`
-  never-synced, `!?` unpulled, `!P` stale pattern. Default view: grouped,
-  colored, dirs collapsed to `dir/*`, git branch/dirty header, paged
-  (`$PAGER`/`less -FRSX`) only when output exceeds terminal height.
-  `--porcelain` = tab-separated, never paged. Filters: `-a -c -m -U -M -p -i
-  -l -u`.
+- **`status [--short|--porcelain] [filters]`** — Phase 1 `state.syncs` → codes;
+  Phase 2 walk target for unmanaged/ignored files (skips dfm internal files:
+  state, config, target-ignore, and anything inside the source dir), classified
+  by `classify_target_symlink`/`classify_target_file`; fully-ignored pruned dirs
+  rendered as one `!! dir/`; Phase 3 stale/unused patterns. Codes: `--` ok,
+  `MM` both modified, `M ` target, ` M` source, `NM` never-synced, `!?` unpulled,
+  `??` unmanaged, `?L` unmanaged symlink, `LL` managed symlink, `!!` ignored,
+  `!L` ignored symlink, `!P` stale pattern. `LL` shown only when the symlink's
+  *pointee* resolves into source dir **and** is in state (or pointer file in
+  state). Default view (Human-readable, grouped into "Changes to merge/add/
+  pull", "Unpulled", "Unmanaged files", "Up to date", "Ignored", "Unused ignore
+  patterns"): colored paths, dirs collapsed to `dir/*` (`collapse_shared_dirs`),
+  git header via `git -C <source> status --porcelain -b`
+  (`get_git_info`: branch + ahead/behind + dirty/clean), paged
+  (`$PAGER`/`less -FRSX`, `terminal_height()` via `stty size`) only when output
+  exceeds terminal height. `--short` = `<code> <path>`; `--porcelain` =
+  tab-separated, both uncolored & never paged. Filters: `-a -c -m -U -M -p -i
+  -l -u` (hidden by default: up-to-date, `LL`, ignored).
 
 ## Encryption (crypt.rs)
 
-`write_zip_file`: single-entry zip, **AES-256** (Bzip2), inner name =
-target-rel path, preserves unix perms; prints `file <path> needs an encryption
-password` to **stderr**. `read_zip_file`: entry 0; on `InvalidPassword` clears
-cache and re-prompts once. `obtain_password`: process-global
-`Mutex<Option<String>>` cache; if `obtain_password_shell_command` set, pipe it
-to `sh` **stdin** (not `-c`, invisible in `ps`) and read stdout; else masked
-`rpassword` prompt. Prompt/newline/password notices all go to **stderr**.
+`write_zip_file`: **AES-256** (Bzip2), inner name = target-rel path, preserves
+unix perms on the file **and** records a non-encrypted directory entry for every
+enclosing directory (so a pull can restore e.g. a 0700 SSH dir); prints
+`file <path> needs an encryption password` to **stderr**. `read_zip_file`:
+walks every entry (`by_index_decrypt`), recreates those directories+perms, then
+the file entry (restoring its perms); on `InvalidPassword` clears the cache and
+re-prompts once (re-opens a fresh archive — a failed decrypt advances the
+reader). `obtain_password`: process-global `Mutex<Option<String>>` cache; if
+`obtain_password_shell_command` set, pipe it to `sh` **stdin** (not `-c`,
+invisible in `ps`) and read stdout (`trim_end_matches(['\r','\n'])` so manual
+`7z x` works); else masked `rpassword` prompt. All notices go to **stderr**.
 
 ## Traversal (list_directory, lib.rs)
 
@@ -197,6 +249,22 @@ don't count toward progress. Rel = `strip_prefix(rel_base)` fallback
 `follow_root_links(false)`; WalkDir `NotFound` passes original path through;
 directories skipped.
 
+## Unreadable objects (permission/ownership)
+
+`io::ErrorKind::PermissionDenied` (strict perms, wrong owner) is **skip-with-
+warning**, never a command failure:
+- `list_directory` (lib.rs) downgrades WalkDir `PermissionDenied` to a
+  `warn!` naming the path (unlike `NotFound`, which passes the root through,
+  and all other errors, which land in `errors` and fail the command).
+- Analysis loops in add/pull/forget and `compare_files` in status/merge wrap
+  per-file calls; task **execution** loops in add/pull also guard the actual
+  copy/encrypt/symlink calls — a single unreadable object is skipped, remaining
+  tasks still run.
+- `DfmError::is_permission_denied()` (lib.rs) detects the variant; forget's
+  delete phase was already best-effort.
+- Verify with: `chmod 000 <file>` then `dfm add <file>` (exit 0 + warning);
+  re-add after `chmod` restores normal behavior.
+
 ## Gotchas / conventions
 
 - **Symlink pointer postfix appends to the full filename**
@@ -205,6 +273,14 @@ directories skipped.
   loop; `continue` in analysis doesn't cancel already-queued tasks.
 - **`--force` on add/pull** also removes the matching target-ignore pattern
   from the ignore file after success.
+- **State dispatch**: `forget` uses `with_state_even_if_error` (persist state
+  even on failure); `add`/`pull`/`merge` use `with_state` (state only written
+  on success). `status` runs on a read-only borrow of state.
+- **`main_logic` resolves state/config as `Option`**: unresolvable paths log a
+  warning and continue (relevant to `purge`/`paths` with `$HOME` unset); mutating
+  commands then error via `with_state`.
+- `source_rel_to_target_rel`/`resolve_source_variant`/`get_sync_time` live in
+  **commands/mod.rs**, not lib.rs.
 - `merge_tool_command` runs directly (no shell) — `|`, `>`, `$VAR` don't work.
 - main.rs requires the state file for add/pull/forget/merge/status
   (`NotFound` otherwise); init/config/purge/ignore/paths work without it.
@@ -222,9 +298,11 @@ directories skipped.
   are grep-based: `cmd | grep -q "pat"` (aborts if not found), `! cmd | grep -q`
   (aborts if found). No `sleep` in tests (use helpers). One file per scenario:
   `test_<description>.sh`.
-- Counts: **161 shell tests**, **12 Rust unit tests in src/lib.rs**
+- Counts: **168 shell tests**, **14 Rust unit tests in src/lib.rs**
   (`test_file_path_relative_to`, `test_remove_dots_from_path`,
-  `test_pattern_matches_path_components_*`). No `sealed_test` dependency.
+  `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
+  `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`).
+  No `sealed_test` dependency.
 
 ## Debug strategies (in order)
 
