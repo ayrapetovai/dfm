@@ -187,7 +187,7 @@ fn handle_target_file(
         }
     }
 
-    let encrypt = if let Some(pattern) = check_path_matches_regex(encryption_regex_set, &target_abs_path) {
+    let encrypt = if let Some(pattern) = check_path_matches_regex_substring(encryption_regex_set, &target_abs_path) {
         debug!("target {:?} is forced to be encrypted by regex /{}/ from config file", target_abs_path, pattern);
         true
     } else {

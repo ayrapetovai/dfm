@@ -216,7 +216,16 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmErr
     }
 }
 
-pub fn check_path_matches_regex(regex: &RegexSet, haystack: &PathBuf) -> Option<String> {
+/// Full-path substring matcher: returns the first pattern in `regex` that
+/// matches anywhere inside `haystack` (no anchoring).
+///
+/// This is the **substring** variant. It is intentionally used only for
+/// `force_encryption_for` matching (see `add.rs`): a config value like
+/// `\.ssh` is meant to match any path *containing* that text (e.g.
+/// `/home/user/.ssh/config`), not just the exact final component. Everything
+/// else (ignore files) uses `check_path_matches_regex_component_wise`, which
+/// anchors per path component.
+pub fn check_path_matches_regex_substring(regex: &RegexSet, haystack: &PathBuf) -> Option<String> {
     let haystack = haystack.to_string_lossy();
     if regex.matches(haystack.as_ref()).matched_any() {
         let target_ignore_patterns = regex.patterns();
@@ -358,8 +367,8 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
     }
 }
 
-/// Version of `check_path_matches_regex` that uses component-wise matching
-/// (path between `/` separators) instead of full-path substring matching.
+/// Component-wise variant of `check_path_matches_regex_substring`: matches a
+/// relative path between `/` separators instead of as a full-path substring.
 ///
 /// `haystack` should be a path **relative** to the directory whose ignore
 /// file is being checked (target or source).

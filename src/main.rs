@@ -371,14 +371,16 @@ fn main_logic() -> Result<(), dfm::DfmError> {
 }
 
 /// Unwrap the state file, run a mutating command against it, then persist the
-/// result back to disk. Converts "state missing" into an error instead of a
-/// panic and removes the repetitive `state_opt.unwrap()` /
+/// result back to disk. Converts a missing state file or state file path into
+/// an error instead of a panic and removes the repetitive `state_opt.unwrap()` /
 /// `path_to_state_file.unwrap()` noise.
 fn with_state<T>(state_opt: Option<StateObject>, path_to_state_file: Option<&PathBuf>,
                  f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>) -> Result<T, dfm::DfmError> {
     let mut state = state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+    let state_path = path_to_state_file
+        .ok_or_else(|| dfm::DfmError::InvalidInput("state file path could not be resolved".into()))?;
     let result = f(&mut state)?;
-    write_state(path_to_state_file.unwrap(), &state)?;
+    write_state(state_path, &state)?;
     Ok(result)
 }
 
@@ -389,8 +391,10 @@ fn with_state<T>(state_opt: Option<StateObject>, path_to_state_file: Option<&Pat
 fn with_state_even_if_error<T>(state_opt: Option<StateObject>, path_to_state_file: Option<&PathBuf>,
                                f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>) -> Result<T, dfm::DfmError> {
     let mut state = state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+    let state_path = path_to_state_file
+        .ok_or_else(|| dfm::DfmError::InvalidInput("state file path could not be resolved".into()))?;
     let result = f(&mut state);
-    write_state(path_to_state_file.unwrap(), &state)?;
+    write_state(state_path, &state)?;
     result
 }
 
