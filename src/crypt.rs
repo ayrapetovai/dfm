@@ -89,6 +89,25 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
     Ok(password)
 }
 
+/// Ancestors of a `target_dir`-relative path, shallowest first. For `a/b/c`
+/// this yields `[a, a/b]`; a file directly in the target root yields none.
+fn enclosing_dirs(rel: &std::path::Path) -> Vec<PathBuf> {
+    if let Some(parent) = rel.parent() {
+        parent.components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(c) => Some(c),
+                _ => None,
+            })
+            .scan(PathBuf::new(), |acc, c| {
+                acc.push(c);
+                Some(acc.clone())
+            })
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), DfmError> {
     // Ensure the parent directory exists (important when source path has subdirectories)
     if let Some(parent) = source_file_path.parent() {
@@ -101,6 +120,19 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
 
     let target_dir_path = PathBuf::from(&settings.target_dir);
     let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
+
+    // Record the permissions of every enclosing directory below the target
+    // root, so `read_zip_file` can recreate them on a pull. Without this, a
+    // pull writes the directories via `create_dir_all` and loses e.g. a 0700
+    // SSH directory. Directory entries are stored non-encrypted (no secrets).
+    for dir_rel in enclosing_dirs(&inner_name) {
+        let dir_abs = target_dir_path.join(&dir_rel);
+        let mode = fs::metadata(&dir_abs).map(|m| m.permissions().mode()).unwrap_or(0o755);
+        zip.add_directory(
+            dir_rel.to_string_lossy(),
+            SimpleFileOptions::default().unix_permissions(mode),
+        ).map_err(DfmError::other)?;
+    }
 
     eprintln!("file {:?} needs an encryption password", inner_name);
 
@@ -148,26 +180,59 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
         let file = std::fs::File::open(source_zip_path)?;
         let mut archive = zip::ZipArchive::new(file).map_err(DfmError::other)?;
 
-        match archive.by_index_decrypt(0, password.as_bytes()) {
-            Ok(mut zip_file) => {
-                // Restore the permissions recorded in the zip entry by
-                // write_zip_file, so a decrypt round-trip preserves e.g. a
-                // 0600 key file instead of defaulting to 0666 & ~umask (0644).
-                let permissions = zip_file.unix_mode().map(fs::Permissions::from_mode);
-                let mut output_file = std::fs::File::create(target_file_path)?;
-                std::io::copy(&mut zip_file, &mut output_file).map_err(DfmError::other)?;
-                if let Some(perms) = permissions {
-                    fs::set_permissions(target_file_path, perms)?;
+        // The archive holds the single encrypted file entry plus one
+        // non-encrypted directory entry per enclosing directory (see
+        // `write_zip_file`). Walking every entry lets us recreate those
+        // directories with their recorded permissions before writing the file.
+        // (`by_index_decrypt` is safe on the plain entries — the zip crate
+        // discards the password when the entry is not actually encrypted.)
+        for i in 0..archive.len() {
+            let mut zip_file = match archive.by_index_decrypt(i, password.as_bytes()) {
+                Ok(f) => f,
+                Err(zip::result::ZipError::InvalidPassword) if !already_retried => {
+                    clear_password_cache();
+                    eprintln!("wrong password for {:?}, please try again.", source_zip_path);
+                    already_retried = true;
+                    // Re-enter the outer loop: re-open a fresh archive with a
+                    // freshly-prompted password (the cache was cleared above).
+                    break;
                 }
-                return Ok(());
+                Err(e) => return Err(DfmError::other(e)),
+            };
+
+            // A directory entry: recreate the target directory and restore the
+            // permissions recorded at add time (e.g. a 0700 SSH directory).
+            if zip_file.is_dir() {
+                if let Some(rel) = zip_file.enclosed_name() {
+                    let dir_abs = target_dir_path.join(&rel);
+                    if let Some(mode) = zip_file.unix_mode() {
+                        fs::create_dir_all(&dir_abs)?;
+                        fs::set_permissions(&dir_abs, fs::Permissions::from_mode(mode))?;
+                    }
+                }
+                continue;
             }
-            Err(zip::result::ZipError::InvalidPassword) if !already_retried => {
-                clear_password_cache();
-                eprintln!("wrong password for {:?}, please try again.", source_zip_path);
-                already_retried = true;
-                // Loop back — obtain_password will re-prompt since the cache was cleared
+
+            // The encrypted file entry — restore the permissions recorded by
+            // write_zip_file (e.g. a 0600 key file instead of 0666 & ~umask).
+            let permissions = zip_file.unix_mode().map(fs::Permissions::from_mode);
+            let mut output_file = std::fs::File::create(target_file_path)?;
+            std::io::copy(&mut zip_file, &mut output_file).map_err(DfmError::other)?;
+            if let Some(perms) = permissions {
+                fs::set_permissions(target_file_path, perms)?;
             }
-            Err(e) => return Err(DfmError::other(e)),
+            return Ok(());
+        }
+
+        // We only reach here after an InvalidPassword retry (the `break`
+        // above); loop and re-prompt with the cleared password cache. But if
+        // we finished without any password failure, the archive has no file
+        // entry at all — fail rather than looping forever.
+        if !already_retried {
+            return Err(DfmError::other(format!(
+                "encrypted archive has no file entry: {:?}",
+                source_zip_path
+            )));
         }
     }
 }
