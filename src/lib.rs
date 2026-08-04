@@ -407,14 +407,23 @@ pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, DfmError>
 
     let state_file_content = match fs::read_to_string(path_to_state_file) {
         Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(DfmError::NotFound(format!(
+                "state file does not exist: {}",
+                path_to_state_file.display()
+            )));
+        }
         Err(e) => {
-            return Err(DfmError::other(e));
+            return Err(DfmError::Io(e));
         }
     };
 
     let mut state: StateObject = match toml::from_str(&state_file_content) {
         Err(e) => {
-            return Err(DfmError::other(e));
+            return Err(DfmError::InvalidData(format!(
+                "state file is corrupt: {}",
+                e
+            )));
         },
         Ok(s) => s
     };
@@ -786,7 +795,9 @@ pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf),
 
 pub fn calc_working_dir_paths_unchecked(settings: &Settings) -> Result<(PathBuf, PathBuf), DfmError> {
     if settings.source_dir.trim().is_empty() {
-        return Err(DfmError::other("failed to read source path from the config file: empty string"));
+        return Err(DfmError::NotFound(
+            "source directory is not set (state file missing or not initialized); run `dfm init`".into(),
+        ));
     }
 
     trace!("using target directory from settings (original) {:?}", settings.target_dir);

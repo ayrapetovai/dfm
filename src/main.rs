@@ -2,6 +2,7 @@ mod commands;
 
 use clap::{Parser, Subcommand};
 use log::warn;
+use std::io;
 use std::path::PathBuf;
 
 use dfm::*;
@@ -257,9 +258,13 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             None
         }
     };
-    let state_opt = match &path_to_state_file {
-        Some(p) => read_state(p).ok(),
-        None => None,
+    let (state_opt, state_read_error) = match &path_to_state_file {
+        Some(p) => match read_state(p) {
+            Ok(state) => (Some(state), None),
+            Err(DfmError::NotFound(_)) => (None, None),
+            Err(e) => (None, Some(e)),
+        },
+        None => (None, None),
     };
 
     let default_settings = create_default_settings();
@@ -332,54 +337,69 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             symlink,
             encrypt,
             dry_run,
-        } => with_state(state_opt, path_to_state_file.as_ref(), |state| {
-            add_command(
-                &settings,
-                &xdg,
-                AddArgs {
-                    paths,
-                    force,
-                    symlink,
-                    encrypt,
-                    dry_run: resolve_dry_run(dry_run, args.dry_run),
-                },
-                state,
-            )
-        }),
+        } => with_state(
+            state_opt,
+            state_read_error.as_ref(),
+            path_to_state_file.as_ref(),
+            |state| {
+                add_command(
+                    &settings,
+                    &xdg,
+                    AddArgs {
+                        paths,
+                        force,
+                        symlink,
+                        encrypt,
+                        dry_run: resolve_dry_run(dry_run, args.dry_run),
+                    },
+                    state,
+                )
+            },
+        ),
         Command::Pull {
             paths,
             force,
             symlink,
             dry_run,
-        } => with_state(state_opt, path_to_state_file.as_ref(), |state| {
-            pull_command(
-                &settings,
-                &xdg,
-                PullArgs {
-                    paths,
-                    force,
-                    symlink,
-                    dry_run: resolve_dry_run(dry_run, args.dry_run),
-                },
-                state,
-            )
-        }),
+        } => with_state(
+            state_opt,
+            state_read_error.as_ref(),
+            path_to_state_file.as_ref(),
+            |state| {
+                pull_command(
+                    &settings,
+                    &xdg,
+                    PullArgs {
+                        paths,
+                        force,
+                        symlink,
+                        dry_run: resolve_dry_run(dry_run, args.dry_run),
+                    },
+                    state,
+                )
+            },
+        ),
         Command::Forget {
             paths,
             force,
             dry_run,
-        } => with_state_even_if_error(state_opt, path_to_state_file.as_ref(), |state| {
-            forget_command(
-                &settings,
-                &xdg,
-                ForgetArgs {
-                    paths,
-                    force,
-                    dry_run: resolve_dry_run(dry_run, args.dry_run),
-                },
-                state,
-            )
-        }),
+        } => with_state_even_if_error(
+            state_opt,
+            state_read_error.as_ref(),
+            path_to_state_file.as_ref(),
+            |state| {
+                forget_command(
+                    &settings,
+                    &xdg,
+                    ForgetArgs {
+                        paths,
+                        force,
+                        dry_run: resolve_dry_run(dry_run, args.dry_run),
+                    },
+                    state,
+                )
+            },
+        ),
         Command::Ignore {
             paths,
             patterns,
@@ -402,8 +422,11 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             &path_to_config_file,
             &path_to_state_file,
         ),
-        Command::Merge { paths, dry_run } => {
-            with_state(state_opt, path_to_state_file.as_ref(), |state| {
+        Command::Merge { paths, dry_run } => with_state(
+            state_opt,
+            state_read_error.as_ref(),
+            path_to_state_file.as_ref(),
+            |state| {
                 merge_command(
                     &settings,
                     &xdg,
@@ -413,8 +436,8 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                     },
                     state,
                 )
-            })
-        }
+            },
+        ),
         Command::Status {
             all,
             short,
@@ -428,8 +451,8 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             ignored_patterns,
             unused_patterns,
         } => {
-            let state = state_opt
-                .ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+            let state =
+                state_opt.ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
             status_command(
                 &settings,
                 &xdg,
@@ -458,11 +481,11 @@ fn main_logic() -> Result<(), dfm::DfmError> {
 /// `path_to_state_file.unwrap()` noise.
 fn with_state<T>(
     state_opt: Option<StateObject>,
+    state_read_error: Option<&dfm::DfmError>,
     path_to_state_file: Option<&PathBuf>,
     f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>,
 ) -> Result<T, dfm::DfmError> {
-    let mut state =
-        state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+    let mut state = state_opt.ok_or_else(|| state_unavailable_error(state_read_error))?;
     let state_path = path_to_state_file.ok_or_else(|| {
         dfm::DfmError::InvalidInput("state file path could not be resolved".into())
     })?;
@@ -477,17 +500,29 @@ fn with_state<T>(
 /// entry must still be written back (and the deletion error reported).
 fn with_state_even_if_error<T>(
     state_opt: Option<StateObject>,
+    state_read_error: Option<&dfm::DfmError>,
     path_to_state_file: Option<&PathBuf>,
     f: impl FnOnce(&mut StateObject) -> Result<T, dfm::DfmError>,
 ) -> Result<T, dfm::DfmError> {
-    let mut state =
-        state_opt.ok_or_else(|| dfm::DfmError::NotFound("state file is not found".into()))?;
+    let mut state = state_opt.ok_or_else(|| state_unavailable_error(state_read_error))?;
     let state_path = path_to_state_file.ok_or_else(|| {
         dfm::DfmError::InvalidInput("state file path could not be resolved".into())
     })?;
     let result = f(&mut state);
     write_state(state_path, &state)?;
     result
+}
+
+/// Build the error reported when the state file is required but unavailable:
+/// a corrupt state file surfaces its parse/validation error, while a missing
+/// one reports the usual "not found".
+fn state_unavailable_error(state_read_error: Option<&dfm::DfmError>) -> dfm::DfmError {
+    match state_read_error {
+        Some(dfm::DfmError::InvalidData(msg)) => dfm::DfmError::InvalidData(msg.clone()),
+        Some(dfm::DfmError::Io(e)) => dfm::DfmError::Io(io::Error::new(e.kind(), e.to_string())),
+        Some(e) => dfm::DfmError::InvalidData(e.to_string()),
+        None => dfm::DfmError::NotFound("state file is not found".into()),
+    }
 }
 
 fn main() {

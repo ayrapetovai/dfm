@@ -434,79 +434,113 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
 
     debug!("::copy procedure begins, {} tasks", tasks.len());
 
+    let total_tasks = tasks.len();
+    let mut completed_tasks = 0usize;
+
     for task in tasks {
         // Print what each task would do even under --dry-run.
         info!("{}", describe_add_task(&task));
         if dry_run {
             continue;
         }
-        match task {
-            AddTask::Copy(target_file, source_file) => {
-                match sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path) {
-                    Ok(()) => {}
-                    Err(e) if e.is_permission_denied() => {
-                        warn!("skipping unreadable path {:?}: {}", target_file, e);
-                    }
-                    Err(e) => return Err(e),
+        match execute_add_task(&task, settings, state, &target_dir_abs_path, &source_dir_abs_path) {
+            Ok(completed) => {
+                if completed {
+                    completed_tasks += 1;
                 }
-            },
-            AddTask::CopyAndSymlink(target_file, source_file) => {
-                match sync_file_copy(&target_file, &source_file, &source_file, state, &source_dir_abs_path) {
-                    Ok(()) => {}
-                    Err(e) if e.is_permission_denied() => {
-                        warn!("skipping unreadable path {:?}: {}", target_file, e);
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                }
-
-                // 2. Remove the original target file
-                fs::remove_file(&target_file)?;
-
-                // 3. Create a symlink at the target pointing to the source file
-                let target_parent = target_file.parent()
-                    .ok_or_else(|| DfmError::other("target file has no parent directory"))?
-                    .to_path_buf();
-                let link_target = file_path_relative_to(&source_file, &target_parent);
-                symlink::symlink_file(&link_target, &target_file)?;
-            },
-            AddTask::CopyEncryptedFile(target_file, source_file) => {
-                match dfm::crypt::write_zip_file(settings, &target_file, &source_file) {
-                    Ok(()) => {}
-                    Err(e) if e.is_permission_denied() => {
-                        warn!("skipping unreadable path {:?}: {}", target_file, e);
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                }
-
-                update_sync_state(state, &source_file, &target_file, &source_dir_abs_path)?;
-
-                // If a plain source exists, remove it — replaced by the encrypted version
-                let plain_source = filepath_in_source_dir(
-                    &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
-                    &target_file, None,
+            }
+            Err(e) => {
+                error!(
+                    "{} of {} tasks completed before failure",
+                    completed_tasks, total_tasks
                 );
-                if plain_source.exists() {
-                    fs::remove_file(&plain_source)?;
-                    // Remove stale state entry for the plain source
-                    remove_sync_state(state, &plain_source, &source_dir_abs_path);
-                }
-            },
-            AddTask::CreateSymlinkFilePointer(source_symlink, target_abs, points_to) => {
-                // open if exists or create, if it doesn't
-                let mut symlink_file = File::create(&source_symlink)?;
-                symlink_file.write_all(points_to.as_bytes())?;
-
-                update_sync_state(state, &source_symlink, &target_abs, &source_dir_abs_path)?;
-            },
-            AddTask::UpdateSync(source_file, target_file) => {
-                update_sync_state(state, &source_file, &target_file, &source_dir_abs_path)?;
-            },
+                return Err(e);
+            }
         }
     }
 
     prune_matched_ignore_patterns(xdg, &patterns_to_remove, dry_run)?;
 
     Ok(())
+}
+
+/// Run a single add task against the filesystem. Returns `Ok(true)` when the
+/// task completed, `Ok(false)` when it was skipped (unreadable path, e.g.
+/// permission denied), and `Err` on a hard failure that aborts the run.
+fn execute_add_task(
+    task: &AddTask,
+    settings: &Settings,
+    state: &mut StateObject,
+    target_dir_abs_path: &PathBuf,
+    source_dir_abs_path: &PathBuf,
+) -> Result<bool, DfmError> {
+    match task {
+        AddTask::Copy(target_file, source_file) => {
+            match sync_file_copy(target_file, source_file, source_file, state, source_dir_abs_path) {
+                Ok(()) => Ok(true),
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    Ok(false)
+                }
+                Err(e) => Err(e),
+            }
+        },
+        AddTask::CopyAndSymlink(target_file, source_file) => {
+            match sync_file_copy(target_file, source_file, source_file, state, source_dir_abs_path) {
+                Ok(()) => {}
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    return Ok(false);
+                }
+                Err(e) => return Err(e),
+            }
+
+            // 2. Remove the original target file
+            fs::remove_file(target_file)?;
+
+            // 3. Create a symlink at the target pointing to the source file
+            let target_parent = target_file.parent()
+                .ok_or_else(|| DfmError::other("target file has no parent directory"))?
+                .to_path_buf();
+            let link_target = file_path_relative_to(source_file, &target_parent);
+            symlink::symlink_file(&link_target, target_file)?;
+            Ok(true)
+        },
+        AddTask::CopyEncryptedFile(target_file, source_file) => {
+            match dfm::crypt::write_zip_file(settings, target_file, source_file) {
+                Ok(()) => {}
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    return Ok(false);
+                }
+                Err(e) => return Err(e),
+            }
+
+            update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
+
+            // If a plain source exists, remove it — replaced by the encrypted version
+            let plain_source = filepath_in_source_dir(
+                &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path,
+                target_file, None,
+            );
+            if plain_source.exists() {
+                fs::remove_file(&plain_source)?;
+                // Remove stale state entry for the plain source
+                remove_sync_state(state, &plain_source, source_dir_abs_path);
+            }
+            Ok(true)
+        },
+        AddTask::CreateSymlinkFilePointer(source_symlink, target_abs, points_to) => {
+            // open if exists or create, if it doesn't
+            let mut symlink_file = File::create(source_symlink)?;
+            symlink_file.write_all(points_to.as_bytes())?;
+
+            update_sync_state(state, source_symlink, target_abs, source_dir_abs_path)?;
+            Ok(true)
+        },
+        AddTask::UpdateSync(source_file, target_file) => {
+            update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
+            Ok(true)
+        },
+    }
 }

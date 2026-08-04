@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use regex::RegexSet;
 use walkdir::WalkDir;
 
@@ -470,65 +470,97 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
     }
 
     debug!("::copy procedure begins, {} tasks", tasks.len());
+
+    let total_tasks = tasks.len();
+    let mut completed_tasks = 0usize;
+
     for task in tasks.iter() {
         // Print what each task would do even under --dry-run.
         info!("{}", describe_pull_task(task));
         if dry_run {
             continue;
         }
-        match task {
-            PullTask::Copy(target_file, source_file) => {
-                match sync_file_copy(source_file, target_file, source_file, state, &source_dir_abs_path) {
-                    Ok(()) => {}
-                    Err(e) if e.is_permission_denied() => {
-                        warn!("skipping unreadable path {:?}: {}", target_file, e);
-                    }
-                    Err(e) => return Err(e),
+        match execute_pull_task(task, settings, state, &source_dir_abs_path) {
+            Ok(completed) => {
+                if completed {
+                    completed_tasks += 1;
                 }
-            },
-            PullTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
-                if let Err(e) = symlink::remove_symlink_file(target_symlink_file_path) {
-                    match e.kind() {
-                        std::io::ErrorKind::NotFound => {
-                            info!("target symlink {:?} does not exist", target_symlink_file_path);
-                            // is ok
-                        },
-                        _ => return Err(e.into()),
-                    }
-                }
-                let points_to = if points_to.starts_with("./") {
-                    &points_to[2..]
-                } else {
-                    points_to.as_str()
-                };
-                let pointee = PathBuf::from(points_to);
-
-                match symlink::symlink_file(pointee, target_symlink_file_path) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                        warn!("skipping unreadable path {:?}: {}", target_symlink_file_path, e);
-                        continue;
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-                debug!("target symlink {:?} updated", target_symlink_file_path)
-            },
-            PullTask::Decrypt(target_file, source_file) => {
-                match dfm::crypt::read_zip_file(settings, source_file, target_file) {
-                    Ok(()) => {}
-                    Err(e) if e.is_permission_denied() => {
-                        warn!("skipping unreadable path {:?}: {}", target_file, e);
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                }
-
-                update_sync_state(state, source_file, target_file, &source_dir_abs_path)?;
-            },
+            }
+            Err(e) => {
+                error!(
+                    "{} of {} tasks completed before failure",
+                    completed_tasks, total_tasks
+                );
+                return Err(e);
+            }
         }
     }
 
     prune_matched_ignore_patterns(xdg, &patterns_to_remove, dry_run)?;
 
     Ok(())
+}
+
+/// Run a single pull task against the filesystem. Returns `Ok(true)` when the
+/// task completed, `Ok(false)` when it was skipped (unreadable path, e.g.
+/// permission denied), and `Err` on a hard failure that aborts the run.
+fn execute_pull_task(
+    task: &PullTask,
+    settings: &Settings,
+    state: &mut StateObject,
+    source_dir_abs_path: &PathBuf,
+) -> Result<bool, DfmError> {
+    match task {
+        PullTask::Copy(target_file, source_file) => {
+            match sync_file_copy(source_file, target_file, source_file, state, source_dir_abs_path) {
+                Ok(()) => Ok(true),
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    Ok(false)
+                }
+                Err(e) => Err(e),
+            }
+        },
+        PullTask::CreateOrUpdateSymlink(target_symlink_file_path, points_to) => {
+            if let Err(e) = symlink::remove_symlink_file(target_symlink_file_path) {
+                match e.kind() {
+                    std::io::ErrorKind::NotFound => {
+                        info!("target symlink {:?} does not exist", target_symlink_file_path);
+                        // is ok
+                    },
+                    _ => return Err(e.into()),
+                }
+            }
+            let points_to = if points_to.starts_with("./") {
+                &points_to[2..]
+            } else {
+                points_to.as_str()
+            };
+            let pointee = PathBuf::from(points_to);
+
+            match symlink::symlink_file(pointee, target_symlink_file_path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    warn!("skipping unreadable path {:?}: {}", target_symlink_file_path, e);
+                    return Ok(false);
+                }
+                Err(e) => return Err(e.into()),
+            }
+            debug!("target symlink {:?} updated", target_symlink_file_path);
+            Ok(true)
+        },
+        PullTask::Decrypt(target_file, source_file) => {
+            match dfm::crypt::read_zip_file(settings, source_file, target_file) {
+                Ok(()) => {}
+                Err(e) if e.is_permission_denied() => {
+                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    return Ok(false);
+                }
+                Err(e) => return Err(e),
+            }
+
+            update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
+            Ok(true)
+        },
+    }
 }
