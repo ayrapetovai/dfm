@@ -40,7 +40,7 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
     let MergeArgs { ref paths, dry_run } = args;
     let paths_provided = paths.is_some();
 
-    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
+    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
     if dry_run {
         info!("{}", msg_dry_run());

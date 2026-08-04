@@ -463,7 +463,6 @@ pub struct Config {
     pub dot_prefix: Option<String>,
     pub symlink_postfix: Option<String>,
     pub encrypted_postfix: Option<String>,
-    // pub compare_content: Option<bool>, compare files by content
 
     #[serde(with = "serde_regex")]
     pub force_encryption_for: Vec<Regex>,
@@ -492,7 +491,6 @@ pub struct Settings {
     pub dot_prefix: String,
     pub symlink_postfix: String,
     pub encrypted_postfix: String,
-    // pub compare_content: Option<bool>, compare files by content
 
     pub force_encryption_for: Vec<Regex>,
     pub obtain_password_shell_command: Option<String>,

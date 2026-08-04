@@ -137,7 +137,7 @@ pub(crate) fn report_progress(progress: &mut ProgressLine, done: usize, total: u
     // Scale the step with the batch size so large operations still only
     // update the line about 20 times per run.
     let step = (total / 20).max(BULK_PROGRESS_MIN);
-    if total >= BULK_PROGRESS_MIN && (done % step == 0 || done == total) {
+    if total >= BULK_PROGRESS_MIN && (done.is_multiple_of(step) || done == total) {
         progress.set(&format!("processed {}/{} files", done, total));
     }
 }
@@ -244,7 +244,7 @@ pub(crate) fn prune_ignore_file(
     let mut kept = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || !should_ignore(&trimmed) {
+        if trimmed.is_empty() || !should_ignore(trimmed) {
             kept.push(line.to_string());
         } else {
             removed.push(trimmed.to_string());
@@ -330,10 +330,10 @@ pub(crate) fn sync_file_copy(
 
 /// Resolve the merge command from settings.
 fn resolve_merge_command(settings: &Settings) -> Result<String, DfmError> {
-    if let Some(ref cmd) = settings.merge_tool_command {
-        if !cmd.is_empty() {
-            return Ok(cmd.clone());
-        }
+    if let Some(ref cmd) = settings.merge_tool_command
+        && !cmd.is_empty()
+    {
+        return Ok(cmd.clone());
     }
     Err(DfmError::Other(
         "no merge tool configured — set merge_tool_command in config".into()

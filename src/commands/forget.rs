@@ -48,13 +48,13 @@ fn handle_target_symlink(
     let target_symlink_pointee_path = fs::read_link(&target_abs_path)?;
 
     debug!("target symlink {:?}\n\tpoints to {:?}", target_abs_path, target_symlink_pointee_path);
-    if target_symlink_pointee_path.starts_with(&source_dir_abs_path) {
+    if target_symlink_pointee_path.starts_with(source_dir_abs_path) {
         info!("target symlink {:?}\n\tpoints into source directory, removing", target_abs_path);
         tasks.push(ForgetTask::Delete(target_abs_path.clone()));
     }
 
     let source_symlink_file_abs_path = filepath_in_source_dir(
-        &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
+        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path,
         &target_abs_path, Some(&settings.symlink_postfix)
     );
     if !source_symlink_file_abs_path.exists() {
@@ -220,7 +220,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
 
     debug!("forget paths {:?}, force {}, dry-run {}", paths, force, dry_run);
 
-    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
+    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
     let forget_all = paths.is_none();
     let paths = match paths {
@@ -253,7 +253,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         // symlink with no pointer file falls through to pointee processing.
         if target_path.is_symlink() {
             let symlink_handled = match handle_target_symlink(
-                &settings, &target_dir_abs_path, &source_dir_abs_path, target_path, *force, &mut tasks,
+                settings, &target_dir_abs_path, &source_dir_abs_path, target_path, *force, &mut tasks,
             ) {
                 Ok(v) => v,
                 Err(e) if e.is_permission_denied() => {
@@ -278,7 +278,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
                     debug!("symlink {:?} is broken: {}", target_path, e);
                 } else {
                     handle_missing_target(
-                        &settings, &target_dir_abs_path, &source_dir_abs_path, target_path, &mut tasks,
+                        settings, &target_dir_abs_path, &source_dir_abs_path, target_path, &mut tasks,
                     )?;
                 }
                 continue;
@@ -287,7 +287,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
 
         if target_abs_path.starts_with(&source_dir_abs_path) {
             match handle_source_path(
-                &settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, *force, &mut tasks,
+                settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, *force, &mut tasks,
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
@@ -297,7 +297,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
             }
         } else if target_abs_path.starts_with(&target_dir_abs_path) {
             match handle_target_file(
-                &settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
+                settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
                 *force, state, &mut tasks, &mut error_messages,
             ) {
                 Ok(()) => {}

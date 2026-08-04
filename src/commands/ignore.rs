@@ -14,7 +14,6 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
     let content = fs::read_to_string(path)?;
     if !content.is_empty() && !content.ends_with('\n') {
         let mut f = fs::OpenOptions::new()
-            .write(true)
             .append(true)
             .open(path)?;
         writeln!(f)?;
@@ -46,7 +45,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
         return remove_ignore_records(xdg, records, dry_run);
     }
 
-    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
+    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
     let local_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&local_ignore_file_path)?;
 

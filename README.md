@@ -20,7 +20,7 @@ git clone link/to/new/dotfiles/repo
 dfm init /path/to/new/dotfiles/repo
 dfm add ~/.bashrc ~/.config/git/config
 git add .
-git -c "initial"
+git commit -m "initial"
 git push
 ```
 
@@ -99,10 +99,11 @@ dfm init <PATH> [TARGET]
 
 `init` will:
 1. Locate or create the source directory (recursively searches parent directories for `.dfm_root`).
-2. Create the source ignore file if it does not exist.
-3. Look for a config file inside the source directory and `pull` it.
-4. If no config file exists in the source directory, create one at `$XDG_CONFIG_HOME/dfm/config.toml` with defaults, writing the source directory path into it.
-5. Create or clear the state file at `$XDG_STATE_HOME/dfm/state.toml`.
+2. Create the source ignore file if it does not exist (with `.dfm_root` and git-related entries).
+3. Create or clear the state file at `$XDG_STATE_HOME/dfm/state.toml`, writing the target and source directory paths into it.
+4. Create the config file at `$XDG_CONFIG_HOME/dfm/config.toml` with defaults if it does not exist.
+
+`init` does not look for a config file inside the source directory; the config file always lives outside the source directory.
 
 | Flag | Description |
 |---|---|

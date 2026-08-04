@@ -17,7 +17,7 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
 cargo test                             # 14 unit tests in src/lib.rs
-bash tests/launcher.sh -q              # 168 shell integration tests
+bash tests/launcher.sh -q              # 173 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # one test (shows -x trace)
 ```
 
@@ -32,7 +32,7 @@ src/crypt.rs         AES-256 zip write/read, password cache, obtain_password
 src/commands/mod.rs  re-exports + shared helpers (below)
 src/commands/{add,pull,merge,forget,init,ignore,purge,config,paths,status}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      168 shell tests
+tests/test_*.sh      173 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -69,13 +69,16 @@ tests/test_*.sh      168 shell tests
   (`calc_config_file_path`). State `$XDG_STATE_HOME/dfm/state.toml`; target
   ignore `$XDG_STATE_HOME/dfm/ignore_file`; source ignore
   `<source>/.dfm_ignore_file`; marker `<source>/.dfm_root` (content `.`).
-- Paths built with `Path::join` (never string-concat). Non-UTF-8 paths are
-  handled via `.to_string_lossy()`/`.display()` where a `String` is required —
-  no `to_str().unwrap()` panics.
+- Paths are built with `Path::join`/`PathBuf::push`; XDG subdirectory paths are
+  assembled with `format!("{}/{}", dir, name)` and passed to the `xdg` helpers.
+  Non-UTF-8 paths are handled via `.to_string_lossy()`/`.display()` where a
+  `String` is required — no `to_str().unwrap()` panics.
 - `filepath_in_source_dir` target→source: leading `.` in a filename/component
   becomes `dot_prefix` (`dot_bashrc`↔`.bashrc`, `dot_config/foo`↔`.config/foo`);
-  `add_postfix_opt` appends `.symlink`/`.encrypted`. `source_rel_to_target_rel`
-  is the inverse (state key → target-rel: strip postfixes, `dot_`→`.`).
+  `add_postfix_opt` appends `.symlink`/`.encrypted`. The encoding is injective:
+  a literal `dot_`-prefixed component is escaped as `~dot_…` (a literal `~` as
+  `~~…`). `source_rel_to_target_rel` inverts this component-wise (state key →
+  target-rel: unescape `~`, `dot_`→`.`, strip postfixes).
 - `file_path_relative_to(abs, dir)` → rel; `remove_dots_from_path` resolves
   `.`/`..` lexically (returns `.` when empty, keeps root `/`).
 
@@ -144,7 +147,7 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - **`init <SOURCE> [TARGET]`** — create source dir; follow/create `.dfm_root`
   pointer chain (content `.`); extend source ignore with `.dfm_root`, `.git`,
   `.dfm_ignore_source`, `.dfm_ignore_target`; create state file + default
-  config. Does **NOT** look for config inside the source dir (README is stale).
+  config. Does **NOT** look for config inside the source dir (README matches).
 - **`add [PATH...] [-f] [-s] [-e]`** — traverse target (or given paths). Skips
   internal dfm files, out-of-target paths, source-dir paths. Symlink →
   pointer-file (`CreateSymlinkFilePointer`, no pointee fallthrough). Ignored →
@@ -298,7 +301,7 @@ warning**, never a command failure:
   are grep-based: `cmd | grep -q "pat"` (aborts if not found), `! cmd | grep -q`
   (aborts if found). No `sleep` in tests (use helpers). One file per scenario:
   `test_<description>.sh`.
-- Counts: **168 shell tests**, **14 Rust unit tests in src/lib.rs**
+- Counts: **173 shell tests**, **14 Rust unit tests in src/lib.rs**
   (`test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`).

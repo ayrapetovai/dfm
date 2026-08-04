@@ -127,7 +127,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         ref unused_patterns,
     } = args;
 
-    let (target_dir_abs, source_dir_abs) = calc_working_dir_paths(&settings)?;
+    let (target_dir_abs, source_dir_abs) = calc_working_dir_paths(settings)?;
 
     let target_ignore_file = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file)?;
@@ -237,7 +237,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // ------------------------------------------------------------------
     let ListDirectories { found: traversed_target, errors: traversal_errors, pruned: pruned_dirs } =
         list_directory(
-            &[target_dir_abs.clone()],
+            std::slice::from_ref(&target_dir_abs),
             &target_dir_abs,
             Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
         )?;
@@ -253,7 +253,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // Pre-compute canonical source dir for robust path comparison
     let canon_source_dir = fs::canonicalize(&source_dir_abs).unwrap_or_else(|_| source_dir_abs.clone());
 
-for (i, target_abs) in traversed_target.iter().enumerate() {
+    for (i, target_abs) in traversed_target.iter().enumerate() {
         report_progress(&mut progress, i + 1, traversed_target.len());
         // Skip files inside the source directory — normalize via canonicalize
         // to avoid path-comparison edge cases (symlinks, double slashes, etc.)
@@ -269,11 +269,15 @@ for (i, target_abs) in traversed_target.iter().enumerate() {
         }
 
         // Skip known dfm internal files (state, config, ignore)
-        if let Some(ref sfp) = state_file_path {
-            if *target_abs == *sfp { continue; }
+        if let Some(ref sfp) = state_file_path
+            && *target_abs == *sfp
+        {
+            continue;
         }
-        if let Some(ref cfp) = config_file_path {
-            if *target_abs == *cfp { continue; }
+        if let Some(ref cfp) = config_file_path
+            && *target_abs == *cfp
+        {
+            continue;
         }
         if *target_abs == target_ignore_file {
             continue;
@@ -286,12 +290,12 @@ for (i, target_abs) in traversed_target.iter().enumerate() {
 
         if target_abs.is_symlink() {
             classify_target_symlink(
-                &settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
+                settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
                 target_abs, &rel_str, &state_keys, *all, *ignored, &mut entries,
             );
         } else {
             classify_target_file(
-                &settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
+                settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
                 target_abs, &rel_str, &state_keys, *all, *ignored, &mut entries,
             );
         }
@@ -407,7 +411,7 @@ for (i, target_abs) in traversed_target.iter().enumerate() {
     } else {
         let has_managed = entries.iter().any(|e| e.code.is_managed());
         let output = format_default(&filtered, &stale_patterns, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
-        print_paged(&output, false)?;
+        print_paged(&output)?;
     }
 
     Ok(())
@@ -642,7 +646,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
             out.push_str("No files managed.\n");
         }
     } else {
-        out.push_str("\n");
+        out.push('\n');
     }
 
     // Group entries by code
@@ -710,16 +714,14 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
         }
     };
 
-    let group_order = vec![
-        merge.is_empty(),
+    let group_order = [merge.is_empty(),
         add.is_empty(),
         pull.is_empty(),
         unpulled.is_empty(),
         unmanaged.is_empty(),
         uptodate.is_empty(),
         ignored.is_empty(),
-        stale_patterns.is_empty(),
-    ];
+        stale_patterns.is_empty()];
 
     let mut group_lastness = vec![];
     for i in 0..group_order.len() {
@@ -754,7 +756,7 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
 // Pager
 // ---------------------------------------------------------------------------
 
-fn print_paged(output: &str, _force_pager: bool) -> Result<(), DfmError> {
+fn print_paged(output: &str) -> Result<(), DfmError> {
     // Detect terminal height
     let line_count = output.lines().count();
     let term_height = terminal_height().unwrap_or(24);
@@ -789,14 +791,12 @@ fn print_paged(output: &str, _force_pager: bool) -> Result<(), DfmError> {
 
 fn terminal_height() -> Option<usize> {
     // Try via `stty size`
-    if let Ok(output) = ProcessCmd::new("stty").arg("size").stdout(Stdio::piped()).stderr(Stdio::null()).output() {
-        if let Ok(s) = String::from_utf8(output.stdout) {
-            if let Some(rows_str) = s.split_whitespace().next() {
-                if let Ok(rows) = rows_str.parse::<usize>() {
-                    return Some(rows);
-                }
-            }
-        }
+    if let Ok(output) = ProcessCmd::new("stty").arg("size").stdout(Stdio::piped()).stderr(Stdio::null()).output()
+        && let Ok(s) = String::from_utf8(output.stdout)
+        && let Some(rows_str) = s.split_whitespace().next()
+        && let Ok(rows) = rows_str.parse::<usize>()
+    {
+        return Some(rows);
     }
     None
 }

@@ -116,7 +116,7 @@ fn handle_target_symlink(
     debug!("target symlink {:?}\n\tpoints to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
     let source_symlink_file_abs_path = filepath_in_source_dir(
-        &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
+        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path,
         &target_symlink_abs_path, Some(&settings.symlink_postfix),
     );
     let source_symlink_file_exists = source_symlink_file_abs_path.exists();
@@ -130,7 +130,7 @@ fn handle_target_symlink(
 
     if force || (source_symlink_file_exists && !source_symlink_file_points_to_right_target) {
         if !source_symlink_file_points_to_right_target {
-            debug!("source symlink file points to the wrong file, must be {:?}", &target_symlink_pointee_rel_path);
+            debug!("source symlink file points to the wrong file, must be {:?}", target_symlink_pointee_rel_path);
         }
         tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_pointee_rel_str.clone()));
     } else if source_symlink_file_points_to_right_target {
@@ -186,7 +186,7 @@ fn handle_target_file(
 
     // Skip internal dfm files (state, config, ignore) — the user should never
     // manage these via `dfm add`.
-    if internal_dfm_paths.iter().any(|p| *p == target_abs_path) {
+    if internal_dfm_paths.contains(&target_abs_path) {
         debug!("target {:?} is an internal dfm file, skipping", target_abs_path);
         return Ok(());
     }
@@ -209,8 +209,8 @@ fn handle_target_file(
         encrypt_flag
     };
 
-    let encrypted_source_abs_path = filepath_in_source_dir(&settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, Some(&settings.encrypted_postfix));
-    let regular_source_abs_path = filepath_in_source_dir(&settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, None);
+    let encrypted_source_abs_path = filepath_in_source_dir(&settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, &target_abs_path, Some(&settings.encrypted_postfix));
+    let regular_source_abs_path = filepath_in_source_dir(&settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, &target_abs_path, None);
 
     let (source_is_encrypted, source_abs_path) = if encrypted_source_abs_path.exists() || encrypt {
         if regular_source_abs_path.exists() {
@@ -336,7 +336,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         return Err(DfmError::other("--symlink and --encrypt are mutually exclusive"));
     }
 
-    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
+    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
     // Compute internal dfm file paths so they can be excluded from traversal.
     // These files (state, config, target-ignore) are dfm's own files — the user
@@ -384,7 +384,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         if target_path.is_symlink() {
             let explicitly_named = paths.iter().any(|p| p == target_path);
             match handle_target_symlink(
-                &settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
+                settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
                 &target_ignore_regex, &target_ignore_file_path,
                 *encrypt, *force, &mut tasks, &mut error_messages, explicitly_named,
             ) {
@@ -396,7 +396,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
             }
         } else {
             match handle_target_file(
-                &settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
+                settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
                 &target_ignore_regex, &target_ignore_file_path,
                 &internal_dfm_paths, &encryption_regex_set,
                 *symlink, *encrypt, *force, state,

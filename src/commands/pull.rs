@@ -391,7 +391,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
 
     debug!("pull paths {:?}, force {}, dry-run {}", paths, force, dry_run);
 
-    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(&settings)?;
+    let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
     let paths = match paths {
         Some(p) => p.clone(),
@@ -425,7 +425,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
         // Source-path scenario: the walked entry lies inside the source dir.
         let target_abs_path = if target_abs_path.starts_with(&source_dir_abs_path) {
             match handle_source_path(
-                &settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
+                settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
                 &target_ignore_regex, &target_ignore_file_path,
                 *target_must_be_symlink, *force, state, &mut tasks, &mut patterns_to_remove,
             ) {
@@ -443,7 +443,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
 
         // Regular target-path processing.
         match handle_target_path(
-            &settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
+            settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
             *target_must_be_symlink, *force, state, &target_ignore_regex,
             &target_ignore_file_path, &mut tasks, &mut patterns_to_remove, &mut error_list,
         ) {
@@ -470,7 +470,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
     }
 
     debug!("::copy procedure begins, {} tasks", tasks.len());
-for task in tasks.iter() {
+    for task in tasks.iter() {
         // Print what each task would do even under --dry-run.
         info!("{}", describe_pull_task(task));
         if dry_run {

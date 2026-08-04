@@ -34,7 +34,7 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
     fn describe_init_task(task: &InitTask) -> String {
         match task {
             InitTask::CreateSourceRootFile(path) => format!("create source root file {:?}", path),
-            InitTask::CreateSourceIgnoreFile() => format!("create source ignore file"),
+            InitTask::CreateSourceIgnoreFile() => "create source ignore file".to_string(),
             InitTask::CreateStateFile(path, _, _) => format!("create state file {:?}", path),
             InitTask::CreateDefaultConfigFile(path) => format!("create config file {:?}", path),
         }
@@ -114,10 +114,10 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
     }
 
     let target_config_file_path = calc_config_file_path(xdg);
-    if let Ok(config_file) = target_config_file_path {
-        if !config_file.exists() {
-            tasks.push(InitTask::CreateDefaultConfigFile(config_file));
-        }
+    if let Ok(config_file) = target_config_file_path
+        && !config_file.exists()
+    {
+        tasks.push(InitTask::CreateDefaultConfigFile(config_file));
     }
 
     if tasks.is_empty() {

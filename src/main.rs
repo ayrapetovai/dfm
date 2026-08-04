@@ -8,13 +8,7 @@ use dfm::*;
 
 use commands::*;
 
-// opts https://docs.rs/clap/latest/clap/_derive/_cookbook/git_derive/index.html
-// toml https://docs.rs/toml/latest/toml/
-// env https://docs.rs/envmnt/latest/envmnt/
-// xdg https://wiki.archlinux.org/title/XDG_Base_Directory
-// aes https://rust.howtos.io/a-guide-to-symmetric-encryption-in-rust/
-
-static LONG_ABOUT: &'static str = r#"This program is designed to manage dotfiles which are usually
+static LONG_ABOUT: &str = r#"This program is designed to manage dotfiles which are usually
 configuration files in user's home directory."#;
 
 #[derive(Parser, Debug)]
@@ -23,12 +17,11 @@ struct Args {
     #[command(subcommand)]
     command: Command,
 
-    //arbitrary_command: String,
     /// Do not perform actions, only checks and reports.
-    #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+    #[arg(long, short = 'n')]
     dry_run: bool,
 
-    /// Verbosity level: 0 - quite, 1 - brief, 2 - info, 3 - debug.
+    /// Verbosity level: 0 - quiet, 1 - brief, 2 - info, 3 - debug.
     #[arg(
         long,
         short = 'v',
@@ -56,33 +49,30 @@ enum Command {
         path_to_target: Option<PathBuf>,
 
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n')]
         dry_run: bool,
     },
 
     /// Remove state of the program and the source directory.
-    #[command(arg_required_else_help = false)]
     Purge {
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n')]
         dry_run: bool,
 
         /// Do not remove source directory.
-        #[arg(long, short = 's', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 's')]
         keep_source: bool,
 
         /// Do not remove config file.
-        #[arg(long, short = 'c', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'c')]
         keep_config_file: bool,
 
         /// Remove the source directory even if it contains changes.
-        #[arg(long, short = 'f', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'f')]
         force: bool,
     },
 
-    // TODO rename to `push`?
     /// Add file under management, or copy changes to the source directory.
-    #[command(arg_required_else_help = false)]
     Add {
         /// Files to be copied to the source directory from target.
         /// If omitted - add all files in the target directory.
@@ -90,25 +80,24 @@ enum Command {
         paths: Option<Vec<PathBuf>>,
 
         /// Overwrite source file on conflict and add symlinks.
-        #[arg(long, short = 'f', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'f')]
         force: bool,
 
         /// Move file to the source directory, create a symlink on place of it.
-        #[arg(long, short = 's', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 's')]
         symlink: bool,
 
         /// Copy encrypted form of file to the source directory.
         /// Replace existing unencrypted source file if any exists.
-        #[arg(long, short = 'e', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'e')]
         encrypt: bool,
 
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n')]
         dry_run: bool,
     },
 
     /// Copy changes from the source directory to the target directory.
-    #[command(arg_required_else_help = false)]
     Pull {
         /// Files to be updated from source directory to target.
         /// If omitted - pull all files in the source directory.
@@ -116,62 +105,62 @@ enum Command {
         paths: Option<Vec<PathBuf>>,
 
         /// Overwrite target file on conflict.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
+        #[arg(long, short)]
         force: bool,
 
         /// Create a symlink instead of file.
-        #[arg(long, short = 's', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 's')]
         symlink: bool,
 
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n')]
         dry_run: bool,
     },
 
     /// Show status of managed files.
     Status {
         /// Full report: include up-to-date and ignored entries.
-        #[arg(long, short = 'a', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'a')]
         all: bool,
 
         /// One line per file with two-letter status code.
-        #[arg(long, short = 's', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 's')]
         short: bool,
 
         /// Stable machine-readable output (tab-separated, never paged).
-        #[arg(long, num_args = 0, default_value_t = false)]
+        #[arg(long)]
         porcelain: bool,
 
         /// Only conflicted (BothModified) entries.
-        #[arg(long, short = 'c', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'c')]
         conflicted: bool,
 
         /// Only modified entries (target or source).
-        #[arg(long, short = 'm', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'm')]
         modified: bool,
 
         /// Only unmanaged entries.
-        #[arg(long, short = 'U', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'U')]
         unmanaged: bool,
 
         /// Only managed entries (inverse of --unmanaged).
-        #[arg(long, short = 'M', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'M')]
         managed: bool,
 
         /// Only unpulled entries (source-only).
-        #[arg(long, short = 'p', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'p')]
         unpulled: bool,
 
         /// Only ignored entries.
-        #[arg(long, short = 'i', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'i')]
         ignored: bool,
 
         /// List active ignore patterns.
-        #[arg(long, short = 'l', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'l')]
         ignored_patterns: bool,
 
         /// List unused (stale) ignore patterns.
-        #[arg(long, short = 'u', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'u')]
         unused_patterns: bool,
     },
 
@@ -182,7 +171,7 @@ enum Command {
         paths: Option<Vec<PathBuf>>,
 
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n')]
         dry_run: bool,
     },
 
@@ -192,11 +181,11 @@ enum Command {
         paths: Option<Vec<PathBuf>>,
 
         /// Delete source file on conflict.
-        #[arg(long, short, num_args = 0, default_value_t = false)]
+        #[arg(long, short)]
         force: bool,
 
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n')]
         dry_run: bool,
     },
 
@@ -225,7 +214,7 @@ enum Command {
         remove: Option<Vec<String>>,
 
         /// Run only checks, no changes will be made to filesystem.
-        #[arg(long, short = 'n', num_args = 0, default_value_t = false)]
+        #[arg(long, short = 'n')]
         dry_run: bool,
     },
 
@@ -240,12 +229,11 @@ enum Command {
         set: Option<Vec<String>>,
 
         /// List all config properties.
-        #[arg(long, short, num_args = 0, required = false, required_unless_present_any = ["get", "set"])]
+        #[arg(long, short, required = false, required_unless_present_any = ["get", "set"])]
         list: bool,
     },
 
     /// Print paths
-    #[command(arg_required_else_help = false)]
     Paths,
 }
 
@@ -274,10 +262,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         }
     };
     let state_opt = match &path_to_state_file {
-        Some(p) => match read_state(p) {
-            Ok(s) => Some(s),
-            Err(_) => None,
-        },
+        Some(p) => read_state(p).ok(),
         None => None,
     };
 
@@ -296,10 +281,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         },
     };
     let config_from_file = match &path_to_config_file {
-        Some(p) => match read_config(p) {
-            Ok(c) => Some(c),
-            Err(_) => None,
-        },
+        Some(p) => read_config(p).ok(),
         None => None,
     };
     let settings = merge_settings(&default_settings, &config_from_file, state_opt.as_ref());

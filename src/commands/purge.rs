@@ -31,7 +31,7 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
             None
         }
     };
-    let (target_dir_abs_path, source_dir_abs_path) = match calc_working_dir_paths(&settings) {
+    let (target_dir_abs_path, source_dir_abs_path) = match calc_working_dir_paths(settings) {
         Ok((target, source)) => (Some(target), Some(source)),
         Err(e) => {
             info!("working directory paths could not be resolved: {}; skipping source and target directories", e);
@@ -49,51 +49,49 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
     // Managed symlinks are excluded: their data is preserved by the replacement
     // step below, so there is nothing to lose for them.
     // A --dry-run purge previews without deleting, so the safety check is skipped.
-    if !*keep_source && !*force && !dry_run {
-        if let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
+    if !*keep_source
+        && !*force
+        && !dry_run
+        && let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
             (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path(xdg))
-        {
-            if let Ok(state) = read_state(&state_path) {
-                let mut un_pulled = vec![];
-                let mut un_pushed = vec![];
-                for (rel_path, sync_time) in &state.syncs {
-                    let (target_rel, target_abs) = state_key_to_target(target_dir_abs_path, rel_path, settings);
-                    if let Ok(meta) = fs::symlink_metadata(&target_abs) {
-                        if meta.file_type().is_symlink() {
-                            debug!("purge: managed symlink {:?} is preserved by replacement; skipping safety check", target_abs);
-                            continue;
-                        }
-                    }
-
-                    let source_path = PathBuf::from(source_dir_abs_path).join(rel_path);
-                    if let Ok(meta) = source_path.metadata() {
-                        if let Ok(mtime) = meta.modified() {
-                            if mtime > sync_time.mtime {
-                                un_pulled.push(rel_path.clone());
-                            }
-                        }
-                    }
-
-                    if let Ok(meta) = target_abs.metadata() {
-                        if let Ok(mtime) = meta.modified() {
-                            if mtime > sync_time.mtime {
-                                un_pushed.push(target_rel);
-                            }
-                        }
-                    }
-                }
-
-                let mut msgs = vec![];
-                if !un_pulled.is_empty() {
-                    msgs.push(format!("source directory contains files with un-pulled changes: {:?}", un_pulled));
-                }
-                if !un_pushed.is_empty() {
-                    msgs.push(format!("target directory contains files with un-pushed changes: {:?}", un_pushed));
-                }
-                if !msgs.is_empty() {
-                    return Err(DfmError::Other(format!("{}; use --force to purge", msgs.join("; "))));
-                }
+        && let Ok(state) = read_state(&state_path)
+    {
+        let mut un_pulled = vec![];
+        let mut un_pushed = vec![];
+        for (rel_path, sync_time) in &state.syncs {
+            let (target_rel, target_abs) = state_key_to_target(target_dir_abs_path, rel_path, settings);
+            if let Ok(meta) = fs::symlink_metadata(&target_abs)
+                && meta.file_type().is_symlink()
+            {
+                debug!("purge: managed symlink {:?} is preserved by replacement; skipping safety check", target_abs);
+                continue;
             }
+
+            let source_path = PathBuf::from(source_dir_abs_path).join(rel_path);
+            if let Ok(meta) = source_path.metadata()
+                && let Ok(mtime) = meta.modified()
+                && mtime > sync_time.mtime
+            {
+                un_pulled.push(rel_path.clone());
+            }
+
+            if let Ok(meta) = target_abs.metadata()
+                && let Ok(mtime) = meta.modified()
+                && mtime > sync_time.mtime
+            {
+                un_pushed.push(target_rel);
+            }
+        }
+
+        let mut msgs = vec![];
+        if !un_pulled.is_empty() {
+            msgs.push(format!("source directory contains files with un-pulled changes: {:?}", un_pulled));
+        }
+        if !un_pushed.is_empty() {
+            msgs.push(format!("target directory contains files with un-pushed changes: {:?}", un_pushed));
+        }
+        if !msgs.is_empty() {
+            return Err(DfmError::Other(format!("{}; use --force to purge", msgs.join("; "))));
         }
     }
 
@@ -104,10 +102,10 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
             None => info!("config file path could not be resolved; skipping"),
             Some(path_to_config_file) if !path_to_config_file.exists() => info!("config file does not exist"),
             Some(path_to_config_file) => {
-                if !dry_run {
-                    if let Err(e) = fs::remove_file(path_to_config_file) {
-                        errors.push(format!("failed to remove config {:?}: {}", path_to_config_file, e));
-                    }
+                if !dry_run
+                    && let Err(e) = fs::remove_file(path_to_config_file)
+                {
+                    errors.push(format!("failed to remove config {:?}: {}", path_to_config_file, e));
                 }
                 info!("config removed {:?}", path_to_config_file);
 
@@ -118,10 +116,10 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
                     if is_home_dir {
                         info!("config directory is the home directory; skipping");
                     } else if config_dir.exists() {
-                        if !dry_run {
-                            if let Err(e) = fs::remove_dir_all(config_dir) {
-                                errors.push(format!("failed to remove config directory {:?}: {}", config_dir, e));
-                            }
+                        if !dry_run
+                            && let Err(e) = fs::remove_dir_all(config_dir)
+                        {
+                            errors.push(format!("failed to remove config directory {:?}: {}", config_dir, e));
                         }
                         info!("config directory removed {:?}", config_dir);
                     }
@@ -133,14 +131,12 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
     // Replace managed target symlinks with regular copies of their pointees, so
     // removing the source directory does not leave dangling symlinks or lose
     // the files they point to. Runs before the source directory removal.
-    if !*keep_source {
-        if let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
+    if !*keep_source
+        && let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
             (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path(xdg))
-        {
-            if let Ok(state) = read_state(&state_path) {
-                replace_managed_symlinks(settings, target_dir_abs_path, source_dir_abs_path, &state, dry_run, &mut errors);
-            }
-        }
+        && let Ok(state) = read_state(&state_path)
+    {
+        replace_managed_symlinks(settings, target_dir_abs_path, source_dir_abs_path, &state, dry_run, &mut errors);
     }
 
     if !keep_source {
@@ -148,10 +144,10 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
             None => info!("source directory path could not be resolved; skipping"),
             Some(source_dir_abs_path) if !source_dir_abs_path.exists() => info!("source does not exist"),
             Some(source_dir_abs_path) => {
-                if !dry_run {
-                    if let Err(e) = fs::remove_dir_all(source_dir_abs_path) {
-                        errors.push(format!("failed to remove source {:?}: {}", source_dir_abs_path, e));
-                    }
+                if !dry_run
+                    && let Err(e) = fs::remove_dir_all(source_dir_abs_path)
+                {
+                    errors.push(format!("failed to remove source {:?}: {}", source_dir_abs_path, e));
                 }
                 info!("source removed {:?}", source_dir_abs_path);
             }
@@ -162,10 +158,10 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
         None => info!("state directory path could not be resolved; skipping"),
         Some(state_directory_path) if !state_directory_path.exists() => info!("state directory does not exist"),
         Some(state_directory_path) => {
-            if !dry_run {
-                if let Err(e) = fs::remove_dir_all(state_directory_path) {
-                    errors.push(format!("failed to remove state {:?}: {}", state_directory_path, e));
-                }
+            if !dry_run
+                && let Err(e) = fs::remove_dir_all(state_directory_path)
+            {
+                errors.push(format!("failed to remove state {:?}: {}", state_directory_path, e));
             }
             info!("state removed {:?}", state_directory_path);
         }
@@ -204,7 +200,7 @@ fn replace_managed_symlinks(
     dry_run: bool,
     errors: &mut Vec<String>,
 ) {
-    for (rel_path, _) in &state.syncs {
+    for rel_path in state.syncs.keys() {
         let (_, target_abs) = state_key_to_target(target_dir_abs_path, rel_path, settings);
         let meta = match fs::symlink_metadata(&target_abs) {
             Ok(meta) => meta,
