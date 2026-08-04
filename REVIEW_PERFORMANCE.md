@@ -23,10 +23,7 @@ Scope: `src/` (main, lib, crypt, 10 commands), `tests/` (167 shell tests + launc
 4. **`status` Phase 3 stale-pattern check** (`status.rs:338-349`) is O(files × patterns);
    fine at dotfile scale but worth noting.
 5. **`status` spawns `git status --porcelain -b`** (`status.rs:808-857`) on every invocation
-   over the source repo — on a huge history this is the dominant cost. Acceptable, but cache
-   or document.
+   over the source repo — on a huge history this is the dominant cost. Must be but cached.
 6. **`list_directory` collects every path in memory** (`lib.rs:889`) and `add` collects all
    tasks before executing — fine for `$HOME`, could stream for pathological trees.
-7. Good: progress indicator throttled (~20 updates), skip-ahead for ignored dirs
-   (`PruneIgnoredDirs`), progress silent below 100 files (`mod.rs:133-141`).
 

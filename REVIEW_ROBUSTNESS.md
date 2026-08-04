@@ -13,7 +13,8 @@ Scope: `src/` (main, lib, crypt, 10 commands), `tests/` (167 shell tests + launc
 2. **`purge` safety check uses mtime, add/pull use content hashes** (`purge.rs:51-97`).
    Inconsistent: restoring a file to identical content with a newer mtime makes `purge`
    demand `--force` for a non-change; conversely content-hash-based change detection in
-   add/pull won't agree with purge's mtime model. Align on one detection method.
+   add/pull won't agree with purge's mtime model. Make
+   the detection method of purge the same as in add/pull.
 3. **`sync_file_copy` `to.parent().unwrap()`** (`mod.rs:300`) — panic risk on root-level
    destinations; prefer a handled error.
 4. **`ignore.rs:56-59` `let traversed_paths = match paths { Some(p) => p, None => &vec![] }`**

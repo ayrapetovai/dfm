@@ -26,10 +26,7 @@ git repo. Several properties undermine that goal:
 4. **Password in memory, never zeroized.** The global `Mutex<Option<String>>` cache
    (`crypt.rs:19-35`) keeps the passphrase for the process lifetime with no zeroization.
    Low risk for a CLI, but worth a comment or `secrecy`-style handling.
-5. **`obtain_password_shell_command` is stored plaintext in the config file.** Documented
-   trade-off (keychain lookup is the recommended pattern), but the value may itself be a
-   secret-bearing string; flag in the docs.
-6. **Password trimming** (`crypt.rs:74-77`) `trim_end_matches(['\r','\n'])` is reasonable,
+5. **Password trimming** (`crypt.rs:74-77`) `trim_end_matches(['\r','\n'])` is reasonable,
    but the KDF/wrong-password path could log a misleading "not found" — verify the error
    surface for wrong passwords on `add` (encrypt) is actionable.
 
