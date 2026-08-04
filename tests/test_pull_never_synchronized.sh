@@ -7,14 +7,14 @@ dfm init dotfiles
 write "$TARGET_CONTENT" file.txt
 write "$SOURCE_CONTENT" "$PWD/dotfiles/file.txt"
 
-# pull without --force: source exists but has no sync record → should skip
-dfm pull
+# pull without --force: source exists but has no sync record → must refuse
+assert_fail dfm pull
 
 # postcondition: target still has its original content (was not overwritten)
 assert_content_eq "file.txt" "$TARGET_CONTENT"
 
 # pull with --force: must overwrite target with source content
-dfm pull --force
+assert_succ dfm pull --force
 
 # postcondition: target now has source's content
 assert_content_eq "file.txt" "$SOURCE_CONTENT"

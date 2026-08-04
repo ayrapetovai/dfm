@@ -20,8 +20,8 @@ write "hello" "clean.txt"
 dfm add clean.txt
 assert_source "clean.txt"
 
-# Default: nothing actionable -> "Up to date" (exit 0)
-dfm status | grep -q "Up to date"
+# Default: nothing actionable -> "All up-to-date." (exit 0)
+dfm status | grep -q "All up-to-date"
 dfm status > /dev/null 2>&1
 
 # --all: show -- entries

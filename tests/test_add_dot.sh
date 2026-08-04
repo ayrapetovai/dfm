@@ -34,7 +34,7 @@ assert_no_source "extra.txt"
 dfm add . --force
 
 assert_source "extra.txt"
-dfm status --short | grep -q "^-- newfile.txt$"
+dfm status --short --all | grep -q "^-- newfile.txt$"
 
 # clean up
 rm extra.txt

@@ -164,24 +164,37 @@ run_test() {
     local test_file="$1"
     # Tests must never read stdin: commands that prompt would otherwise hang
     # the whole suite waiting for input that is never going to come.
+    #
+    # The test body runs in a subshell with errexit enabled (`set -eEu`), so a
+    # bare failing command aborts the test. The subshell must NOT be a shell
+    # conditional (`if`/`while`/`&&`/`||`): bash ignores `set -e` inside a
+    # compound command used as such a condition, turning every failing command
+    # into a silent no-op (a false pass). Callers must therefore invoke this
+    # function as a plain command with errexit off and inspect its exit status.
+    local rc tmp=""
     if [ -n "$QUIET" ]; then
         ( set -eEu; source "$test_file" ) < /dev/null > /dev/null 2>&1
     else
-        local tmp; tmp=$(mktemp)
-        if ( set -eEu -x; source "$test_file" ) < /dev/null >"$tmp" 2>&1; then
-            rm -f "$tmp"
-            return 0
-        else
-            cat "$tmp"
-            rm -f "$tmp"
-            return 1
-        fi
+        tmp=$(mktemp)
+        ( set -eEu -x; source "$test_file" ) < /dev/null >"$tmp" 2>&1
     fi
+    rc=$?
+    if [ $rc -ne 0 ] && [ -n "$tmp" ]; then
+        cat "$tmp"
+    fi
+    if [ -n "$tmp" ]; then
+        rm -f "$tmp"
+    fi
+    return $rc
 }
 
 if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
     test_name="$(basename $TEST_FILE_TO_RUN_ABS)"
-    if run_test "$TEST_FILE_TO_RUN_ABS"; then
+    set +e
+    run_test "$TEST_FILE_TO_RUN_ABS"
+    rc=$?
+    set -e
+    if [ $rc -eq 0 ]; then
         echo "---- $test_name ✅"
         SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
     else
@@ -193,7 +206,11 @@ else
         test_name="$(basename $test_case)"
 
         # launch test
-        if run_test "$test_case"; then
+        set +e
+        run_test "$test_case"
+        rc=$?
+        set -e
+        if [ $rc -eq 0 ]; then
             echo "---- $test_name ✅"
             SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
         else

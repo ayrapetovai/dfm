@@ -48,7 +48,8 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
     // Check for un-pushed / un-pulled changes before deleting the source directory.
     // Managed symlinks are excluded: their data is preserved by the replacement
     // step below, so there is nothing to lose for them.
-    if !*keep_source && !*force {
+    // A --dry-run purge previews without deleting, so the safety check is skipped.
+    if !*keep_source && !*force && !dry_run {
         if let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
             (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path(xdg))
         {

@@ -13,7 +13,7 @@ dfm add linked.txt
 # LL should appear with --all (hidden by default like --)
 dfm status --all 2>/dev/null | grep -qF "LL  linked.txt"
 dfm status --short --all 2>/dev/null | grep -q "^LL linked.txt$"
-dfm status --porcelain --all 2>/dev/null | grep -q "^LL\tlinked.txt$"
+dfm status --porcelain --all 2>/dev/null | grep -q $'^LL\tlinked.txt$'
 
 # LL should NOT appear in default status (just like --)
 ! dfm status 2>/dev/null | grep -q "linked.txt"
@@ -21,7 +21,7 @@ dfm status --porcelain --all 2>/dev/null | grep -q "^LL\tlinked.txt$"
 # ?L: unmanaged symlink — symlink to file not in state
 ln -s /nonexistent broken_link.txt
 dfm status --short 2>/dev/null | grep -q "^?L broken_link.txt$"
-dfm status --porcelain 2>/dev/null | grep -q "^\?L\tbroken_link.txt$"
+dfm status --porcelain 2>/dev/null | grep -q $'^\\?L\tbroken_link.txt$'
 
 # ?L should also appear in default output (like ??)
 dfm status 2>/dev/null | grep -qF "?L  broken_link.txt"

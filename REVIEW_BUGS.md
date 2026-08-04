@@ -7,52 +7,6 @@ Scope: `src/` (main, lib, crypt, 10 commands), `tests/` (167 shell tests + launc
 
 ## A. Confirmed functional bugs (reproduced)
 
-### A1. [SEVERE] `dfm pull` after `add -s` destroys the managed symlink
-`src/commands/pull.rs:145-152` — `handle_source_path`
-
-When the target is a symlink and the source is an ordinary **data** file (the case
-produced by `add -s`, where the symlink *is* the managed file and the source holds the
-real content), the branch treats the source file's *content* as a symlink pointee:
-
-```rust
-} else if target_file_abs_path.is_symlink() && source_file_abs_path.exists() {
-    let target_symlink_pointee = fs::read_link(&target_file_abs_path)?;
-    let source_file_content = read_symlink_pointer(source_file_abs_path)?; // reads file CONTENT
-    if source_file_content != target_symlink_pointee.to_string_lossy().as_ref() {
-        tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path, source_file_content));
-```
-
-Reproduction:
-```bash
-dfm init dotfiles
-echo "content" > file.txt
-dfm add -s file.txt      # file.txt -> dotfiles/file.txt (correct)
-dfm pull                 # file.txt now -> "content" (dangling!)
-readlink file.txt        # => "content"
-```
-After `pull`, `file.txt` points to a non-existent path named `content`. The data is still
-in `dotfiles/file.txt`, but the user's file is broken. The branch should only fire when
-the **source name ends with `symlink_postfix`** (a real pointer file), i.e. `read_symlink_pointer`
-must not be called on plain data files. The README's pull table says "Symlink points to the
-correct source file → Do nothing", which is the opposite of the observed behavior.
-
-No test covers `add -s` followed by `pull` (only `test_purge_symlink_add_s.sh` uses `add -s`).
-
-### A2. `dfm pull <target-path>` fails on an already-correct `add -s` symlink
-`src/commands/pull.rs:226-230` — `handle_existing_target`
-
-```rust
-if target_symlink_followed_abs_path == source_file_abs_path {
-    info!("target symlink ... points to the source file ..., skipping...");
-    error_list.push(format!("target {:?} is a valid symlink", target_abs_path)); // ???
-    return Ok(());
-}
-```
-An *idempotent no-op* ("symlink is correct") is recorded as an **error**, so
-`dfm pull file.txt` exits 1 with `improper operation` (and requires `--force`). Same repro
-as A1 but with an explicit target path. The `error_list.push(...)` line is wrong — a valid
-symlink should be silently skipped like every other up-to-date case.
-
 ### A3. `dfm forget --dry-run` mutates the state file
 `src/commands/forget.rs:403-412` (Phase 2) + `src/main.rs:391-399` (`with_state_even_if_error`)
 

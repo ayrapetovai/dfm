@@ -142,7 +142,10 @@ fn handle_source_path(
             }
             return Ok(None);
         }
-    } else if target_file_abs_path.is_symlink() && source_file_abs_path.exists() {
+    } else if target_file_abs_path.is_symlink() && source_file_abs_path.exists() && source_name.ends_with(&settings.symlink_postfix) {
+        // Only a `.symlink` source file carries a pointer; a plain source file
+        // next to a symlink target is the `add -s` layout and must not have its
+        // content misread as a symlink pointer.
         let target_symlink_pointee = fs::read_link(&target_file_abs_path)?;
         let source_file_content = read_symlink_pointer(source_file_abs_path)?;
         if source_file_content != target_symlink_pointee.to_string_lossy().as_ref() {
@@ -225,7 +228,6 @@ fn handle_existing_target(
         let source_file_abs_path = filepath_in_source_dir(&settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path, None);
         if target_symlink_followed_abs_path == source_file_abs_path {
             info!("target symlink {:?}\n\tpoints to the source file {:?}, skipping...", target_abs_path, source_file_abs_path);
-            error_list.push(format!("target {:?} is a valid symlink", target_abs_path));
             return Ok(());
         }
 

@@ -48,8 +48,8 @@ dfm add .alien_link
 assert_source "dot_alien_link.symlink"
 assert_content_eq "$PWD/dotfiles/dot_alien_link.symlink" "$PWD/../outside/.alien_pointee"
 
-# Status (default) should show "Up to date"
-dfm status 2>/dev/null | grep -q "Up to date"
+# Status (default) should show "All up-to-date."
+dfm status 2>/dev/null | grep -q "All up-to-date"
 
 # --all should show LL
 dfm status --all 2>/dev/null | grep -qF "LL  .alien_link"

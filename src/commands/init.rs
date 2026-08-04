@@ -71,7 +71,17 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         fs::canonicalize(source_directory_pointer.parent().unwrap())?
     } else {
         tasks.push(InitTask::CreateSourceRootFile(path_to_source.join(".dfm_root")));
-        fs::canonicalize(path_to_source)?
+        if dry_run {
+            // dry-run does not create the source dir, so it cannot be
+            // canonicalized yet; build the absolute path instead.
+            if path_to_source.is_absolute() {
+                path_to_source.clone()
+            } else {
+                env::current_dir()?.join(path_to_source)
+            }
+        } else {
+            fs::canonicalize(path_to_source)?
+        }
     };
 
     debug!("using source directory {:?}", source_dir_path);

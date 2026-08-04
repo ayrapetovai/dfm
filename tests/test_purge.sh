@@ -14,8 +14,8 @@ assert_source "file.txt"
 touch "$PWD/dotfiles/file.txt"
 assert_fail dfm purge 2>/dev/null
 
-# purge with --dry-run must not remove anything
-dfm purge --dry-run
+# purge with --dry-run must not remove anything (dry-run skips the safety check)
+assert_succ dfm purge --dry-run
 assert -f "$PWD/.config/dfm/config.toml"
 assert -d "$PWD/.config/dfm"
 assert -d "$PWD/.local/state/dfm"
