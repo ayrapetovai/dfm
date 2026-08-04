@@ -243,8 +243,8 @@ fn handle_target_file(
                 },
                 CompareByTimestamp::NeverSynchronized => {
                     let content_equal = {
-                        let t = fs::read_to_string(&target_abs_path)?;
-                        let s = fs::read_to_string(&regular_source_abs_path)?;
+                        let t = fs::read(&target_abs_path)?;
+                        let s = fs::read(&regular_source_abs_path)?;
                         t == s
                     };
                     if !(content_equal || force) {
@@ -293,8 +293,8 @@ fn handle_target_file(
             },
             CompareByTimestamp::NeverSynchronized => {
                 let content_equal = {
-                    let t = fs::read_to_string(&target_abs_path)?;
-                    let s = fs::read_to_string(&source_abs_path)?;
+                    let t = fs::read(&target_abs_path)?;
+                    let s = fs::read(&source_abs_path)?;
                     t == s
                 };
                 if content_equal {

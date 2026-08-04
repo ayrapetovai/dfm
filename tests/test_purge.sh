@@ -11,7 +11,7 @@ assert -d "$PWD/dotfiles"
 assert_source "file.txt"
 
 # purge without --force must fail when source has un-pulled changes
-touch "$PWD/dotfiles/file.txt"
+write "changed" "$PWD/dotfiles/file.txt"
 assert_fail dfm purge 2>/dev/null
 
 # purge with --dry-run must not remove anything (dry-run skips the safety check)

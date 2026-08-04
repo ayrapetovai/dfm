@@ -67,18 +67,22 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
                 continue;
             }
 
+            // Use the same change detection as add/pull (content hash for
+            // plain files, mtime for encrypted) so purge agrees with them:
+            // restoring a file to identical content with a newer mtime is not
+            // a change, and a content change with a preserved mtime is.
             let source_path = PathBuf::from(source_dir_abs_path).join(rel_path);
-            if let Ok(meta) = source_path.metadata()
-                && let Ok(mtime) = meta.modified()
-                && mtime > sync_time.mtime
-            {
+            let cmp = match compare_files(&settings.encrypted_postfix, &target_abs, &source_path, Some(sync_time)) {
+                Ok(cmp) => cmp,
+                Err(e) => {
+                    debug!("purge: cannot compare {:?} and {:?}: {}; skipping safety check", target_abs, source_path, e);
+                    continue;
+                }
+            };
+            if matches!(cmp, CompareByTimestamp::SourceModified | CompareByTimestamp::BothModified) {
                 un_pulled.push(rel_path.clone());
             }
-
-            if let Ok(meta) = target_abs.metadata()
-                && let Ok(mtime) = meta.modified()
-                && mtime > sync_time.mtime
-            {
+            if matches!(cmp, CompareByTimestamp::TargetModified | CompareByTimestamp::BothModified) {
                 un_pushed.push(target_rel);
             }
         }

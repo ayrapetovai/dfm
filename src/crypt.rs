@@ -147,8 +147,8 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
             .unix_permissions(target_file_permissions.mode()),
     ).map_err(DfmError::other)?;
 
-    let file_content = fs::read_to_string(target_file_path)?;
-    zip.write_all(file_content.as_bytes()).map_err(DfmError::other)?;
+    let file_content = fs::read(target_file_path)?;
+    zip.write_all(&file_content).map_err(DfmError::other)?;
     zip.finish().map_err(DfmError::other)?;
 
     Ok(())
