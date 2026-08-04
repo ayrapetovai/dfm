@@ -399,8 +399,12 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         }
     }
 
-    // Phase 2: Remove state entries for all processed files (infallible)
+    // Phase 2: Remove state entries for all processed files (infallible).
+    // Skipped under --dry-run: a dry-run must not mutate the state file.
     for task in &tasks {
+        if dry_run {
+            continue;
+        }
         match task {
             ForgetTask::Delete(source_file) => {
                 remove_sync_state(state, source_file, &source_dir_abs_path);

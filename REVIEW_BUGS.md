@@ -7,31 +7,6 @@ Scope: `src/` (main, lib, crypt, 10 commands), `tests/` (167 shell tests + launc
 
 ## A. Confirmed functional bugs (reproduced)
 
-### A3. `dfm forget --dry-run` mutates the state file
-`src/commands/forget.rs:403-412` (Phase 2) + `src/main.rs:391-399` (`with_state_even_if_error`)
-
-Phase 1 and 3 correctly skip deletions on dry-run, but Phase 2 removes state entries
-**unconditionally**, and `with_state_even_if_error` always persists:
-
-```rust
-for task in &tasks {
-    match task {
-        ForgetTask::Delete(source_file) => { remove_sync_state(state, ...); },
-        ForgetTask::RemoveState(key) => { state.syncs.remove(key); },
-    }
-}
-```
-
-Reproduction:
-```bash
-dfm init dotfiles; echo c > file.txt; dfm add file.txt
-dfm forget --dry-run file.txt
-grep file.txt .local/state/dfm/state.toml   # => entry GONE
-```
-A dry-run that deletes permanent state is a contract violation. The existing
-`test_forget_dry_run.sh` only asserts the *files* still exist — it never checks the state
-file, so it passes.
-
 ### A4. Path round-trip corrupts any component containing `dot_` as a substring
 `src/commands/mod.rs:100` — `source_rel_to_target_rel`
 
