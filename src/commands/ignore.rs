@@ -88,8 +88,11 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
             // Ignoring a source-side file should ignore the actual target file,
             // so the stored entry is the source-relative path with the dot
             // prefix stripped (e.g. source `dot_my.log` -> target `.my.log`
-            // stored as `^my\.log$`).
-            let canonical = rel_path.to_string_lossy().replace(&settings.dot_prefix, "");
+            // stored as `^my\.log$`). `decode_source_rel_path` maps component
+            // by component so a literal `dot_`-prefixed name is not corrupted.
+            let canonical = decode_source_rel_path(&rel_path.to_string_lossy(), &settings.dot_prefix, false)
+                .to_string_lossy()
+                .into_owned();
             let canonical_line = format!("^{}$", regex::escape(&canonical));
             let matched = check_path_matches_regex_component_wise(&source_ignore_regex, &rel_path)
                 .or_else(|| check_path_matches_regex_component_wise(&source_ignore_regex, &PathBuf::from(&canonical)));

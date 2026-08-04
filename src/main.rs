@@ -282,15 +282,18 @@ fn main_logic() -> Result<(), dfm::DfmError> {
     };
 
     let default_settings = create_default_settings();
-    let path_to_config_file = match calc_config_file_path(&xdg) {
-        Ok(p) => Some(p),
-        Err(e) => {
-            warn!(
-                "config file path could not be resolved: {}; continuing without config",
-                e
-            );
-            None
-        }
+    let path_to_config_file = match &args.config {
+        Some(path) => Some(path.clone()),
+        None => match calc_config_file_path(&xdg) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                warn!(
+                    "config file path could not be resolved: {}; continuing without config",
+                    e
+                );
+                None
+            }
+        },
     };
     let config_from_file = match &path_to_config_file {
         Some(p) => match read_config(p) {

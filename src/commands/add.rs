@@ -62,6 +62,7 @@ fn handle_target_symlink(
     force: bool,
     tasks: &mut Vec<AddTask>,
     error_messages: &mut Vec<String>,
+    explicitly_named: bool,
 ) -> Result<(), DfmError> {
     if encrypt {
         error_messages.push(format!("Target {:?} is a symlink, encryption is impossible", target_path));
@@ -93,11 +94,25 @@ fn handle_target_symlink(
     }
 
     let target_symlink_pointee_rel_path = fs::read_link(&target_symlink_abs_path)?;
-    let target_symlink_pointee_abs_path = fs::canonicalize(&target_symlink_pointee_rel_path)
-        .map_err(|e| DfmError::Other(format!(
-            "Symlink {:?} points to {:?} which does not exist: {}",
-            target_symlink_abs_path, target_symlink_pointee_rel_path, e
-        )))?;
+    let target_symlink_pointee_abs_path = match fs::canonicalize(&target_symlink_pointee_rel_path) {
+        Ok(p) => p,
+        // A dangling symlink discovered during traversal must not abort the
+        // whole command: skip it with a warning, like the permission-denied
+        // path. Only when the user names the symlink explicitly is it an error.
+        Err(e) if !explicitly_named => {
+            warn!(
+                "skipping broken symlink {:?} (points to {:?}): {}",
+                target_symlink_abs_path, target_symlink_pointee_rel_path, e
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(DfmError::Other(format!(
+                "Symlink {:?} points to {:?} which does not exist: {}",
+                target_symlink_abs_path, target_symlink_pointee_rel_path, e
+            )));
+        }
+    };
     debug!("target symlink {:?}\n\tpoints to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
 
     let source_symlink_file_abs_path = filepath_in_source_dir(
@@ -367,10 +382,11 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         debug!("checking {:?}", target_path);
 
         if target_path.is_symlink() {
+            let explicitly_named = paths.iter().any(|p| p == target_path);
             match handle_target_symlink(
                 &settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
                 &target_ignore_regex, &target_ignore_file_path,
-                *encrypt, *force, &mut tasks, &mut error_messages,
+                *encrypt, *force, &mut tasks, &mut error_messages, explicitly_named,
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {

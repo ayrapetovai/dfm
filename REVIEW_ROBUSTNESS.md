@@ -24,11 +24,4 @@ Scope: `src/` (main, lib, crypt, 10 commands), `tests/` (167 shell tests + launc
    `NotFound` from `InvalidData`.
 6. **`get_home_path`** (`lib.rs:520-532`) is over-engineered (`envmnt::expand`); `var_os`
    suffices and avoids surprises if `$HOME` contains `$`.
-7. **`merge` `{result}` is not pre-created** (`mod.rs:389-394`) — documented, but a merge
-   tool that writes *into* an existing file (some GUIs) will fail. Consider `File::create` +
-   truncate.
-8. **`status` color output** relies on `colored`'s tty detection — good; but the default
-   (paged) output spawns `less`/`$PAGER` whenever output exceeds a `stty`-derived height,
-   which can surprise scripts (`status.rs:757-788`). `--porcelain`/`--short` are the safe
-   forms; documented, but worth a note in README that default output pages.
 

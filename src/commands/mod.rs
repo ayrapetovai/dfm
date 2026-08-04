@@ -97,7 +97,9 @@ pub(crate) fn source_rel_to_target_rel(
     symlink_postfix: &str,
     encrypted_postfix: &str,
 ) -> String {
-    let mut target_rel = source_rel.replace(dot_prefix, ".");
+    let mut target_rel = decode_source_rel_path(source_rel, dot_prefix, true)
+        .to_string_lossy()
+        .into_owned();
     if target_rel.ends_with(symlink_postfix) {
         target_rel = target_rel[..target_rel.len() - symlink_postfix.len()].to_string();
     } else if target_rel.ends_with(encrypted_postfix) {

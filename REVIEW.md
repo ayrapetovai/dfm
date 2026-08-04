@@ -5,7 +5,6 @@ Review date: 2026-08-03 · Base: `df84fb4` (main, 2 commits ahead of origin).
 ---
 
 Review is split into several files:
-./REVIEW_BUGS.md
 ./REVIEW_ERGONOMICS.md
 ./REVIEW_INTEGRAION_TESTS.md
 ./REVIEW_PERFORMANCE.md

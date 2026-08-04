@@ -591,14 +591,20 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, DfmError> {
 }
 
 pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_object: Option<&StateObject>) -> Settings {
+    // The source/target dirs are recorded in the state file (by `dfm init`) and
+    // must be honored even when the config file is absent — otherwise removing
+    // just the config (e.g. `rm -rf ~/.config/dfm`) breaks every
+    // state-dependent command. The config file only supplies the tunable
+    // fields; those fall back to defaults when it is missing.
+    let source_dir = state_object
+        .map(|s| s.source_directory.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let target_dir = state_object
+        .map(|s| s.target_directory.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
     match custom_opt {
         Some(custom) => {
-            let source_dir = state_object
-                .map(|s| s.source_directory.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let target_dir = state_object
-                .map(|s| s.target_directory.to_string_lossy().into_owned())
-                .unwrap_or_default();
             Settings {
                 source_dir,
                 target_dir,
@@ -618,7 +624,11 @@ pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_obj
                     .or_else(|| default.merge_tool_command.clone()),
             }
         }
-        None => default.clone()
+        None => Settings {
+            source_dir,
+            target_dir,
+            ..default.clone()
+        },
     }
 }
 
@@ -658,6 +668,12 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, s
     // components maps all of them uniformly, so an encoding written by dfm
     // round-trips through `source_rel_to_target_rel` regardless of where a dot
     // appears in the path.
+    //
+    // The mapping must be injective: a target component that *literally* starts
+    // with `dot_prefix` (e.g. `dot_backup`) would otherwise collide with the
+    // encoding of `.backup`. Such components are escaped with a `~` marker
+    // (`dot_backup` -> `~dot_backup`), and a literal leading `~` is doubled
+    // (`~foo` -> `~~foo`), which `decode_source_rel_path` inverts.
     let mut source_rel = PathBuf::new();
     for component in target_file_rel_to_target_dir_path.components() {
         match component {
@@ -665,6 +681,8 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, s
                 let name_str = name.to_string_lossy();
                 if name_str.starts_with('.') {
                     source_rel.push(format!("{}{}", dot_prefix, &name_str[1..]));
+                } else if name_str.starts_with(dot_prefix) || name_str.starts_with('~') {
+                    source_rel.push(format!("~{}", name_str));
                 } else {
                     source_rel.push(name);
                 }
@@ -683,6 +701,43 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, s
     trace!("source file path relative to source directory {:?}", source_file_rel_to_source_dir_path);
     let ret = source_dir_abs_path.join(&source_file_rel_to_source_dir_path);
     remove_dots_from_path(&ret)
+}
+
+/// Decode a source-relative path back into the target namespace, inverting
+/// `filepath_in_source_dir` component by component (a plain `str::replace` is
+/// asymmetric and corrupts components that merely contain the dot prefix, e.g.
+/// `dot_config/dot_backup` -> `.config/.backup`).
+///
+/// A component starting with the dot prefix is the encoding of a hidden
+/// component, a `~`-prefixed component is an escaped literal `dot_`-prefixed
+/// name, and a `~~`-prefixed component is an escaped literal `~`. When
+/// `hidden_as_dot` is set hidden components get their leading dot restored;
+/// otherwise the prefix is dropped entirely (used for ignore-file
+/// canonicalization, which stores the dotless form).
+pub fn decode_source_rel_path(source_rel: &str, dot_prefix: &str, hidden_as_dot: bool) -> PathBuf {
+    let mut target_rel = PathBuf::new();
+    for component in Path::new(source_rel).components() {
+        match component {
+            Component::Normal(name) => {
+                let name_str = name.to_string_lossy();
+                if let Some(rest) = name_str.strip_prefix("~~") {
+                    target_rel.push(format!("~{}", rest));
+                } else if let Some(rest) = name_str.strip_prefix('~') {
+                    target_rel.push(rest);
+                } else if let Some(rest) = name_str.strip_prefix(dot_prefix) {
+                    if hidden_as_dot {
+                        target_rel.push(format!(".{}", rest));
+                    } else {
+                        target_rel.push(rest);
+                    }
+                } else {
+                    target_rel.push(name);
+                }
+            }
+            other => target_rel.push(other.as_os_str()),
+        }
+    }
+    target_rel
 }
 
 pub fn remove_dots_from_path(path: &Path) -> PathBuf {
@@ -1189,10 +1244,11 @@ fn test_merge_settings() {
         PathBuf::from("/home/user/dotfiles"),
     );
 
-    // No config file -> plain defaults; the state is not consulted.
+    // No config file -> the working dirs still come from the state file;
+    // only the tunables fall back to defaults (A6).
     let no_custom = merge_settings(&default, &None, Some(&state));
-    assert_eq!(no_custom.source_dir, "");
-    assert_eq!(no_custom.target_dir, "$HOME");
+    assert_eq!(no_custom.source_dir, "/home/user/dotfiles");
+    assert_eq!(no_custom.target_dir, "/home/user");
     assert_eq!(no_custom.dot_prefix, default.dot_prefix);
 
     // Config present -> state supplies the working directories.
