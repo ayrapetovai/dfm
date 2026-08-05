@@ -14,6 +14,14 @@ use crate::{Settings, file_path_relative_to};
 
 // ---------------------------------------------------------------------------
 // Password cache — ask only once per `dfm` process
+//
+// SECURITY NOTE: the passphrase lives in a plain `String` for the entire
+// `dfm` process and is never zeroized on drop (Rust `String` does no explicit
+// zeroization). This is an accepted trade-off for a short-lived CLI: the
+// password is already resident in process memory while it is read from the
+// subprocess stdout / tty and passed to the zip encoder, so the cache adds no
+// new exposure beyond that. If this ever became a long-lived daemon or a
+// library, migrate to `zeroize`/`secrecy` wrapping instead of `String`.
 // ---------------------------------------------------------------------------
 
 static PASSWORD_CACHE: Mutex<Option<String>> = Mutex::new(None);
