@@ -9,7 +9,6 @@ use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
 
-use envmnt::ExpandOptions;
 use log::{debug, trace, warn};
 use microxdg::Xdg;
 use regex::{Regex, RegexSet};
@@ -515,21 +514,10 @@ pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<()
     Ok(fs::write(path_to_config_file, content)?)
 }
 
-// TODO read HOME variable depending on the operation system
-// [dependencies]
-// env_home = "0.1"
 pub fn get_home_path() -> Option<PathBuf> {
-    if !envmnt::exists("HOME") {
-        return None;
-    }
-    let mut expand_options = ExpandOptions::new();
-    expand_options.default_to_empty = true;
-    let home_path = envmnt::expand("${HOME}", Some(expand_options));
-    return if home_path.len() > 0 {
-        Some(PathBuf::from(home_path))
-    } else {
-        None
-    }
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
 }
 
 pub fn calc_config_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError>{

@@ -52,9 +52,10 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
     let source_ignore_file_path = calc_source_ignore_file(&source_dir_abs_path);
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
+    let empty_paths: &Vec<PathBuf> = &Vec::new();
     let traversed_paths = match paths {
         Some(p) => p,
-        None => &vec![]
+        None => empty_paths,
     };
 
     debug!("traversing result is {:?}", traversed_paths);

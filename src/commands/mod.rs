@@ -324,7 +324,10 @@ pub(crate) fn sync_file_copy(
     state: &mut StateObject,
     source_dir_abs_path: &PathBuf,
 ) -> Result<(), DfmError> {
-    fs::create_dir_all(to.parent().unwrap())?;
+    let to_parent = to
+        .parent()
+        .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", to)))?;
+    fs::create_dir_all(to_parent)?;
     fs::copy(from, to)?;
 
     let permissions = from.metadata()?.permissions();
