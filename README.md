@@ -476,3 +476,33 @@ source_dir/dot_bashrc.symlink              -- symlink pointer file
 - **Config `--set` and arrays**: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the TOML file directly.
 - **Dotfiles outside UTF-8 paths**: Only valid UTF-8 paths are supported.
 - **Merge tool**: The merge command is run directly (no shell), so shell features (`|`, `>`, `$VAR`) in `merge_tool_command` are not processed.
+
+## Building
+
+### Install tools
+
+```shell
+# install https://rust-lang.org/tools/install/
+cargo install cargo-aur
+```
+```
+```
+
+### Create a package from sources
+
+```shell
+cargo build --release
+cargo aur
+cd target/cargo-aur
+makepkg
+```
+
+The package will appear in ./target/cargo-aur
+
+### Install and remove
+
+```shell
+sudo pacman -U dfm-version-arch.zst
+sudo pacman -R dfm-bin
+```
+

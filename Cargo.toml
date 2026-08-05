@@ -1,8 +1,14 @@
 [package]
+description = "dot-file manager"
 authors = ["ayrapetovai"]
 name = "dfm"
 version = "0.1.0"
 edition = "2024"
+readme = "README.md"
+license = "Unlicense"
+documentation = "https://github.com/ayrapetovai/dfm/blob/main/README.md"
+homepage = "https://github.com/ayrapetovai/dfm.git"
+repository = "https://github.com/ayrapetovai/dfm.git"
 
 [dependencies]
 microxdg = "0.2.0"
@@ -33,3 +39,6 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+[package.metadata.aur]
+
