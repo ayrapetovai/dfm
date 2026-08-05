@@ -3,7 +3,7 @@ pub mod crypt;
 use std::collections::HashMap;
 use std::{fs, io};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
@@ -225,16 +225,8 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmErr
 /// anchors per path component.
 pub fn check_path_matches_regex_substring(regex: &RegexSet, haystack: &PathBuf) -> Option<String> {
     let haystack = haystack.to_string_lossy();
-    if regex.matches(haystack.as_ref()).matched_any() {
-        let target_ignore_patterns = regex.patterns();
-        for pattern in target_ignore_patterns {
-            let regex = Regex::new(pattern).unwrap();
-            if regex.is_match(haystack.as_ref()) {
-                return Some(pattern.to_owned());
-            }
-        }
-    }
-    return None;
+    let matched_idx = regex.matches(haystack.as_ref()).iter().next()?;
+    Some(regex.patterns()[matched_idx].to_owned())
 }
 
 /// Check if a regex pattern matches a relative path when matching is done
@@ -626,11 +618,12 @@ pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &Pat
     let mut path_components = Vec::new();
     for target_file_parent in file_abs_path.ancestors() {
         if relative_to_abs_path.eq(target_file_parent) {
-            target_file_rel_to_target_dir_path_opt = Some(PathBuf::from_iter(&path_components));
+            path_components.reverse();
+            target_file_rel_to_target_dir_path_opt = Some(PathBuf::from_iter(path_components.iter().cloned()));
             break;
         }
         if let Some(filename) = target_file_parent.file_name() {
-            path_components.insert(0, filename);
+            path_components.push(filename.to_os_string());
         }
     }
 
@@ -1102,9 +1095,17 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
 /// SHA-256 of the file contents, hex-encoded.
 pub fn compute_sha256(path: &PathBuf) -> Result<String, DfmError> {
     use sha2::{Digest, Sha256};
-    let content = fs::read(path)?;
+    let file = fs::File::open(path)?;
+    let mut reader = BufReader::with_capacity(1 << 17, file);
     let mut hasher = Sha256::new();
-    hasher.update(&content);
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }
 

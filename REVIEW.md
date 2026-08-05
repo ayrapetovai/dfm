@@ -5,9 +5,7 @@ Review date: 2026-08-03 · Base: `df84fb4` (main, 2 commits ahead of origin).
 ---
 
 Review is split into several files:
-./REVIEW_PERFORMANCE.md
 ./REVIEW_SECURITY.md
-./REVIEW_PRIORITIES.md
 
 When you have some issue fixed mark in in the corresponding file.
 
