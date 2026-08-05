@@ -485,8 +485,6 @@ source_dir/dot_bashrc.symlink              -- symlink pointer file
 # install https://rust-lang.org/tools/install/
 cargo install cargo-aur
 ```
-```
-```
 
 ### Create a package from sources
 
