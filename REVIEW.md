@@ -8,7 +8,6 @@ Review is split into several files:
 ./REVIEW_PERFORMANCE.md
 ./REVIEW_ROBUSTNESS.md
 ./REVIEW_SECURITY.md
-./REVIEW_STRUCTURE.md
 ./REVIEW_PRIORITIES.md
 
 When you have some issue fixed mark in in the corresponding file.

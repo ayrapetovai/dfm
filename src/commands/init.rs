@@ -86,7 +86,7 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
 
     debug!("using source directory {:?}", source_dir_path);
 
-    let source_ignore_file_path = calc_source_ignore_file(&source_dir_path)?;
+    let source_ignore_file_path = calc_source_ignore_file(&source_dir_path);
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
     if !source_ignore_regex.matches(".dfm_root").matched_any() {

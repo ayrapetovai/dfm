@@ -49,7 +49,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
     let local_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&local_ignore_file_path)?;
 
-    let source_ignore_file_path = calc_source_ignore_file(&source_dir_abs_path)?;
+    let source_ignore_file_path = calc_source_ignore_file(&source_dir_abs_path);
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
     let traversed_paths = match paths {

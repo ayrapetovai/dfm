@@ -3,7 +3,7 @@ use log::{debug, info, warn};
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{run_merge, source_rel_to_target_rel, msg_dry_run};
+use super::{run_merge, msg_dry_run, state_key_for};
 
 /// Typed, per-command arguments for `merge` (built by the dispatcher).
 pub struct MergeArgs {
@@ -66,22 +66,20 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
                 // Provided path is in the source directory — infer target
                 // (same logic as pull.rs source-traversal branch)
                 let source_abs = target_abs;
-                let source_rel = file_path_relative_to(&source_abs, &source_dir_abs_path);
-                let source_rel = remove_dots_from_path(&source_rel);
-                let source_rel_str = source_rel.to_string_lossy();
+                let source_rel_str = state_key_for(&source_abs, &source_dir_abs_path);
 
                 // Derive target path (replace dot_prefix, strip postfixes)
                 let target_rel = source_rel_to_target_rel(
-                    source_rel_str.as_ref(), &settings.dot_prefix,
+                    &source_rel_str, &settings.dot_prefix,
                     &settings.symlink_postfix, &settings.encrypted_postfix,
                 );
                 let inferred_target_abs = target_dir_abs_path.join(&target_rel);
                 let inferred_target_abs = remove_dots_from_path(&inferred_target_abs);
 
-                if let Some(sync_time) = state.syncs.get(source_rel_str.as_ref()) {
+                if let Some(sync_time) = state.syncs.get(source_rel_str.as_str()) {
                     candidates.push((source_abs, inferred_target_abs, sync_time.clone()));
                 } else {
-                    warn!("{:?} is not in the state file, skipping...", source_rel);
+                    warn!("{:?} is not in the state file, skipping...", source_rel_str);
                 }
             } else {
                 // Provided path is a target path — find source
@@ -89,9 +87,7 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
                     &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
                     &target_abs, None,
                 );
-                let source_rel_base = file_path_relative_to(&source_abs_base, &source_dir_abs_path);
-                let source_rel_base = remove_dots_from_path(&source_rel_base);
-                let source_rel_base_str = source_rel_base.to_string_lossy();
+                let source_rel_base_str = state_key_for(&source_abs_base, &source_dir_abs_path);
 
                 // State key may include encrypted/symlink postfix — try all variants
                 let state_key = resolve_state_key(
@@ -102,7 +98,7 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
                 );
 
                 if let Some(state_key) = state_key {
-                    let source_abs = if state_key == source_rel_base_str.as_ref() {
+                    let source_abs = if state_key == source_rel_base_str {
                         source_abs_base
                     } else {
                         source_dir_abs_path.join(&state_key)

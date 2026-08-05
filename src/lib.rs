@@ -164,11 +164,7 @@ pub fn calc_local_ignore_file(xdg: &Xdg) -> Result<PathBuf, DfmError> {
 pub fn open_or_create_target_ignore_file(xdg: &Xdg) -> Result<File, DfmError> {
     let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
     let p = xdg.state_file(&state_file_name)?;
-    Ok(OpenOptions::new()
-        .write(true)
-        .append(true)
-        .create(true)
-        .open(&p)?)
+    open_or_create_file(&p)
 }
 
 pub fn open_or_create_file(path_to_file: &PathBuf) -> Result<File, DfmError> {
@@ -179,10 +175,8 @@ pub fn open_or_create_file(path_to_file: &PathBuf) -> Result<File, DfmError> {
         .open(path_to_file)?)
 }
 
-// TODO refactor, make less code
-pub fn calc_source_ignore_file(source_dir_abs_path: &PathBuf) -> Result<PathBuf, DfmError> {
-    let source_ignore_file_path = source_dir_abs_path.join(IGNORE_FILE_NAME_IN_SOURCE_DIR);
-    Ok(source_ignore_file_path)
+pub fn calc_source_ignore_file(source_dir_abs_path: &PathBuf) -> PathBuf {
+    source_dir_abs_path.join(IGNORE_FILE_NAME_IN_SOURCE_DIR)
 }
 
 pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmError> {
@@ -743,6 +737,25 @@ pub fn decode_source_rel_path(source_rel: &str, dot_prefix: &str, hidden_as_dot:
             }
             other => target_rel.push(other.as_os_str()),
         }
+    }
+    target_rel
+}
+
+/// Convert a source-relative path (state key) to a target-relative path,
+/// stripping encrypted/symlink postfixes.
+pub fn source_rel_to_target_rel(
+    source_rel: &str,
+    dot_prefix: &str,
+    symlink_postfix: &str,
+    encrypted_postfix: &str,
+) -> String {
+    let mut target_rel = decode_source_rel_path(source_rel, dot_prefix, true)
+        .to_string_lossy()
+        .into_owned();
+    if target_rel.ends_with(symlink_postfix) {
+        target_rel = target_rel[..target_rel.len() - symlink_postfix.len()].to_string();
+    } else if target_rel.ends_with(encrypted_postfix) {
+        target_rel = target_rel[..target_rel.len() - encrypted_postfix.len()].to_string();
     }
     target_rel
 }

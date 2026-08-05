@@ -9,8 +9,8 @@ use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
 use super::{require_force, get_sync_time, remove_sync_state, read_symlink_pointer,
-            resolve_source_variant, SourceVariant,
-            source_rel_to_target_rel, list_directory_or_error,
+            resolve_source_variant, SourceVariant, state_key_for,
+            list_directory_or_error,
             msg_dry_run, msg_nothing_to_do, report_progress};
 
 /// Typed, per-command arguments for `forget` (built by the dispatcher).
@@ -27,9 +27,7 @@ enum ForgetTask {
 }
 
 fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String {
-    let rel = file_path_relative_to(source_abs, source_dir_abs);
-    let rel = remove_dots_from_path(&rel);
-    rel.to_string_lossy().into_owned()
+    state_key_for(source_abs, source_dir_abs)
 }
 
 /// Target path is a symlink. Queue deletions for the pointer file and/or the

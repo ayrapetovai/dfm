@@ -6,7 +6,7 @@ use log::{debug, info};
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{msg_dry_run, source_rel_to_target_rel};
+use super::{msg_dry_run};
 
 /// Typed, per-command arguments for `purge` (built by the dispatcher).
 pub struct PurgeArgs {

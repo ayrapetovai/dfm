@@ -8,9 +8,9 @@ use walkdir::WalkDir;
 use dfm::*;
 use crate::DfmError;
 use super::{sync_file_copy, require_force, read_symlink_pointer,
-            update_sync_state, get_sync_time, source_rel_to_target_rel,
+            update_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
-            prune_matched_ignore_patterns};
+            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling};
 use microxdg::Xdg;
 
 /// Typed, per-command arguments for `pull` (built by the dispatcher).
@@ -112,14 +112,11 @@ fn handle_source_path(
     let target_file_abs_path = remove_dots_from_path(&target_dir_abs_path.join(&target_file_rel_to_target_dir));
     debug!("inferred target {:?}", target_file_abs_path);
 
-    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(&target_file_rel_to_target_dir)) {
-        if force {
-            info!("target {:?} is ignored, --force overrides, will remove /{}/ from ignore file", target_file_abs_path, pattern);
-            patterns_to_remove.push(pattern);
-        } else {
-            info!("target {:?} is ignored by regex /{}/ in file {:?}", target_file_abs_path, pattern, target_ignore_file_path);
-            return Ok(None);
-        }
+    if handle_ignore_or_override(
+        target_ignore_regex, &PathBuf::from(&target_file_rel_to_target_dir), force,
+        patterns_to_remove, &target_file_abs_path, target_ignore_file_path,
+    ) == IgnoreHandling::Skip {
+        return Ok(None);
     }
 
     if !target_file_abs_path.exists() && source_file_abs_path.exists() {
@@ -185,14 +182,11 @@ fn handle_target_path(
     error_list: &mut Vec<String>,
 ) -> Result<(), DfmError> {
     let target_rel_path = file_path_relative_to(target_abs_path, target_dir_abs_path);
-    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &target_rel_path) {
-        if force {
-            info!("target {:?} is ignored, --force overrides, will remove /{}/ from ignore file", target_abs_path, pattern);
-            patterns_to_remove.push(pattern);
-        } else {
-            info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
-            return Ok(());
-        }
+    if handle_ignore_or_override(
+        target_ignore_regex, &target_rel_path, force,
+        patterns_to_remove, target_abs_path, target_ignore_file_path,
+    ) == IgnoreHandling::Skip {
+        return Ok(());
     }
 
     if target_abs_path.exists() {

@@ -39,6 +39,7 @@ use std::time::SystemTime;
 use filetime_creation::{set_file_mtime, FileTime};
 use microxdg::Xdg;
 use log::{error, info, trace, log_enabled};
+use regex::RegexSet;
 
 use dfm::*;
 
@@ -46,16 +47,22 @@ use dfm::*;
 // Shared state helpers
 // ---------------------------------------------------------------------------
 
+/// Compute the state key (source-relative path) for an absolute path under a
+/// root directory. This is the canonical key used throughout: `file_path_relative_to`
+/// followed by dot-normalization, lossily stringified.
+pub(crate) fn state_key_for(abs_path: &PathBuf, root: &PathBuf) -> String {
+    let rel = file_path_relative_to(abs_path, root);
+    let rel = remove_dots_from_path(&rel);
+    rel.to_string_lossy().into_owned()
+}
+
 /// Get the sync time for a file, computing the state key from its absolute path.
 pub(crate) fn get_sync_time<'a>(
     state: &'a StateObject,
     path: &PathBuf,
     source_dir: &PathBuf,
 ) -> Option<&'a SyncTime> {
-    let rel = file_path_relative_to(path, source_dir);
-    let rel = remove_dots_from_path(&rel);
-    let rel_str = rel.to_string_lossy();
-    state.syncs.get(rel_str.as_ref())
+    state.syncs.get(state_key_for(path, source_dir).as_str())
 }
 
 /// Remove the sync entry for a file, computing the state key from its absolute path.
@@ -64,10 +71,7 @@ pub(crate) fn remove_sync_state(
     path: &PathBuf,
     source_dir: &PathBuf,
 ) {
-    let rel = file_path_relative_to(path, source_dir);
-    let rel = remove_dots_from_path(&rel);
-    let rel_str = rel.to_string_lossy();
-    state.syncs.remove(rel_str.as_ref());
+    state.syncs.remove(state_key_for(path, source_dir).as_str());
 }
 
 /// Insert/update a sync entry and set mtimes on both the source-side file
@@ -79,33 +83,13 @@ pub(crate) fn update_sync_state(
     source_dir_abs: &PathBuf,
 ) -> Result<(), DfmError> {
     let sync_creation = SystemTime::now();
-    let source_rel_path = file_path_relative_to(source_abs, source_dir_abs);
-    let source_rel_path = remove_dots_from_path(&source_rel_path);
+    let source_rel_path = state_key_for(source_abs, source_dir_abs);
     let sha256 = compute_sha256(source_abs)?;
-    state.syncs.insert(source_rel_path.to_string_lossy().into_owned(), SyncTime { mtime: sync_creation, sha256 });
+    state.syncs.insert(source_rel_path, SyncTime { mtime: sync_creation, sha256 });
     let ft = FileTime::from_system_time(sync_creation);
     set_file_mtime(target_abs, ft)?;
     set_file_mtime(source_abs, ft)?;
     Ok(())
-}
-
-/// Convert a source-relative path (state key) to a target-relative path,
-/// stripping encrypted/symlink postfixes.
-pub(crate) fn source_rel_to_target_rel(
-    source_rel: &str,
-    dot_prefix: &str,
-    symlink_postfix: &str,
-    encrypted_postfix: &str,
-) -> String {
-    let mut target_rel = decode_source_rel_path(source_rel, dot_prefix, true)
-        .to_string_lossy()
-        .into_owned();
-    if target_rel.ends_with(symlink_postfix) {
-        target_rel = target_rel[..target_rel.len() - symlink_postfix.len()].to_string();
-    } else if target_rel.ends_with(encrypted_postfix) {
-        target_rel = target_rel[..target_rel.len() - encrypted_postfix.len()].to_string();
-    }
-    target_rel
 }
 
 /// Thin wrapper around `list_directory` that bundles the error check.
@@ -282,6 +266,47 @@ pub(crate) fn require_force(force: bool, msg: impl std::fmt::Display) -> Result<
         Ok(())
     } else {
         Err(DfmError::Other(msg.to_string()))
+    }
+}
+
+/// Outcome of an ignore-regex check on a target path.
+#[derive(Eq, PartialEq, Clone, Copy)]
+pub(crate) enum IgnoreHandling {
+    /// The path is not ignored — process it.
+    NotIgnored,
+    /// The path is ignored and `--force` is set: the matched pattern was
+    /// queued for removal; continue processing the path.
+    Override,
+    /// The path is ignored without `--force`: skip it (return early).
+    Skip,
+}
+
+/// Handle the "target is ignored" case shared by `add` and `pull`. When the
+/// target matches the ignore regex, `--force` queues the matched pattern for
+/// removal (the caller proceeds); otherwise the caller must skip the target.
+///
+/// Returns `None` when the target is not ignored, or `Some(())` when it is
+/// ignored and the caller should return early (no `--force`). When `--force`
+/// is set the pattern is pushed to `patterns_to_remove` and `Some(())` is not
+/// returned — the caller continues.
+pub(crate) fn handle_ignore_or_override(
+    target_ignore_regex: &RegexSet,
+    rel_path: &PathBuf,
+    force: bool,
+    patterns_to_remove: &mut Vec<String>,
+    ignored_log_target: &PathBuf,
+    ignore_file_path: &PathBuf,
+) -> IgnoreHandling {
+    let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, rel_path) else {
+        return IgnoreHandling::NotIgnored;
+    };
+    if force {
+        info!("target {:?} is ignored, --force overrides, will remove /{}/ from ignore file", ignored_log_target, pattern);
+        patterns_to_remove.push(pattern);
+        IgnoreHandling::Override
+    } else {
+        info!("target {:?} is ignored by regex /{}/ in file {:?}", ignored_log_target, pattern, ignore_file_path);
+        IgnoreHandling::Skip
     }
 }
 

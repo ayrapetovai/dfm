@@ -12,7 +12,7 @@ use microxdg::Xdg;
 use super::{sync_file_copy, require_force, symlink_pointer_matches,
             update_sync_state, remove_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
-            prune_matched_ignore_patterns};
+            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling};
 
 /// Typed, pre-resolved arguments for the `add` command (built by the
 /// dispatcher from the matching clap subcommand).
@@ -192,14 +192,11 @@ fn handle_target_file(
     }
 
     let target_rel = file_path_relative_to(&target_abs_path, target_dir_abs_path);
-    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &target_rel) {
-        if force {
-            info!("target {:?} is ignored, --force overrides, will remove /{}/ from ignore file", target_abs_path, pattern);
-            patterns_to_remove.push(pattern);
-        } else {
-            warn!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs_path, pattern, target_ignore_file_path);
-            return Ok(());
-        }
+    if handle_ignore_or_override(
+        target_ignore_regex, &target_rel, force,
+        patterns_to_remove, &target_abs_path, target_ignore_file_path,
+    ) == IgnoreHandling::Skip {
+        return Ok(());
     }
 
     let encrypt = if let Some(pattern) = check_path_matches_regex_substring(encryption_regex_set, &target_abs_path) {

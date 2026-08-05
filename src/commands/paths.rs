@@ -23,7 +23,7 @@ pub fn paths_command(settings: &Settings, xdg: &Xdg, args: PathsArgs, path_to_co
     }
 
     println!("Local ignore : {}", calc_local_ignore_file(xdg).unwrap().display());
-    println!("Source ignore: {}", calc_source_ignore_file(source_dir_abs_path).unwrap().display());
+    println!("Source ignore: {}", calc_source_ignore_file(source_dir_abs_path).display());
 
     Ok(())
 }

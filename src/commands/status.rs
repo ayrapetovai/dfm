@@ -12,7 +12,7 @@ use regex::RegexSet;
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{source_rel_to_target_rel, list_directory, report_progress};
+use super::{list_directory, report_progress, state_key_for};
 
 /// Typed, per-command arguments for `status` (built by the dispatcher).
 pub struct StatusArgs {
@@ -284,9 +284,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         }
 
         // Compute the relative path for the display
-        let rel = file_path_relative_to(target_abs, &target_dir_abs);
-        let rel = remove_dots_from_path(&rel);
-        let rel_str = rel.to_string_lossy().into_owned();
+        let rel_str = state_key_for(target_abs, &target_dir_abs);
 
         if target_abs.is_symlink() {
             classify_target_symlink(
@@ -459,9 +457,8 @@ fn classify_target_symlink(
         })
         .map(|pointee_abs| {
             if pointee_abs.starts_with(source_dir_abs) {
-                let rel = file_path_relative_to(&pointee_abs, source_dir_abs);
-                let rel = remove_dots_from_path(&rel);
-                state_keys.contains(rel.to_str().unwrap_or(""))
+                let rel_str = state_key_for(&pointee_abs, source_dir_abs);
+                state_keys.contains(rel_str.as_str())
             } else {
                 false
             }
@@ -517,9 +514,7 @@ fn classify_target_file(
         &settings.dot_prefix, target_dir_abs, source_dir_abs,
         target_abs, None,
     );
-    let source_rel = file_path_relative_to(&source_abs, source_dir_abs);
-    let source_rel = remove_dots_from_path(&source_rel);
-    let source_rel_str = source_rel.to_string_lossy().into_owned();
+    let source_rel_str = state_key_for(&source_abs, source_dir_abs);
 
     let enc_key = format!("{}{}", source_rel_str, settings.encrypted_postfix);
     let sym_key = format!("{}{}", source_rel_str, settings.symlink_postfix);
