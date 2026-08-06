@@ -20,3 +20,7 @@ Add the following records to the ignore_file at `dfm init`
 \.local
 ```
 
+
+## Add diff command
+(TODO description)
+

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -408,7 +408,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         }
     } else {
         let has_managed = entries.iter().any(|e| e.code.is_managed());
-        let output = format_default(&filtered, &stale_patterns, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
+        let output = format_default(&filtered, &entries, &stale_patterns, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
         print_paged(&output)?;
     }
 
@@ -551,17 +551,24 @@ fn classify_target_file(
 /// Collapse a set of paths (code, path, matched-pattern) so that a directory
 /// with ≥2 entries beneath it is shown as a single `{dir}/*` entry.
 ///
+/// `blocked` holds every path that is *not* part of the group being folded
+/// (files ignored, up-to-date, tracked-but-unlisted, another status group,
+/// or an ignored pruned dir). A directory is only foldable when nothing in
+/// `blocked` lies beneath it — folding `dir/*` would otherwise hide a file
+/// the user needs to see separately. So `.config/dir1/file` + `.config/dir3/file`
+/// with an ignored `.config/dir2` still prints both files individually.
+///
 /// Iteration is deepest-first: each pass picks the deepest ancestor directory
-/// that has ≥2 descendants, replaces everything under it with one `{dir}/*`,
-/// and repeats until no ancestor has more than one child, so `a/b/x +
-/// a/b/y` becomes `a/b/*` and then propagates to `a/*`. Paths already marked
-/// `*` are never collapsed further. The `matched_pattern` is dropped from a
-/// collapsed entry (a collapsed set has no single pattern).
-fn collapse_shared_dirs(paths: &[(StatusCode, String, Option<String>)]) -> Vec<(StatusCode, String, Option<String>)> {
+/// that has ≥2 descendants and no blocked path beneath it, replaces everything
+/// under it with one `{dir}/*`, and repeats so `a/b/x + a/b/y` becomes
+/// `a/b/*` and then propagates to `a/*`. Paths already marked `*` are never
+/// collapsed further. The `matched_pattern` is dropped from a collapsed entry.
+fn collapse_shared_dirs(
+    paths: &[(StatusCode, String, Option<String>)],
+    blocked: &BTreeSet<String>,
+) -> Vec<(StatusCode, String, Option<String>)> {
     let mut paths = paths.to_vec();
     loop {
-        // Count every ancestor directory (not just immediate parents) so that
-        // e.g. `snap/dir1/b.txt` and `snap/a.txt` both make "snap" reach 2.
         let mut ancestor_counts: BTreeMap<String, usize> = BTreeMap::new();
         for (_, path, _) in &paths {
             let parts: Vec<&str> = path.split('/').collect();
@@ -574,17 +581,19 @@ fn collapse_shared_dirs(paths: &[(StatusCode, String, Option<String>)]) -> Vec<(
                     prefix.push('/');
                 }
                 prefix.push_str(part);
-                // This ancestor has something deeper beneath it.
                 if i + 1 < parts.len() {
                     *ancestor_counts.entry(prefix.clone()).or_default() += 1;
                 }
             }
         }
 
-        // Find the deepest ancestor with ≥2 entries beneath it.
+        // Find the deepest ancestor with ≥2 entries beneath it that is not
+        // severed by a blocked path. Fold only full-coverage gaps.
         let Some(collapsed_dir) = ancestor_counts
             .into_iter()
-            .filter(|(_, count)| *count >= 2)
+            .filter(|(prefix, count)| {
+                *count >= 2 && !is_blocked(prefix, blocked)
+            })
             .max_by_key(|(prefix, _)| prefix.matches('/').count())
             .map(|(prefix, _)| prefix)
         else {
@@ -611,6 +620,22 @@ fn collapse_shared_dirs(paths: &[(StatusCode, String, Option<String>)]) -> Vec<(
     paths
 }
 
+/// A directory `dir` is blocked (not foldable) when some non-group path is
+/// exactly `dir` or starts with `dir/`. Only the deepest still-open ancestor
+/// is relevant, but testing each prefix against the whole blocked set is simpler
+/// and correct because a blocked path always severs every ancestor above it.
+fn is_blocked(dir: &str, blocked: &BTreeSet<String>) -> bool {
+    let dir_prefix = format!("{}/", dir);
+    // The empty string is never a real collapsed dir; the root must not be
+    // sewn together with anything else.
+    if dir.is_empty() {
+        return false;
+    }
+    blocked
+        .iter()
+        .any(|b| b == dir || b.starts_with(&dir_prefix))
+}
+
 /// Color a path by its status code. Only used in the human-readable default
 /// output; porcelain/short paths stay raw so their output is deterministic.
 fn color_path(code: StatusCode, path: &str) -> String {
@@ -622,7 +647,7 @@ fn color_path(code: StatusCode, path: &str) -> String {
     }
 }
 
-fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &PathBuf, source_dir_abs: &PathBuf, has_managed: bool) -> String {
+fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &PathBuf, source_dir_abs: &PathBuf, has_managed: bool) -> String {
     let mut out = String::new();
 
     // Header — replace home directory prefix with ~
@@ -673,11 +698,22 @@ fn format_default(entries: &[&StatusEntry], stale_patterns: &[String], git_info:
         }
         out.push_str(&format!("{}:\n", header));
 
+        // Fold shared directories: a `dir/*` is only emitted when *every* path
+        // under `dir` belongs to this group. Paths of any other status (ignored
+        // pruned dirs, up-to-date / tracked files, parallel groups) sever the
+        // fold, so an ignored sibling directory keeps files listed individually.
+        let member_paths: BTreeSet<&str> = items.iter().map(|i| i.path.as_str()).collect();
+        let blocked: BTreeSet<String> = all_entries
+            .iter()
+            .filter(|e| !member_paths.contains(e.path.as_str()))
+            .map(|e| e.path.clone())
+            .collect();
+
         // Build display paths, then collapse shared directories (e.g.
         // multiple files under dir/ to a single dir/* entry).
         let paths = collapse_shared_dirs(&items.iter()
             .map(|item| (item.code, item.path.clone(), item.matched_pattern.clone()))
-            .collect::<Vec<_>>());
+            .collect::<Vec<_>>(), &blocked);
 
         // Build the final display list.
         struct DispLine {
