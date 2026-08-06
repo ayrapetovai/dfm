@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use log::{debug, error, info, warn};
 
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{require_force, get_sync_time, remove_sync_state, read_symlink_pointer,
+use super::{require_force, get_sync_time, read_symlink_pointer,
             resolve_source_variant, SourceVariant, state_key_for,
             list_directory_or_error,
             msg_dry_run, msg_nothing_to_do, report_progress};
@@ -28,6 +28,16 @@ enum ForgetTask {
 
 fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String {
     state_key_for(source_abs, source_dir_abs)
+}
+
+/// Remove a source object from disk. A regular file or symlink is removed with
+/// `remove_file`; a directory (e.g. the whole subtree of a forgotten target
+/// directory) is removed with `remove_dir_all`.
+fn remove_source_object(source_file: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(source_file) {
+        Ok(meta) if meta.file_type().is_dir() => fs::remove_dir_all(source_file),
+        _ => fs::remove_file(source_file),
+    }
 }
 
 /// Target path is a symlink. Queue deletions for the pointer file and/or the
@@ -173,6 +183,14 @@ fn handle_target_file(
     // orphan pointer as "no source".
     if variant == SourceVariant::Symlink {
         info!("source for {:?} does not exist, skipping...", target_abs_path);
+        return Ok(());
+    }
+
+    // A directory in the source is a container of managed files, not a file
+    // itself. Forgetting its target forgets the whole subtree.
+    if source_abs_path.is_dir() {
+        info!("source {:?} is a directory, removing its whole subtree", source_abs_path);
+        tasks.push(ForgetTask::Delete(source_abs_path.clone()));
         return Ok(());
     }
 
@@ -389,7 +407,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         if dry_run {
             continue;
         }
-        if let Err(e) = fs::remove_file(source_file) {
+        if let Err(e) = remove_source_object(source_file) {
             if e.kind() == std::io::ErrorKind::NotFound {
                 debug!("{:?} was already removed, skipping", source_file);
             } else {
@@ -407,7 +425,11 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         }
         match task {
             ForgetTask::Delete(source_file) => {
-                remove_sync_state(state, source_file, &source_dir_abs_path);
+                // A deleted directory removes the whole subtree, so clear every
+                // state entry that lives at that source path or beneath it.
+                let key = source_to_state_key(source_file, &source_dir_abs_path);
+                let key_prefix = format!("{}/", key);
+                state.syncs.retain(|k, _| k != &key && !k.starts_with(&key_prefix));
             },
             ForgetTask::RemoveState(key) => {
                 state.syncs.remove(key);
