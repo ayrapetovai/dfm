@@ -11,12 +11,13 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
     if !path.exists() {
         return Ok(());
     }
-    let content = fs::read_to_string(path)?;
+    let content = fs::read_to_string(path).map_err(|e| io_err(path, e))?;
     if !content.is_empty() && !content.ends_with('\n') {
         let mut f = fs::OpenOptions::new()
             .append(true)
-            .open(path)?;
-        writeln!(f)?;
+            .open(path)
+            .map_err(|e| io_err(path, e))?;
+        writeln!(f).map_err(|e| io_err(path, e))?;
     }
     Ok(())
 }
@@ -174,7 +175,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
 
             let escaped_path_str = regex::escape(&ignore_path.to_string_lossy());
             if let Err(e) = writeln!(target_ignore_file, "{}", escaped_path_str) {
-                return Err(e.into());
+                return Err(io_err(&local_ignore_file_path, e));
             }
         }
     }
@@ -191,7 +192,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
             }
 
             if let Err(e) = writeln!(target_ignore_file, "{}", pattern) {
-                return Err(e.into());
+                return Err(io_err(&local_ignore_file_path, e));
             }
         }
     }
@@ -208,7 +209,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
             }
 
             if let Err(e) = writeln!(source_ignore_file, "{}", ignore_line) {
-                return Err(e.into());
+                return Err(io_err(&source_ignore_file_path, e));
             }
         }
     }
@@ -219,7 +220,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
 /// Replace `old` with `new` in the ignore file, keeping all other lines.
 /// If `new` is already present, `old` is only dropped (no duplicate).
 fn migrate_ignore_line(ignore_file_path: &PathBuf, old: &str, new: &str) -> Result<(), DfmError> {
-    let content = fs::read_to_string(ignore_file_path)?;
+    let content = fs::read_to_string(ignore_file_path).map_err(|e| io_err(ignore_file_path, e))?;
     let out: Vec<String> = content
         .lines()
         .filter(|l| *l != old)
@@ -236,7 +237,7 @@ fn migrate_ignore_line(ignore_file_path: &PathBuf, old: &str, new: &str) -> Resu
     if !text.is_empty() {
         text.push('\n');
     }
-    fs::write(ignore_file_path, text)?;
+    fs::write(ignore_file_path, text).map_err(|e| io_err(ignore_file_path, e))?;
     Ok(())
 }
 

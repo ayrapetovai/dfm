@@ -143,7 +143,8 @@ fn handle_source_path(
         // Only a `.symlink` source file carries a pointer; a plain source file
         // next to a symlink target is the `add -s` layout and must not have its
         // content misread as a symlink pointer.
-        let target_symlink_pointee = fs::read_link(&target_file_abs_path)?;
+        let target_symlink_pointee = fs::read_link(&target_file_abs_path)
+            .map_err(|e| io_err(&target_file_abs_path, e))?;
         let source_file_content = read_symlink_pointer(source_file_abs_path)?;
         if source_file_content != target_symlink_pointee.to_string_lossy().as_ref() {
             info!("target symlink {:?} points to {:?},\n\tmust point to {:?}", target_file_abs_path, target_symlink_pointee, source_file_content);
@@ -227,7 +228,8 @@ fn handle_existing_target(
 
         let source_symlink_file_abs_path = filepath_in_source_dir(&settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path, Some(&settings.symlink_postfix));
         if source_symlink_file_abs_path.exists() {
-            let target_symlink_pointee_path = fs::read_link(target_abs_path)?;
+            let target_symlink_pointee_path = fs::read_link(target_abs_path)
+                .map_err(|e| io_err(target_abs_path, e))?;
             let source_file_content = read_symlink_pointer(&source_symlink_file_abs_path)?;
             if source_file_content == target_symlink_pointee_path.to_string_lossy().as_ref() {
                 info!("target symlink {:?}\n\tpoints to {}, skipping...", target_abs_path, target_symlink_pointee_path.to_string_lossy());
@@ -522,7 +524,7 @@ fn execute_pull_task(
                         info!("target symlink {:?} does not exist", target_symlink_file_path);
                         // is ok
                     },
-                    _ => return Err(e.into()),
+                    _ => return Err(io_err(target_symlink_file_path, e)),
                 }
             }
             let points_to = if points_to.starts_with("./") {
@@ -538,7 +540,7 @@ fn execute_pull_task(
                     warn!("skipping unreadable path {:?}: {}", target_symlink_file_path, e);
                     return Ok(false);
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(io_err(target_symlink_file_path, e)),
             }
             debug!("target symlink {:?} updated", target_symlink_file_path);
             Ok(true)

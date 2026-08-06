@@ -60,7 +60,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
     let mut source_directory_pointer = path_to_source.join(".dfm_root");
     let source_dir_path = if source_directory_pointer.exists() {
         loop {
-            let pointer_content = fs::read_to_string(&source_directory_pointer)?.trim().to_owned();
+            let pointer_content = fs::read_to_string(&source_directory_pointer)
+                .map_err(|e| io_err(&source_directory_pointer, e))?
+                .trim().to_owned();
             if pointer_content == "." {
                 break;
             } else {
@@ -139,8 +141,8 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         }
         match task {
             InitTask::CreateSourceRootFile(path) => {
-                fs::create_dir_all(path.parent().unwrap())?;
-                fs::write(&path, ".")?;
+                fs::create_dir_all(path.parent().unwrap()).map_err(|e| io_err(path.parent().unwrap(), e))?;
+                fs::write(&path, ".").map_err(|e| io_err(&path, e))?;
             },
             InitTask::CreateSourceIgnoreFile() => {
                 let mut ignore_file_records = vec![];
@@ -149,19 +151,20 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                 ignore_file_records.push(".dfm_ignore_source");
                 ignore_file_records.push(".dfm_ignore_target");
 
-                fs::create_dir_all(source_ignore_file_path.parent().unwrap())?;
+                fs::create_dir_all(source_ignore_file_path.parent().unwrap())
+                    .map_err(|e| io_err(source_ignore_file_path.parent().unwrap(), e))?;
                 let mut source_ignore_file = open_or_create_file(&source_ignore_file_path)?;
 
                 for ignore_file_record in ignore_file_records {
                     if let Err(e) = writeln!(source_ignore_file, "{}", regex::escape(ignore_file_record)) {
-                        return Err(e.into());
+                        return Err(io_err(&source_ignore_file_path, e));
                     } else {
                         debug!("source ignore file: added record {}", ignore_file_record);
                     }
                 }
             },
             InitTask::CreateStateFile(path, target_dir, source_dir) => {
-                fs::create_dir_all(path.parent().unwrap())?;
+                fs::create_dir_all(path.parent().unwrap()).map_err(|e| io_err(path.parent().unwrap(), e))?;
 
                 let empty_state = StateObject::new(target_dir, source_dir);
                 write_state(&path, &empty_state)?;

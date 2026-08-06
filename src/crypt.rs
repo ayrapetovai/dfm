@@ -10,7 +10,7 @@ use zip::write::SimpleFileOptions;
 // #[cfg(all(feature = "aes-crypto", feature = "zstd"))]
 use zip::{AesMode, CompressionMethod::Bzip2};
 
-use crate::{Settings, file_path_relative_to};
+use crate::{Settings, file_path_relative_to, io_err};
 
 // ---------------------------------------------------------------------------
 // Password cache — ask only once per `dfm` process
@@ -119,12 +119,13 @@ fn enclosing_dirs(rel: &std::path::Path) -> Vec<PathBuf> {
 pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), DfmError> {
     // Ensure the parent directory exists (important when source path has subdirectories)
     if let Some(parent) = source_file_path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
-    let file = std::fs::File::create(source_file_path.as_path())?;
+    let file = std::fs::File::create(source_file_path.as_path())
+        .map_err(|e| io_err(source_file_path.as_path(), e))?;
     let mut zip = zip::ZipWriter::new(file);
 
-    let target_file_permissions = fs::metadata(target_file_path)?.permissions();
+    let target_file_permissions = fs::metadata(target_file_path).map_err(|e| io_err(target_file_path, e))?.permissions();
 
     let target_dir_path = PathBuf::from(&settings.target_dir);
     let inner_name = file_path_relative_to(target_file_path, &target_dir_path);
@@ -155,7 +156,7 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
             .unix_permissions(target_file_permissions.mode()),
     ).map_err(DfmError::other)?;
 
-    let file_content = fs::read(target_file_path)?;
+    let file_content = fs::read(target_file_path).map_err(|e| io_err(target_file_path, e))?;
     zip.write_all(&file_content).map_err(DfmError::other)?;
     zip.finish().map_err(DfmError::other)?;
 
@@ -170,7 +171,7 @@ pub fn write_zip_file(settings: &Settings, target_file_path: &PathBuf, source_fi
 pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file_path: &PathBuf) -> Result<(), DfmError> {
     // Ensure the target parent directory exists
     if let Some(parent) = target_file_path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
 
     let mut already_retried = false;
@@ -185,7 +186,7 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
 
         // Open a fresh archive on each attempt: a failed by_index_decrypt
         // advances the internal reader position, invalidating the archive.
-        let file = std::fs::File::open(source_zip_path)?;
+        let file = std::fs::File::open(source_zip_path).map_err(|e| io_err(source_zip_path, e))?;
         let mut archive = zip::ZipArchive::new(file).map_err(DfmError::other)?;
 
         // The archive holds the single encrypted file entry plus one
@@ -214,8 +215,9 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
                 if let Some(rel) = zip_file.enclosed_name() {
                     let dir_abs = target_dir_path.join(&rel);
                     if let Some(mode) = zip_file.unix_mode() {
-                        fs::create_dir_all(&dir_abs)?;
-                        fs::set_permissions(&dir_abs, fs::Permissions::from_mode(mode))?;
+                        fs::create_dir_all(&dir_abs).map_err(|e| io_err(&dir_abs, e))?;
+                        fs::set_permissions(&dir_abs, fs::Permissions::from_mode(mode))
+                            .map_err(|e| io_err(&dir_abs, e))?;
                     }
                 }
                 continue;
@@ -224,10 +226,11 @@ pub fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file
             // The encrypted file entry — restore the permissions recorded by
             // write_zip_file (e.g. a 0600 key file instead of 0666 & ~umask).
             let permissions = zip_file.unix_mode().map(fs::Permissions::from_mode);
-            let mut output_file = std::fs::File::create(target_file_path)?;
-            std::io::copy(&mut zip_file, &mut output_file).map_err(DfmError::other)?;
+            let mut output_file = std::fs::File::create(target_file_path)
+                .map_err(|e| io_err(target_file_path, e))?;
+            std::io::copy(&mut zip_file, &mut output_file).map_err(|e| io_err(target_file_path, e))?;
             if let Some(perms) = permissions {
-                fs::set_permissions(target_file_path, perms)?;
+                fs::set_permissions(target_file_path, perms).map_err(|e| io_err(target_file_path, e))?;
             }
             return Ok(());
         }

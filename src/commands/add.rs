@@ -82,7 +82,8 @@ fn handle_target_symlink(
     // parent directory and re-append the (still-symlink) name.
     let mut target_symlink_abs_path = {
         let root = PathBuf::from("/");
-        fs::canonicalize(target_symlink_abs_path_raw.parent().get_or_insert(&root))?
+        fs::canonicalize(target_symlink_abs_path_raw.parent().get_or_insert(&root))
+            .map_err(|e| io_err(target_symlink_abs_path_raw.parent().get_or_insert(&root), e))?
     };
     target_symlink_abs_path.push(target_symlink_abs_path_raw.file_name()
         .ok_or_else(|| DfmError::InvalidInput("path has no file name".into()))?);
@@ -93,7 +94,8 @@ fn handle_target_symlink(
         return Ok(());
     }
 
-    let target_symlink_pointee_rel_path = fs::read_link(&target_symlink_abs_path)?;
+    let target_symlink_pointee_rel_path = fs::read_link(&target_symlink_abs_path)
+        .map_err(|e| io_err(&target_symlink_abs_path, e))?;
     let target_symlink_pointee_abs_path = match fs::canonicalize(&target_symlink_pointee_rel_path) {
         Ok(p) => p,
         // A dangling symlink discovered during traversal must not abort the
@@ -172,7 +174,7 @@ fn handle_target_file(
     conflict_detected: &mut bool,
     patterns_to_remove: &mut Vec<String>,
 ) -> Result<(), DfmError> {
-    let target_abs_path = fs::canonicalize(target_path)?;
+    let target_abs_path = fs::canonicalize(target_path).map_err(|e| io_err(target_path, e))?;
 
     if target_abs_path.starts_with(source_dir_abs_path) {
         info!("target {:?} resides in source directory, ignoring", target_abs_path);
@@ -240,8 +242,8 @@ fn handle_target_file(
                 },
                 CompareByTimestamp::NeverSynchronized => {
                     let content_equal = {
-                        let t = fs::read(&target_abs_path)?;
-                        let s = fs::read(&regular_source_abs_path)?;
+                        let t = fs::read(&target_abs_path).map_err(|e| io_err(&target_abs_path, e))?;
+                        let s = fs::read(&regular_source_abs_path).map_err(|e| io_err(&regular_source_abs_path, e))?;
                         t == s
                     };
                     if !(content_equal || force) {
@@ -290,8 +292,8 @@ fn handle_target_file(
             },
             CompareByTimestamp::NeverSynchronized => {
                 let content_equal = {
-                    let t = fs::read(&target_abs_path)?;
-                    let s = fs::read(&source_abs_path)?;
+                    let t = fs::read(&target_abs_path).map_err(|e| io_err(&target_abs_path, e))?;
+                    let s = fs::read(&source_abs_path).map_err(|e| io_err(&source_abs_path, e))?;
                     t == s
                 };
                 if content_equal {
@@ -493,14 +495,14 @@ fn execute_add_task(
             }
 
             // 2. Remove the original target file
-            fs::remove_file(target_file)?;
+            fs::remove_file(target_file).map_err(|e| io_err(target_file, e))?;
 
             // 3. Create a symlink at the target pointing to the source file
             let target_parent = target_file.parent()
                 .ok_or_else(|| DfmError::other("target file has no parent directory"))?
                 .to_path_buf();
             let link_target = file_path_relative_to(source_file, &target_parent);
-            symlink::symlink_file(&link_target, target_file)?;
+            symlink::symlink_file(&link_target, target_file).map_err(|e| io_err(target_file, e))?;
             Ok(true)
         },
         AddTask::CopyEncryptedFile(target_file, source_file) => {
@@ -521,7 +523,7 @@ fn execute_add_task(
                 target_file, None,
             );
             if plain_source.exists() {
-                fs::remove_file(&plain_source)?;
+                fs::remove_file(&plain_source).map_err(|e| io_err(&plain_source, e))?;
                 // Remove stale state entry for the plain source
                 remove_sync_state(state, &plain_source, source_dir_abs_path);
             }
@@ -529,8 +531,9 @@ fn execute_add_task(
         },
         AddTask::CreateSymlinkFilePointer(source_symlink, target_abs, points_to) => {
             // open if exists or create, if it doesn't
-            let mut symlink_file = File::create(source_symlink)?;
-            symlink_file.write_all(points_to.as_bytes())?;
+            let mut symlink_file = File::create(source_symlink).map_err(|e| io_err(source_symlink, e))?;
+            symlink_file.write_all(points_to.as_bytes())
+                .map_err(|e| io_err(source_symlink, e))?;
 
             update_sync_state(state, source_symlink, target_abs, source_dir_abs_path)?;
             Ok(true)

@@ -489,7 +489,6 @@ cargo install cargo-aur
 ### Create a package from sources
 
 ```shell
-cargo build --release
 cargo aur
 cd target/cargo-aur
 makepkg

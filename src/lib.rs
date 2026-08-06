@@ -68,6 +68,22 @@ impl DfmError {
     }
 }
 
+/// Wrap an I/O error with the file path it occurred on, preserving the
+/// `ErrorKind` (so `is_permission_denied()` still works) and the original
+/// message. `std::io::Error`'s `Display` does not include the offending path,
+/// so every user-facing file error is annotated here with the path.
+pub fn io_err(path: &Path, e: io::Error) -> DfmError {
+    DfmError::Io(io::Error::new(e.kind(), format!("{}: {}", path.display(), e)))
+}
+
+/// Same as `io_err` but associates two paths (a copy/source+destination pair).
+pub fn io_copy_err(from: &Path, to: &Path, e: io::Error) -> DfmError {
+    DfmError::Io(io::Error::new(
+        e.kind(),
+        format!("{} -> {}: {}", from.display(), to.display(), e),
+    ))
+}
+
 impl From<regex::Error> for DfmError {
     fn from(e: regex::Error) -> Self {
         DfmError::Other(e.to_string())
@@ -171,7 +187,8 @@ pub fn open_or_create_file(path_to_file: &PathBuf) -> Result<File, DfmError> {
         .write(true)
         .append(true)
         .create(true)
-        .open(path_to_file)?)
+        .open(path_to_file)
+        .map_err(|e| io_err(path_to_file, e))?)
 }
 
 pub fn calc_source_ignore_file(source_dir_abs_path: &PathBuf) -> PathBuf {
@@ -183,12 +200,12 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmErr
         return Ok(RegexSet::empty());
     }
 
-    let file = File::open(ignore_file_path)?;
+    let file = File::open(ignore_file_path).map_err(|e| io_err(ignore_file_path, e))?;
     let reader = BufReader::new(file);
     let mut patterns = vec![];
 
     for (_, line) in reader.lines().enumerate() {
-        let line = line?;
+        let line = line.map_err(|e| io_err(ignore_file_path, e))?;
         let mut prev = ' ';
         let mut end = line.len();
         for (i, c) in line.char_indices() {
@@ -399,14 +416,15 @@ pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, DfmError>
             )));
         }
         Err(e) => {
-            return Err(DfmError::Io(e));
+            return Err(io_err(path_to_state_file, e));
         }
     };
 
     let mut state: StateObject = match toml::from_str(&state_file_content) {
         Err(e) => {
             return Err(DfmError::InvalidData(format!(
-                "state file is corrupt: {}",
+                "state file is corrupt: {}: {}",
+                path_to_state_file.display(),
                 e
             )));
         },
@@ -448,7 +466,7 @@ fn validate_state_key(key: &str) -> Result<(), DfmError> {
 
 pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<(), DfmError> {
     let state_content = toml::to_string_pretty(state)?;
-    Ok(fs::write(path_to_state_file, state_content)?)
+    fs::write(path_to_state_file, state_content).map_err(|e| io_err(path_to_state_file, e))
 }
 
 /// Config read from the TOML file on disk (all fields optional).
@@ -500,10 +518,12 @@ pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<()
     };
     if let Some(config_parent_directory) = path_to_config_file.parent() {
         if !config_parent_directory.exists() {
-            fs::create_dir_all(config_parent_directory)?;
+            fs::create_dir_all(config_parent_directory)
+                .map_err(|e| io_err(config_parent_directory, e))?;
         }
     }
-    Ok(fs::write(path_to_config_file, content)?)
+    fs::write(path_to_config_file, content).map_err(|e| io_err(path_to_config_file, e))?;
+    Ok(())
 }
 
 pub fn get_home_path() -> Option<PathBuf> {
@@ -559,13 +579,17 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, DfmError> {
     let config_file_content = match fs::read_to_string(path_to_config_file) {
         Ok(s) => s,
         Err(e) => {
-            return Err(DfmError::other(e));
+            return Err(io_err(path_to_config_file, e));
         }
     };
 
     return match toml::from_str(&config_file_content) {
         Err(e) => {
-            return Err(DfmError::other(e));
+            return Err(DfmError::other(format!(
+                "config file corrupt: {}: {}",
+                path_to_config_file.display(),
+                e
+            )));
         },
         Ok(c) => Ok(c)
     };
@@ -1037,12 +1061,12 @@ pub enum CompareByTimestamp {
 pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &PathBuf, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, DfmError> {
     let target_file_meta = match target_abs_path.metadata() {
         Ok(m) => m,
-        Err(e) => return Err(DfmError::Io(e)),
+        Err(e) => return Err(io_err(target_abs_path, e)),
     };
 
     let source_file_meta = match source_abs_path.metadata() {
         Ok(m) => m,
-        Err(e) => return Err(DfmError::Io(e)),
+        Err(e) => return Err(io_err(source_abs_path, e)),
     };
 
     let source_file_synced = match sync_time_opt {
@@ -1095,7 +1119,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
 /// SHA-256 of the file contents, hex-encoded.
 pub fn compute_sha256(path: &PathBuf) -> Result<String, DfmError> {
     use sha2::{Digest, Sha256};
-    let file = fs::File::open(path)?;
+    let file = fs::File::open(path).map_err(|e| io_err(path, e))?;
     let mut reader = BufReader::with_capacity(1 << 17, file);
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];
@@ -1151,8 +1175,10 @@ pub fn compare_files(
 }
 
 pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str) -> Result<Option<String>, DfmError> {
-    let config_file_content = fs::read_to_string(path_to_config_file)?;
-    let config: Table = toml::from_str(&config_file_content)?;
+    let config_file_content = fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
+    let config: Table = toml::from_str(&config_file_content).map_err(|e| {
+        DfmError::other(format!("config file corrupt: {}: {}", path_to_config_file.display(), e))
+    })?;
     return match config.get(param_name) {
         Some(v) => {
             Ok(Some(v.to_string()))
@@ -1162,17 +1188,21 @@ pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str
 }
 
 pub fn write_property_to_config(path_to_config_file: &PathBuf, param_name: &str, param_new_value: &str) -> Result<(), DfmError> {
-    let config_file_content = fs::read_to_string(path_to_config_file)?;
-    let mut config: Table = toml::from_str(&config_file_content)?;
+    let config_file_content = fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
+    let mut config: Table = toml::from_str(&config_file_content).map_err(|e| {
+        DfmError::other(format!("config file corrupt: {}: {}", path_to_config_file.display(), e))
+    })?;
     config.insert(param_name.to_owned(), Value::String(param_new_value.to_owned()));
     let new_content = toml::to_string_pretty(&config)?;
-    fs::write(path_to_config_file, new_content)?;
+    fs::write(path_to_config_file, new_content).map_err(|e| io_err(path_to_config_file, e))?;
     Ok(())
 }
 
 pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<String>, DfmError> {
-    let config_file_content = fs::read_to_string(path_to_config_file)?;
-    let config: Table = toml::from_str(&config_file_content)?;
+    let config_file_content = fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
+    let config: Table = toml::from_str(&config_file_content).map_err(|e| {
+        DfmError::other(format!("config file corrupt: {}: {}", path_to_config_file.display(), e))
+    })?;
     let mut params = vec![];
     for (_, (name, value)) in config.iter().enumerate() {
         params.push(format!("{} = {}", name, value));

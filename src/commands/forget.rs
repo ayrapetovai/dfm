@@ -43,7 +43,8 @@ fn handle_target_symlink(
     tasks: &mut Vec<ForgetTask>,
 ) -> Result<bool, DfmError> {
     let target_abs_path = remove_dots_from_path(&target_dir_abs_path.join(target_path));
-    let target_symlink_pointee_path = fs::read_link(&target_abs_path)?;
+    let target_symlink_pointee_path = fs::read_link(&target_abs_path)
+        .map_err(|e| io_err(&target_abs_path, e))?;
 
     debug!("target symlink {:?}\n\tpoints to {:?}", target_abs_path, target_symlink_pointee_path);
     if target_symlink_pointee_path.starts_with(source_dir_abs_path) {
@@ -133,7 +134,8 @@ fn handle_source_path(
         return Ok(());
     }
 
-    let target_symlink_pointee_path = fs::read_link(&target_symlink_abs_path)?;
+    let target_symlink_pointee_path = fs::read_link(&target_symlink_abs_path)
+        .map_err(|e| io_err(&target_symlink_abs_path, e))?;
     let source_file_content = read_symlink_pointer(target_abs_path)?;
     if source_file_content == target_symlink_pointee_path.to_string_lossy().as_ref() {
         info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_symlink_abs_path, target_symlink_pointee_path.to_string_lossy());
@@ -341,8 +343,8 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
 
         if source_abs.exists() {
             let sync_time = &state.syncs[&key];
-            let source_meta = source_abs.metadata()?;
-            let source_mtime = source_meta.modified()?;
+            let source_meta = source_abs.metadata().map_err(|e| io_err(&source_abs, e))?;
+            let source_mtime = source_meta.modified().map_err(|e| io_err(&source_abs, e))?;
             if source_mtime > sync_time.mtime {
                 if *force {
                     info!("source {:?} was modified, removing with --force", key);

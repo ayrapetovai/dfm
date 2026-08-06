@@ -87,8 +87,8 @@ pub(crate) fn update_sync_state(
     let sha256 = compute_sha256(source_abs)?;
     state.syncs.insert(source_rel_path, SyncTime { mtime: sync_creation, sha256 });
     let ft = FileTime::from_system_time(sync_creation);
-    set_file_mtime(target_abs, ft)?;
-    set_file_mtime(source_abs, ft)?;
+    set_file_mtime(target_abs, ft).map_err(|e| io_err(target_abs, e))?;
+    set_file_mtime(source_abs, ft).map_err(|e| io_err(source_abs, e))?;
     Ok(())
 }
 
@@ -146,7 +146,9 @@ pub(crate) fn msg_nothing_to_do() -> &'static str {
 
 /// Read a symlink pointer file's content with surrounding whitespace trimmed.
 pub(crate) fn read_symlink_pointer(pointer_file: &Path) -> Result<String, DfmError> {
-    Ok(fs::read_to_string(pointer_file)?.trim().to_string())
+    Ok(fs::read_to_string(pointer_file)
+        .map_err(|e| io_err(pointer_file, e))?
+        .trim().to_string())
 }
 
 /// Whether a symlink pointer file's (trimmed) content equals the pointee path.
@@ -223,7 +225,7 @@ pub(crate) fn prune_ignore_file(
     if !ignore_file_path.exists() {
         return Ok(Vec::new());
     }
-    let content = fs::read_to_string(ignore_file_path)?;
+    let content = fs::read_to_string(ignore_file_path).map_err(|e| io_err(ignore_file_path, e))?;
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     for line in content.lines() {
@@ -235,7 +237,8 @@ pub(crate) fn prune_ignore_file(
         }
     }
     if !removed.is_empty() && !dry_run {
-        fs::write(ignore_file_path, kept.join("\n"))?;
+        fs::write(ignore_file_path, kept.join("\n"))
+            .map_err(|e| io_err(ignore_file_path, e))?;
     }
     Ok(removed)
 }
@@ -327,10 +330,10 @@ pub(crate) fn sync_file_copy(
     let to_parent = to
         .parent()
         .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", to)))?;
-    fs::create_dir_all(to_parent)?;
-    fs::copy(from, to)?;
+    fs::create_dir_all(to_parent).map_err(|e| io_err(to_parent, e))?;
+    fs::copy(from, to).map_err(|e| io_copy_err(from, to, e))?;
 
-    let permissions = from.metadata()?.permissions();
+    let permissions = from.metadata().map_err(|e| io_err(from, e))?.permissions();
     trace!("copy permissions {:o}", permissions.mode());
     if let Err(e) = fs::set_permissions(to.clone(), permissions.clone()) {
         error!("failed to set permissions {:?} to {:?}: {}", permissions.mode(), to, e);
@@ -345,10 +348,10 @@ pub(crate) fn sync_file_copy(
     update_sync_state(state, source_file_in_source_dir, other, source_dir_abs_path)?;
 
     if log_enabled!(log::Level::Trace) {
-        let from_meta = from.metadata()?;
-        let to_meta = to.metadata()?;
-        let to_modified = to_meta.modified()?;
-        let from_modified = from_meta.modified()?;
+        let from_meta = from.metadata().map_err(|e| io_err(from, e))?;
+        let to_meta = to.metadata().map_err(|e| io_err(to, e))?;
+        let to_modified = to_meta.modified().map_err(|e| io_err(to, e))?;
+        let from_modified = from_meta.modified().map_err(|e| io_err(from, e))?;
         trace!("final state:\n from: mtime={:?}\n to: mtime={:?}",
              to_modified, from_modified);
     }
@@ -396,7 +399,7 @@ pub(crate) fn run_merge(
     let source_dir = PathBuf::from(&settings.source_dir);
     let merge_dir = source_dir.join(".current_merge");
     let _guard = DirGuard(merge_dir.clone());
-    fs::create_dir_all(&merge_dir)?;
+    fs::create_dir_all(&merge_dir).map_err(|e| io_err(&merge_dir, e))?;
 
     let file_name = target_abs_path
         .file_name()
@@ -416,11 +419,11 @@ pub(crate) fn run_merge(
     let target_path = merge_dir.join(format!("target.{}", file_name));
     let source_path = merge_dir.join(format!("source.{}", file_name));
     let result_path = merge_dir.join(format!("result.{}", file_name));
-    fs::copy(target_abs_path, &target_path)?;
+    fs::copy(target_abs_path, &target_path).map_err(|e| io_copy_err(target_abs_path, &target_path, e))?;
     if source_is_encrypted {
         dfm::crypt::read_zip_file(settings, source_abs_path, &source_path)?;
     } else {
-        fs::copy(source_abs_path, &source_path)?;
+        fs::copy(source_abs_path, &source_path).map_err(|e| io_copy_err(source_abs_path, &source_path, e))?;
     }
     let command = resolve_merge_command(settings)?;
 
@@ -461,9 +464,9 @@ pub(crate) fn run_merge(
     if source_is_encrypted {
         dfm::crypt::write_zip_file(settings, &result_path, source_abs_path)?;
     } else {
-        fs::copy(&result_path, source_abs_path)?;
+        fs::copy(&result_path, source_abs_path).map_err(|e| io_copy_err(&result_path, source_abs_path, e))?;
     }
-    fs::copy(&result_path, target_abs_path)?;
+    fs::copy(&result_path, target_abs_path).map_err(|e| io_copy_err(&result_path, target_abs_path, e))?;
 
     // Update sync state and mtimes
     update_sync_state(state, source_abs_path, target_abs_path, source_dir_abs_path)?;
