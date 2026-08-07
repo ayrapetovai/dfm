@@ -19,7 +19,7 @@ write "modified" ".config/a/f.txt"
 # target-side entry (same as the full report does).
 RES=$(dfm status "$PWD/dotfiles/dot_config/a/f.txt" 2>/dev/null)
 echo "$RES" | grep -qF ".config/a/f.txt"
-! echo "$RES" | grep -qF "rootfile.txt"
+assert_fail grep -qF "rootfile.txt" <<< "$RES"
 
 # --- Source directory + multiple source paths union -------------------------
 dfm add docs/readme.txt
@@ -27,8 +27,8 @@ write "modified_docs" "docs/readme.txt"
 RES=$(dfm status "$PWD/dotfiles/dot_config/a" "$PWD/dotfiles/docs/readme.txt" 2>/dev/null)
 echo "$RES" | grep -qF ".config/a/f.txt"
 echo "$RES" | grep -qF "docs/readme.txt"
-! echo "$RES" | grep -qF "rootfile.txt"
-! echo "$RES" | grep -qF ".config/b/g.txt"
+assert_fail grep -qF "rootfile.txt" <<< "$RES"
+assert_fail grep -qF ".config/b/g.txt" <<< "$RES"
 
 # --- Source single file works with flags as well ----------------------------
 write "modified_b" ".config/b/g.txt"

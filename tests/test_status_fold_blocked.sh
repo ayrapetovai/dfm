@@ -23,7 +23,8 @@ assert_fail grep -qF 'mixed/*' <<<"$RES"
 
 dfm status 2>/dev/null | grep -qF '??  mixed/one.txt'
 dfm status 2>/dev/null | grep -qF '??  mixed/three.txt'
-! dfm status 2>/dev/null | grep -qF 'mixed/*'
+RES=$(dfm status 2>/dev/null)
+assert_fail grep -qF 'mixed/*' <<<"$RES"
 
 rm -rf mixed
 
@@ -54,10 +55,11 @@ write "d" "plain/y.txt"
 
 dfm status 2>/dev/null | grep -qF '??  snap/*'
 dfm status 2>/dev/null | grep -qF '??  plain/*'
-! dfm status 2>/dev/null | grep -qF 'snap/dir1/b.txt'
-! dfm status 2>/dev/null | grep -qF 'snap/a.txt'
-! dfm status 2>/dev/null | grep -qF 'plain/x.txt'
-! dfm status 2>/dev/null | grep -qF 'plain/y.txt'
+RES=$(dfm status 2>/dev/null)
+assert_fail grep -qF 'snap/dir1/b.txt' <<<"$RES"
+assert_fail grep -qF 'snap/a.txt' <<<"$RES"
+assert_fail grep -qF 'plain/x.txt' <<<"$RES"
+assert_fail grep -qF 'plain/y.txt' <<<"$RES"
 
 rm -rf snap plain
 
@@ -69,7 +71,8 @@ write "2" "a/b/2.txt"
 write "3" "a/c/3.txt"
 
 dfm status --all 2>/dev/null | grep -qF '??  a/*'
-! dfm status --all 2>/dev/null | grep -qF 'a/b/1.txt'
+RES=$(dfm status --all 2>/dev/null)
+assert_fail grep -qF 'a/b/1.txt' <<<"$RES"
 
 rm -rf a
 

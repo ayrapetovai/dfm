@@ -24,9 +24,12 @@ dfm status 2>/dev/null | grep -qF '!P  /never/matches.*'
 
 # Scoped report must NOT emit the block, even though `\.cache` matches nothing
 # inside the scope.
-! dfm status .config 2>/dev/null | grep -qF "Unused ignore patterns"
+RES=$(dfm status .config 2>/dev/null)
+assert_fail grep -qF "Unused ignore patterns" <<<"$RES"
 
 # Scoped + --unused-patterns still gives the global answer: only the truly
 # unused pattern is listed, and the in-use `.cache` one never appears.
 dfm status --unused-patterns .config 2>/dev/null | grep -qF '/never/matches.*'
-! dfm status --unused-patterns .config 2>/dev/null | grep -qF '\.cache'
+RES=$(dfm status --unused-patterns .config 2>/dev/null)
+assert_fail grep -qF '\.cache' <<<"$RES"
+
