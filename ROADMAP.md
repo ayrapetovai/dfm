@@ -25,6 +25,11 @@ This feature must be added to README.md.
 ```
 
 ## Fix bugs
-The 'status --managed' does not show managed symlinks,
+- The 'status --managed' does not show managed symlinks,
 that are marked with 'LL' and are shown by 'status --all'
+
+- In the README.md there is the example of unmanaged symlinks (?L),
+but no example of managed symlinks (LL). Add the string with example to point 2.10 text field.
+
+## Switch license to GPL
 
