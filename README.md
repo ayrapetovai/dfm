@@ -458,10 +458,10 @@ For encrypted source files, the conflict check is performed against the encrypte
 ## 6 File layout
 
 ```
-$XDG_CONFIG_HOME/dfm/config.toml         -- user config
-~/.dfm.toml                               -- fallback config (if XDG path absent)
-$XDG_STATE_HOME/dfm/state.toml            -- sync timestamps (`"<secs>;<nanos>"` per file)
-$XDG_STATE_HOME/dfm/ignore_file           -- target-side ignore patterns
+$XDG_CONFIG_HOME/dfm/config.toml           -- user config
+~/.dfm.toml                                -- fallback config (if XDG path absent)
+$XDG_STATE_HOME/dfm/state.toml             -- sync timestamps (`"<secs>;<nanos>"` per file)
+$XDG_STATE_HOME/dfm/ignore_file            -- target-side ignore patterns
 source_dir/.dfm_root                       -- source directory marker
 source_dir/.dfm_ignore_file                -- source-side ignore patterns
 source_dir/dot_bashrc                      -- managed copy of ~/.bashrc
@@ -480,9 +480,9 @@ source_dir/dot_bashrc.symlink              -- symlink pointer file
 ## Building
 
 ### Install tools
+install https://rust-lang.org/tools/install/
 
 ```shell
-# install https://rust-lang.org/tools/install/
 cargo install cargo-aur
 ```
 
@@ -496,10 +496,18 @@ makepkg
 
 The package will appear in ./target/cargo-aur
 
-### Install and remove
+### Install or remove the package
 
 ```shell
+# install
 sudo pacman -U dfm-version-arch.zst
+
+# remove
 sudo pacman -R dfm-bin
 ```
+
+## Never be in scope
+- Windows support.
+- Support of version management system other than git.
+- Git commands embedding into CLI of dfm (dfm git status).
 
