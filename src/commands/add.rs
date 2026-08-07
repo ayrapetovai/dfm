@@ -530,6 +530,14 @@ fn execute_add_task(
             Ok(true)
         },
         AddTask::CreateSymlinkFilePointer(source_symlink, target_abs, points_to) => {
+            // The source symlink pointer file may live in a directory that does
+            // not exist in the source tree yet (e.g. when the symlink is the
+            // only thing under a directory). Create it, like every other add
+            // operation does, before opening the pointer file.
+            let source_parent = source_symlink.parent()
+                .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_symlink)))?;
+            fs::create_dir_all(source_parent).map_err(|e| io_err(source_parent, e))?;
+
             // open if exists or create, if it doesn't
             let mut symlink_file = File::create(source_symlink).map_err(|e| io_err(source_symlink, e))?;
             symlink_file.write_all(points_to.as_bytes())
