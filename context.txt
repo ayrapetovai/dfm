@@ -17,8 +17,8 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
 cargo test                             # 14 unit tests in src/lib.rs
-bash tests/launcher.sh -q              # 173 shell integration tests
-bash tests/launcher.sh tests/test_x.sh # one test (shows -x trace)
+bash tests/launcher.sh -q              # 184 shell integration tests
+bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 ```
 
 ## Structure
@@ -32,7 +32,7 @@ src/crypt.rs         AES-256 zip write/read, password cache, obtain_password
 src/commands/mod.rs  re-exports + shared helpers (below)
 src/commands/{add,pull,merge,forget,init,ignore,purge,config,paths,status}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      173 shell tests
+tests/test_*.sh      184 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -57,11 +57,9 @@ tests/test_*.sh      173 shell tests
   content at last sync. Content hashing makes change detection deterministic
   (independent of filesystem mtime granularity). `Deref<Target=SystemTime>`.
 - **Conflict detection (lib.rs)**: `compare_files(encrypted_postfix, TF, SF, sync)`
-  dispatches on source type: `.encrypted` sources → `compare_files_by_timestamps`
-  (mtime-based, since re-encryption changes bytes); **plain** files →
-  `compare_files_by_content` (compares each side's current `sha256` vs the
-  hash stored in sync → `NonModified | SourceModified | TargetModified |
-  BothModified | NeverSynchronized`). No `NeverSynchronized` → no sync entry.
+  dispatches on source type — `.encrypted` → `compare_files_by_timestamps`
+  (mtime, since re-encryption changes bytes); plain → `compare_files_by_content`
+  (sha256 vs stored hash). See **Conflict detection** below for the algorithm.
 
 ## Paths (lib.rs)
 
@@ -98,14 +96,11 @@ path) are dropped → `dirname/` ≡ `dirname`. `check_path_matches_regex_substr
 file checks use the component-wise variant. `dir_ignore_pattern`/`is_dir_ignored`
 probe a dir as `R + "/x"` (sentinel) to test whether its subtree is fully ignored.
 
-## Conflict detection
+## Conflict detection (lib.rs)
 
-`compare_files(encrypted_postfix, TF, SF, sync)`: `.encrypted` sources →
-`compare_files_by_timestamps` (mtime), **plain** files →
-`compare_files_by_content` (sha256 vs `sync.sha256`).
-
-`compare_files_by_timestamps` returns `BothModified | SourceModified |
-NonModified | TargetModified | NeverSynchronized`, evaluated in order:
+`compare_files` returns `BothModified | SourceModified | NonModified |
+TargetModified | NeverSynchronized`, evaluated in order (`sync` =
+`sync_time_opt` SystemTime):
 
 ```
 both_not_modified    = TF==sync && sync==SF
@@ -115,7 +110,7 @@ both_modified        = TF>sync && sync<SF
 ```
 
 Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
-"timestamps ... inconsistent". `sync` here is the `sync_time_opt` `SystemTime`.
+"timestamps ... inconsistent". No `NeverSynchronized` → no sync entry.
 
 ## Shared helpers (commands/mod.rs)
 
@@ -203,24 +198,31 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - **`config --get|--set|--list`** — TOML properties; `--set` stores strings;
   array fields not settable.
 - **`paths`** — prints Source/Target/Config/State/Local ignore/Source ignore.
-- **`status [--short|--porcelain] [filters]`** — Phase 1 `state.syncs` → codes;
-  Phase 2 walk target for unmanaged/ignored files (skips dfm internal files:
-  state, config, target-ignore, and anything inside the source dir), classified
-  by `classify_target_symlink`/`classify_target_file`; fully-ignored pruned dirs
-  rendered as one `!! dir/`; Phase 3 stale/unused patterns. Codes: `--` ok,
-  `MM` both modified, `M ` target, ` M` source, `NM` never-synced, `!?` unpulled,
-  `??` unmanaged, `?L` unmanaged symlink, `LL` managed symlink, `!!` ignored,
-  `!L` ignored symlink, `!P` stale pattern. `LL` shown only when the symlink's
-  *pointee* resolves into source dir **and** is in state (or pointer file in
-  state). Default view (Human-readable, grouped into "Changes to merge/add/
-  pull", "Unpulled", "Unmanaged files", "Up to date", "Ignored", "Unused ignore
-  patterns"): colored paths, dirs collapsed to `dir/*` (`collapse_shared_dirs`),
-  git header via `git -C <source> status --porcelain -b`
-  (`get_git_info`: branch + ahead/behind + dirty/clean), paged
-  (`$PAGER`/`less -FRSX`, `terminal_height()` via `stty size`) only when output
-  exceeds terminal height. `--short` = `<code> <path>`; `--porcelain` =
-  tab-separated, both uncolored & never paged. Filters: `-a -c -m -U -M -p -i
-  -l -u` (hidden by default: up-to-date, `LL`, ignored).
+- **`status [PATH...] [--short|--porcelain] [filters]`** — Phase 1
+  `state.syncs` → codes; Phase 2 walk target for unmanaged/ignored files (skips
+  dfm internal files: state, config, target-ignore, and anything inside the
+  source dir; `classify_target_symlink`/`classify_target_file`); fully-ignored
+  pruned dirs → one `!! dir/`. **Path scoping** (`resolve_status_paths`): each
+  PATH absolute/relative to the target dir, or a source-dir path mapped back to
+  its target counterpart (like `pull`); nonexistent → error; no PATHS → whole
+  target. Phase 1 keeps `state_keys` full (drives classification) but emits only
+  in-scope entries; Phase 2 walks only the requested roots (folding matches the
+  full report). Phase 3 stale/unused-pattern detection is **full-tree only**:
+  scoped reports skip the whole block (a pattern used outside the scope would
+  falsely read as unused); `--unused-patterns` re-walks the full target even
+  with PATHS. Codes: `--` ok, `MM` both modified, `M ` target, ` M` source,
+  `NM` never-synced, `!?` unpulled, `??` unmanaged, `?L` unmanaged symlink,
+  `LL` managed symlink, `!!` ignored, `!L` ignored symlink, `!P` stale pattern.
+  `LL` shown only when the symlink's *pointee* resolves into source dir **and**
+  is in state (or pointer file in state). Default view (grouped into "Changes
+  to merge/add/pull", "Unpulled", "Unmanaged files", "Up to date", "Ignored",
+  "Unused ignore patterns"): colored paths, dirs collapsed to `dir/*`
+  (`collapse_shared_dirs`), git header via `git -C <source> status --porcelain
+  -b` (`get_git_info`: branch + ahead/behind + dirty/clean), paged
+  (`$PAGER`/`less -FRSX`, via `stty size`) only when output exceeds terminal
+  height. `--short` = `<code> <path>`; `--porcelain` = tab-separated, both
+  uncolored & never paged. Filters: `-a -c -m -U -M -p -i -l -u` (hidden by
+  default: up-to-date, `LL`, ignored).
 
 ## Encryption (crypt.rs)
 
@@ -274,8 +276,6 @@ warning**, never a command failure:
   (`link-to-file.txt` → `link-to-file.txt.symlink`, not `link-to-file.symlink`).
 - **Task pattern**: mutating ops are queued as task enums, executed in a final
   loop; `continue` in analysis doesn't cancel already-queued tasks.
-- **`--force` on add/pull** also removes the matching target-ignore pattern
-  from the ignore file after success.
 - **State dispatch**: `forget` uses `with_state_even_if_error` (persist state
   even on failure); `add`/`pull`/`merge` use `with_state` (state only written
   on success). `status` runs on a read-only borrow of state.
@@ -290,22 +290,36 @@ warning**, never a command failure:
 
 ## Testing
 
-- `launcher.sh`: `dfm()` = `"$EXECUTABLE" "$@"`; `write()` = `echo > file`.
-  Subshells `set -eEu -x`; fresh `$HOME` = `TMP_HOME` (temp) per test; prefers
-  debug binary.
-- Helpers: `assert <expr...>`, `assert_fail <cmd...>`, `assert_source <rel>`
-  (file in `$PWD/dotfiles/`), `assert_no_source`, `assert_content_eq`,
-  `add_file <name> [content]`, `assert_encrypted` (needs `7z` + `$PASSWORD`),
-  `uuid` stub for CI.
-- Conventions: `set -eEu` always on — any failing command aborts. Assertions
-  are grep-based: `cmd | grep -q "pat"` (aborts if not found), `! cmd | grep -q`
-  (aborts if found). No `sleep` in tests (use helpers). One file per scenario:
-  `test_<description>.sh`.
-- Counts: **173 shell tests**, **14 Rust unit tests in src/lib.rs**
+- `launcher.sh`: `dfm()` = `"$EXECUTABLE" "$@"`; `write() <content> <path>` =
+  `echo`-the-content into `<path>` (mkdir -p parent). Every test runs inside a
+  subshell `set -eEu -x` with a fresh `$HOME` (temp dir); prefers the debug
+  binary. Tests must never read stdin (`< /dev/null`).
+- Helpers: `assert <expr...>`, `assert_fail <cmd...>` (fails the test if the
+  command *exits 0*), `assert_source <rel>` (file in `$PWD/dotfiles/`),
+  `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
+  `assert_encrypted` (needs `7z` + `$PASSWORD`), `uuid` stub for CI.
+- Counts: **184 shell tests**, **14 Rust unit tests in src/lib.rs**
   (`test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`).
   No `sealed_test` dependency.
+
+### Testing assertions: got-it-right rule
+
+Assertions are **grep over captured output**. `set -eEu` aborts the test on a
+failing command — but **only if that command is not negated with `!`**. POSIX
+`-e` explicitly exempts "a command whose return value is inverted with `!`", so:
+
+- **Positive** (must appear) → plain pipeline, aborts if not found:
+  `dfm status 2>/dev/null | grep -qF "pat"` or `echo "$RES" | grep -qF "pat"`.
+- **Negative** (must NOT appear) → **never** `! cmd | grep -qF` (that inverts
+  the return and `set -e` skips it → mid-file asserts silently false-pass).
+  Capture output first, then let the *grep itself* be the only command:
+  `RES=$(dfm status 2>/dev/null); assert_fail grep -qF "pat" <<< "$RES"` —
+  `assert_fail` just inverts the command status, so grep exiting 0 (text
+  found) fails the test; grep exiting 1 (absent) passes it.
+- Anywhere shell negation is needed use `if cmd | grep -qF ...; then exit 1; fi`
+  or `assert_fail`, and position grep as the final (non-negated) pipeline step.
 
 ## Debug strategies (in order)
 
