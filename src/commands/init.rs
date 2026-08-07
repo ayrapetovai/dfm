@@ -1,13 +1,13 @@
-use std::{env, fs};
 use std::io::Write;
 use std::path::PathBuf;
+use std::{env, fs};
 
 use log::{debug, info, trace, warn};
 
-use dfm::*;
-use crate::DfmError;
-use microxdg::Xdg;
 use super::{msg_dry_run, msg_nothing_to_do};
+use crate::DfmError;
+use dfm::*;
+use microxdg::Xdg;
 
 /// Typed, per-command arguments for `init` (built by the dispatcher).
 pub struct InitArgs {
@@ -17,7 +17,11 @@ pub struct InitArgs {
 }
 
 pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<(), DfmError> {
-    let InitArgs { ref path_to_source, path_to_target: ref path_to_target_opt, dry_run } = args;
+    let InitArgs {
+        ref path_to_source,
+        path_to_target: ref path_to_target_opt,
+        dry_run,
+    } = args;
 
     debug!("init with source path {:?}", path_to_source);
     debug!("init with target path {:?}", path_to_target_opt);
@@ -26,7 +30,7 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         CreateSourceRootFile(PathBuf),
         CreateSourceIgnoreFile(),
         CreateStateFile(PathBuf, PathBuf, PathBuf),
-        CreateDefaultConfigFile(PathBuf)
+        CreateDefaultConfigFile(PathBuf),
     }
 
     /// Human-readable description of a task, shown before it runs (and during
@@ -62,7 +66,8 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         loop {
             let pointer_content = fs::read_to_string(&source_directory_pointer)
                 .map_err(|e| io_err(&source_directory_pointer, e))?
-                .trim().to_owned();
+                .trim()
+                .to_owned();
             if pointer_content == "." {
                 break;
             } else {
@@ -72,7 +77,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         }
         fs::canonicalize(source_directory_pointer.parent().unwrap())?
     } else {
-        tasks.push(InitTask::CreateSourceRootFile(path_to_source.join(".dfm_root")));
+        tasks.push(InitTask::CreateSourceRootFile(
+            path_to_source.join(".dfm_root"),
+        ));
         if dry_run {
             // dry-run does not create the source dir, so it cannot be
             // canonicalized yet; build the absolute path instead.
@@ -98,7 +105,11 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
 
     let home_dir_path = match get_home_path() {
         Some(p) => p,
-        None => return Err(DfmError::InvalidData("failed to define home directory".into()))
+        None => {
+            return Err(DfmError::InvalidData(
+                "failed to define home directory".into(),
+            ));
+        }
     };
 
     let target_abs_path = if let Some(path_to_target) = path_to_target_opt {
@@ -112,7 +123,11 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
     if state_file_path.exists() {
         debug!("state file already exists, no need to create");
     } else {
-        tasks.push(InitTask::CreateStateFile(state_file_path.clone(), target_abs_path, source_dir_path.clone()));
+        tasks.push(InitTask::CreateStateFile(
+            state_file_path.clone(),
+            target_abs_path,
+            source_dir_path.clone(),
+        ));
     }
 
     let target_config_file_path = calc_config_file_path(xdg);
@@ -141,34 +156,39 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         }
         match task {
             InitTask::CreateSourceRootFile(path) => {
-                fs::create_dir_all(path.parent().unwrap()).map_err(|e| io_err(path.parent().unwrap(), e))?;
+                fs::create_dir_all(path.parent().unwrap())
+                    .map_err(|e| io_err(path.parent().unwrap(), e))?;
                 fs::write(&path, ".").map_err(|e| io_err(&path, e))?;
-            },
+            }
             InitTask::CreateSourceIgnoreFile() => {
-                let mut ignore_file_records = vec![];
-                ignore_file_records.push(".dfm_root");
-                ignore_file_records.push(".git");
-                ignore_file_records.push(".dfm_ignore_source");
-                ignore_file_records.push(".dfm_ignore_target");
+                let ignore_file_records = vec![
+                    ".dfm_root",
+                    ".git",
+                    ".dfm_ignore_source",
+                    ".dfm_ignore_target",
+                ];
 
                 fs::create_dir_all(source_ignore_file_path.parent().unwrap())
                     .map_err(|e| io_err(source_ignore_file_path.parent().unwrap(), e))?;
                 let mut source_ignore_file = open_or_create_file(&source_ignore_file_path)?;
 
                 for ignore_file_record in ignore_file_records {
-                    if let Err(e) = writeln!(source_ignore_file, "{}", regex::escape(ignore_file_record)) {
+                    if let Err(e) =
+                        writeln!(source_ignore_file, "{}", regex::escape(ignore_file_record))
+                    {
                         return Err(io_err(&source_ignore_file_path, e));
                     } else {
                         debug!("source ignore file: added record {}", ignore_file_record);
                     }
                 }
-            },
+            }
             InitTask::CreateStateFile(path, target_dir, source_dir) => {
-                fs::create_dir_all(path.parent().unwrap()).map_err(|e| io_err(path.parent().unwrap(), e))?;
+                fs::create_dir_all(path.parent().unwrap())
+                    .map_err(|e| io_err(path.parent().unwrap(), e))?;
 
                 let empty_state = StateObject::new(target_dir, source_dir);
                 write_state(&path, &empty_state)?;
-            },
+            }
             InitTask::CreateDefaultConfigFile(path) => {
                 let config_file = Config::from_settings(settings);
                 write_config(&path, &config_file)?;
