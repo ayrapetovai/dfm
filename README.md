@@ -310,9 +310,10 @@ Show the current state of managed files, unmanaged files, and ignore patterns.
 dfm status [--all] [--short] [--porcelain]
            [--conflicted] [--modified] [--unmanaged] [--managed] [--unpulled] [--ignored]
            [--ignored-patterns] [--unused-patterns]
+           [PATH...]
 ```
 
-By default, status prints a categorized report grouped by state:
+By default, status prints a categorized report grouped by state. When one or more `PATH` arguments are given, the report is restricted to those paths only.
 
 ```
 Up to date:

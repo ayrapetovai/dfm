@@ -163,6 +163,10 @@ enum Command {
         /// List unused (stale) ignore patterns.
         #[arg(long, short = 'u')]
         unused_patterns: bool,
+
+        /// Only show status for the given paths.
+        #[arg(value_name = "PATH")]
+        paths: Option<Vec<PathBuf>>,
     },
 
     /// Perform 3-way merge on conflicting files.
@@ -450,6 +454,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             ignored,
             ignored_patterns,
             unused_patterns,
+            paths,
         } => {
             let state =
                 state_opt.ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
@@ -468,6 +473,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                     ignored,
                     ignored_patterns,
                     unused_patterns,
+                    paths,
                 },
                 &state,
             )

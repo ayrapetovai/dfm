@@ -27,6 +27,9 @@ pub struct StatusArgs {
     pub ignored: bool,
     pub ignored_patterns: bool,
     pub unused_patterns: bool,
+    /// Restrict the report to these paths (absolute or relative to the target
+    /// directory). `None` shows the full report over the whole target dir.
+    pub paths: Option<Vec<PathBuf>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +115,57 @@ struct StatusEntry {
 // Status command entry point
 // ---------------------------------------------------------------------------
 
+/// Resolve user-provided status paths (absolute or relative to the target
+/// directory) to absolute roots for traversal. With `None`, the whole target
+/// directory is used. A path that does not exist is an error so the user gets
+/// immediate feedback instead of an empty report.
+///
+/// A path that lies inside the source directory is treated as a source path:
+/// it is mapped back to its target counterpart (like `pull` does) so the user
+/// can naturally ask about a managed file by either of its two locations.
+fn resolve_status_paths(
+    paths: Option<&Vec<PathBuf>>,
+    target_dir_abs: &PathBuf,
+    source_dir_abs: &PathBuf,
+    settings: &Settings,
+) -> Result<Vec<PathBuf>, DfmError> {
+    match paths {
+        None => Ok(vec![target_dir_abs.clone()]),
+        Some(paths) => {
+            let mut roots = Vec::with_capacity(paths.len());
+            for p in paths {
+                let abs = if p.is_absolute() {
+                    remove_dots_from_path(p)
+                } else {
+                    remove_dots_from_path(&target_dir_abs.join(p))
+                };
+                if !abs.exists() {
+                    return Err(DfmError::other(format!(
+                        "path does not exist: {}",
+                        abs.display()
+                    )));
+                }
+                // A source-dir path maps to the target file that it manages:
+                // `dot_files/...` -> `target/...` with postfixes stripped.
+                let root = if abs.starts_with(source_dir_abs) {
+                    let source_rel = file_path_relative_to(&abs, source_dir_abs);
+                    let target_rel = source_rel_to_target_rel(
+                        &source_rel.to_string_lossy(),
+                        &settings.dot_prefix,
+                        &settings.symlink_postfix,
+                        &settings.encrypted_postfix,
+                    );
+                    remove_dots_from_path(&target_dir_abs.join(target_rel))
+                } else {
+                    abs
+                };
+                roots.push(root);
+            }
+            Ok(roots)
+        }
+    }
+}
+
 pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &StateObject) -> Result<(), DfmError> {
     let StatusArgs {
         ref all,
@@ -125,12 +179,17 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         ref ignored,
         ref ignored_patterns,
         ref unused_patterns,
+        ref paths,
     } = args;
 
     let (target_dir_abs, source_dir_abs) = calc_working_dir_paths(settings)?;
 
     let target_ignore_file = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file)?;
+
+    // Restrict the report to the requested paths (absolute or relative to the
+    // target directory). With no paths, the whole target dir is analyzed.
+    let requested_roots = resolve_status_paths(paths.as_ref(), &target_dir_abs, &source_dir_abs, settings)?;
 
     // Paths to dfm's own internal files (skip in unmanaged detection)
     let state_file_path = calc_state_file_path(xdg).ok();
@@ -158,6 +217,12 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         );
         let target_abs = target_dir_abs.join(&target_rel);
         let target_abs = remove_dots_from_path(&target_abs);
+
+        // Keep `state_keys` fully populated (it drives Phase-2 classification),
+        // but only emit entries for paths within the requested scope.
+        if !requested_roots.iter().any(|root| target_abs.starts_with(root)) {
+            continue;
+        }
 
         debug!("status: state entry {:?} → target {:?}", source_rel, target_abs);
 
@@ -237,7 +302,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // ------------------------------------------------------------------
     let ListDirectories { found: traversed_target, errors: traversal_errors, pruned: pruned_dirs } =
         list_directory(
-            std::slice::from_ref(&target_dir_abs),
+            &requested_roots,
             &target_dir_abs,
             Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
         )?;
@@ -248,7 +313,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         )));
     }
 
-    // Phase 3 builds its own list from traversed_target + entries
+    // Phase 3 builds its own list from traversed_target + pruned dirs + entries
 
     // Pre-compute canonical source dir for robust path comparison
     let canon_source_dir = fs::canonicalize(&source_dir_abs).unwrap_or_else(|_| source_dir_abs.clone());
@@ -316,37 +381,68 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // ------------------------------------------------------------------
     let mut stale_patterns: Vec<String> = Vec::new();
 
-    // Build a flat list of all relative paths (for component-wise pattern matching)
-    let all_relative_paths: Vec<String> = {
-        let mut p = Vec::new();
-        // Add all traversed target files (as relative to target dir)
-        for abs in &traversed_target {
+    // Unused-pattern detection is a full-tree analysis: a pattern is "unused"
+    // only when it matches *nothing in the whole target directory*. A scoped
+    // status (`dfm status <paths>`) must not judge patterns against just the
+    // requested paths — a pattern aimed at a file outside the request would
+    // falsely appear unused. So scoped reports skip the analysis entirely
+    // (empty `stale_patterns` → no block in the default report), while the
+    // explicit `--unused-patterns` flag always walks the whole target dir to
+    // give a correct, global answer regardless of any requested scope.
+    let scoped = paths.is_some();
+    if !scoped || *unused_patterns {
+        // The full non-scoped status already walked the whole target dir in
+        // Phase 2, so its `traversed_target` and pruned dirs can be reused.
+        // Only a scoped `--unused-patterns` needs a fresh full-tree walk.
+        let (unused_walk, unused_pruned): (Vec<PathBuf>, Vec<String>) = if scoped {
+            let ListDirectories { found, errors, pruned } = list_directory(
+                std::slice::from_ref(&target_dir_abs),
+                &target_dir_abs,
+                Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
+            )?;
+            if !errors.is_empty() {
+                return Err(DfmError::InvalidData(format!(
+                    "failed to process some subdirectories or files in target directory for status: {:?}",
+                    errors
+                )));
+            }
+            (found, pruned)
+        } else {
+            (traversed_target.clone(), pruned_dirs.clone())
+        };
+
+        // A pattern that pruned a directory counts as in use (its `!! dir/`
+        // entry is exactly what makes it used in the full report).
+        let mut all_relative_paths: Vec<String> = Vec::new();
+        for abs in &unused_walk {
             if abs.to_str().is_some() {
                 let rel = file_path_relative_to(abs, &target_dir_abs);
                 if let Some(rs) = rel.to_str() {
-                    p.push(rs.to_string());
+                    all_relative_paths.push(rs.to_string());
                 }
             }
+        }
+        for pruned_rel in &unused_pruned {
+            all_relative_paths.push(format!("{}/", pruned_rel));
         }
         // Add all target paths from state entries (already relative)
         for entry in &entries {
             if entry.code != StatusCode::Unpulled {
-                p.push(entry.path.clone());
+                all_relative_paths.push(entry.path.clone());
             }
         }
-        p
-    };
 
-    for pattern_str in target_ignore_regex.patterns() {
-        let mut matched_any = false;
-        for rel_path in &all_relative_paths {
-            if pattern_matches_path_components(pattern_str, rel_path) {
-                matched_any = true;
-                break;
+        for pattern_str in target_ignore_regex.patterns() {
+            let mut matched_any = false;
+            for rel_path in &all_relative_paths {
+                if pattern_matches_path_components(pattern_str, rel_path) {
+                    matched_any = true;
+                    break;
+                }
             }
-        }
-        if !matched_any {
-            stale_patterns.push(pattern_str.to_string());
+            if !matched_any {
+                stale_patterns.push(pattern_str.to_string());
+            }
         }
     }
 
