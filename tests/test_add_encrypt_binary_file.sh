@@ -1,6 +1,5 @@
 # A binary (non-UTF-8) file must be encryptable and roundtrip intact via
-# `dfm pull`. Regression for F1: `read_to_string` in write_zip_file rejected
-# non-UTF-8 content.
+# `dfm pull`. Regression for F1: the old writer rejected non-UTF-8 content.
 
 PASSWORD="$(uuid)"
 

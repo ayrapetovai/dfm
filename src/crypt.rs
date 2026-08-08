@@ -1,12 +1,11 @@
 use crate::DfmError;
 use log::debug;
 use std::fs;
-use std::io::{Cursor, Write};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use zip::ZipArchive;
 
 use crate::{Settings, file_path_relative_to, io_err};
 
@@ -145,14 +144,11 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 const MAGIC: &[u8; 7] = b"DFMENC\x00";
 const FORMAT_VERSION: u8 = 2;
 
-// Argon2id cost parameters. 64 MiB / 3 iterations / 4 lanes: each password
-// guess costs ~64 MiB of memory and measurable CPU, which makes brute-forcing
-// a weak password far more expensive than the old fast-hash-and-zip scheme.
-// Parameters are stored per-archive, so raising them later stays compatible.
-// Argon2id parameters. Debug builds (cargo build / cargo test) use weak params
-// so the encryption tests run fast; release builds use production-strength
-// params. The header records whichever params were used, so files stay
-// self-describing and decryptable across build profiles.
+// Argon2id cost parameters. Release builds use 64 MiB / 3 iterations / 4
+// lanes so each password guess costs ~64 MiB of memory and measurable CPU.
+// Debug builds (cargo build / cargo test) use weak params so the encryption
+// tests run fast. The header records whichever params were used, so archives
+// stay self-describing and decryptable across build profiles.
 #[cfg(debug_assertions)]
 const KDF_M_COST_KIB: u32 = 8192;
 #[cfg(debug_assertions)]
@@ -489,9 +485,9 @@ pub fn write_encrypted_file(
     Ok(())
 }
 
-/// Decrypt an encrypted source file (new dfm format or legacy zip archive)
-/// and write the plaintext to `target_file_path`, recreating enclosing
-/// directory permissions recorded at encrypt time.
+/// Decrypt an encrypted source file (dfm format) and write the plaintext to
+/// `target_file_path`, recreating enclosing directory permissions recorded at
+/// encrypt time.
 pub fn read_encrypted_file(
     settings: &Settings,
     source_file_path: &PathBuf,
@@ -503,11 +499,6 @@ pub fn read_encrypted_file(
     }
 
     let source_data = fs::read(source_file_path).map_err(|e| io_err(source_file_path, e))?;
-
-    // Legacy sniff: a zip archive starts with the PK header.
-    if source_data.len() >= 2 && &source_data[..2] == b"PK" {
-        return read_zip_file(settings, source_file_path, target_file_path);
-    }
 
     let target_root = PathBuf::from(&settings.target_dir);
     let mut already_retried = false;
@@ -618,10 +609,6 @@ pub fn decrypt_file_standalone(
 ) -> Result<(), DfmError> {
     let source_data = fs::read(input_path).map_err(|e| io_err(input_path, e))?;
 
-    if source_data.len() >= 2 && &source_data[..2] == b"PK" {
-        return read_zip_file(settings, input_path, output_path);
-    }
-
     let target_root = output_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -652,100 +639,6 @@ pub fn decrypt_file_standalone(
                 return Err(e);
             }
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Legacy reader: AES-256 zip archives written by dfm < this change.
-// Kept so existing `.encrypted` files in dotfiles repos keep decrypting.
-// New writes use the Argon2id + XChaCha20-Poly1305 format above.
-// ---------------------------------------------------------------------------
-
-fn read_zip_file(
-    settings: &Settings,
-    source_zip_path: &PathBuf,
-    target_file_path: &PathBuf,
-) -> Result<(), DfmError> {
-    let archive_bytes = fs::read(source_zip_path).map_err(|e| io_err(source_zip_path, e))?;
-
-    // The legacy archive holds one encrypted file entry plus a non-encrypted
-    // directory entry per enclosing directory (recorded by the old writer).
-    // Directory entries recreate the target directories with their
-    // permissions. A failed decrypt advances the reader, so re-open the
-    // archive from the buffer each attempt; the wrong-password path re-prompts
-    // once (the cache is cleared below).
-    let mut already_retried = false;
-
-    let target_dir_path = PathBuf::from(&settings.target_dir);
-    eprintln!("file {:?} needs an encryption password", target_file_path);
-
-    loop {
-        let password = obtain_password(settings)?;
-
-        let mut archive = match ZipArchive::new(Cursor::new(&archive_bytes)) {
-            Ok(a) => a,
-            Err(e) => return Err(DfmError::other(e)),
-        };
-
-        // Iterate all entries in index order. The directory entries come first
-        // (added before the file entry), so their dirs exist before the file is
-        // written. `by_index_decrypt` is safe on the plain directory entries —
-        // the zip crate discards the password when the entry is not encrypted.
-        let mut wrote_file = false;
-        for i in 0..archive.len() {
-            let mut zip_file = match archive.by_index_decrypt(i, password.as_bytes()) {
-                Ok(f) => f,
-                Err(zip::result::ZipError::InvalidPassword) if !already_retried => {
-                    clear_password_cache();
-                    eprintln!(
-                        "wrong password for {:?}, please try again.",
-                        source_zip_path
-                    );
-                    already_retried = true;
-                    break;
-                }
-                Err(e) => return Err(DfmError::other(e)),
-            };
-
-            if zip_file.is_dir() {
-                if let Some(rel) = zip_file.enclosed_name() {
-                    let dir_abs = target_dir_path.join(&rel);
-                    if let Some(mode) = zip_file.unix_mode() {
-                        fs::create_dir_all(&dir_abs).map_err(|e| io_err(&dir_abs, e))?;
-                        fs::set_permissions(&dir_abs, fs::Permissions::from_mode(mode))
-                            .map_err(|e| io_err(&dir_abs, e))?;
-                    }
-                }
-                continue;
-            }
-
-            let permissions = zip_file.unix_mode().map(fs::Permissions::from_mode);
-            if let Some(parent) = target_file_path.parent() {
-                fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
-            }
-            let mut output_file =
-                std::fs::File::create(target_file_path).map_err(|e| io_err(target_file_path, e))?;
-            std::io::copy(&mut zip_file, &mut output_file)
-                .map_err(|e| io_err(target_file_path, e))?;
-            if let Some(perms) = permissions {
-                fs::set_permissions(target_file_path, perms)
-                    .map_err(|e| io_err(target_file_path, e))?;
-            }
-            wrote_file = true;
-            break;
-        }
-
-        if wrote_file {
-            return Ok(());
-        }
-        if !already_retried {
-            return Err(DfmError::other(format!(
-                "encrypted archive has no file entry: {:?}",
-                source_zip_path
-            )));
-        }
-        // InvalidPassword retry: loop again; the password cache was cleared
-        // above, so obtain_password re-prompts / re-reads.
     }
 }
 

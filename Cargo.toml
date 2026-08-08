@@ -26,7 +26,6 @@ stderrlog = "0.6.0"
 rpassword = "7.5.4"
 thiserror = "2"
 lazy_static = "1.4"
-zip = { version="8.6.0", default-features = false, features=["bzip2", "aes-crypto"] }
 colored = "3"
 sha2 = "0.10"
 argon2 = "0.5"
