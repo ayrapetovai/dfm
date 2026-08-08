@@ -501,28 +501,37 @@ pub fn read_encrypted_file(
     let source_data = fs::read(source_file_path).map_err(|e| io_err(source_file_path, e))?;
 
     let target_root = PathBuf::from(&settings.target_dir);
+    decrypt_blob_with_retry(settings, &source_data, source_file_path, &target_root, target_file_path)
+}
+
+/// Decrypt `source_data` (a dfm blob) into `target_file_path`, prompting for
+/// the password and retrying once on a wrong password.
+fn decrypt_blob_with_retry(
+    settings: &Settings,
+    source_data: &[u8],
+    encrypted_path: &Path,
+    target_root: &Path,
+    target_file_path: &Path,
+) -> Result<(), DfmError> {
     let mut already_retried = false;
     loop {
         let password = obtain_password(settings)?;
 
-        match decrypt_bytes(&source_data, &password) {
+        match decrypt_bytes(source_data, &password) {
             Ok(decrypted) => {
-                restore_target(&target_root, target_file_path, &decrypted)?;
+                restore_target(target_root, target_file_path, &decrypted)?;
                 return Ok(());
             }
             Err(DecryptError::WrongPassword) if !already_retried => {
                 clear_password_cache();
-                eprintln!(
-                    "wrong password for {:?}, please try again.",
-                    source_file_path
-                );
+                eprintln!("wrong password for {:?}, please try again.", encrypted_path);
                 already_retried = true;
                 continue;
             }
             Err(DecryptError::WrongPassword) => {
                 return Err(DfmError::other(format!(
                     "wrong password for encrypted file {:?}",
-                    source_file_path
+                    encrypted_path
                 )));
             }
             Err(DecryptError::Invalid(e)) => {
@@ -541,7 +550,7 @@ pub fn read_encrypted_file(
 /// `dfm decrypt` passes the output file's parent so dirs resolve relative to it.
 fn restore_target(
     target_root: &Path,
-    target_file_path: &PathBuf,
+    target_file_path: &Path,
     decrypted: &Decrypted,
 ) -> Result<(), DfmError> {
     // Recreate enclosing directories with their recorded permissions (e.g. a
@@ -614,32 +623,7 @@ pub fn decrypt_file_standalone(
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
 
-    let mut already_retried = false;
-    loop {
-        let password = obtain_password(settings)?;
-
-        match decrypt_bytes(&source_data, &password) {
-            Ok(decrypted) => {
-                restore_target(&target_root, output_path, &decrypted)?;
-                return Ok(());
-            }
-            Err(DecryptError::WrongPassword) if !already_retried => {
-                clear_password_cache();
-                eprintln!("wrong password for {:?}, please try again.", input_path);
-                already_retried = true;
-                continue;
-            }
-            Err(DecryptError::WrongPassword) => {
-                return Err(DfmError::other(format!(
-                    "wrong password for encrypted file {:?}",
-                    input_path
-                )));
-            }
-            Err(DecryptError::Invalid(e)) => {
-                return Err(e);
-            }
-        }
-    }
+    decrypt_blob_with_retry(settings, &source_data, input_path, &target_root, output_path)
 }
 
 fn default_read_password() -> Result<String, DfmError> {

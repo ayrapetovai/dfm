@@ -71,18 +71,13 @@ fn handle_target_symlink(
         return Ok(false);
     }
 
-    let source_file_content = read_symlink_pointer(&source_symlink_file_abs_path)?;
-    if source_file_content == target_symlink_pointee_path.to_string_lossy().as_ref() {
-        info!("target symlink {:?}\n\tpoints to {}, skipping...", target_abs_path, target_symlink_pointee_path.to_string_lossy());
-        tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
-    } else {
-        info!("target symlink {:?}\n\tpoints to {},\n\tmust point to {:?}", target_abs_path, target_symlink_pointee_path.to_string_lossy(), source_file_content);
-        if force {
-            tasks.push(ForgetTask::Delete(source_symlink_file_abs_path));
-        } else {
-            info!("specify --force to delete source {:?}", source_symlink_file_abs_path);
-        }
-    }
+    handle_symlink_pointer(
+        &target_abs_path,
+        &target_symlink_pointee_path,
+        &source_symlink_file_abs_path,
+        force,
+        tasks,
+    )?;
     Ok(true)
 }
 
@@ -146,16 +141,45 @@ fn handle_source_path(
 
     let target_symlink_pointee_path = fs::read_link(&target_symlink_abs_path)
         .map_err(|e| io_err(&target_symlink_abs_path, e))?;
-    let source_file_content = read_symlink_pointer(target_abs_path)?;
+    handle_symlink_pointer(
+        &target_symlink_abs_path,
+        &target_symlink_pointee_path,
+        target_abs_path,
+        force,
+        tasks,
+    )?;
+    Ok(())
+}
+
+/// A managed symlink whose pointer file matches its current pointee is
+/// up-to-date: forget just deletes the pointer. When they diverge, the
+/// pointer is only deleted with `--force`.
+fn handle_symlink_pointer(
+    target_symlink_abs_path: &Path,
+    target_symlink_pointee_path: &Path,
+    source_file: &Path,
+    force: bool,
+    tasks: &mut Vec<ForgetTask>,
+) -> Result<(), DfmError> {
+    let source_file_content = read_symlink_pointer(source_file)?;
     if source_file_content == target_symlink_pointee_path.to_string_lossy().as_ref() {
-        info!("target symlink {:?}\n\tpoints to {:?}, skipping...", target_symlink_abs_path, target_symlink_pointee_path.to_string_lossy());
-        tasks.push(ForgetTask::Delete(target_abs_path.clone()));
+        info!(
+            "target symlink {:?}\n\tpoints to {}, skipping...",
+            target_symlink_abs_path,
+            target_symlink_pointee_path.to_string_lossy()
+        );
+        tasks.push(ForgetTask::Delete(source_file.to_path_buf()));
     } else {
-        info!("target symlink {:?}\n\tpoints to {:?},\n\tmust point to {:?}", target_symlink_abs_path, target_symlink_pointee_path.to_string_lossy(), source_file_content);
+        info!(
+            "target symlink {:?}\n\tpoints to {},\n\tmust point to {:?}",
+            target_symlink_abs_path,
+            target_symlink_pointee_path.to_string_lossy(),
+            source_file_content
+        );
         if force {
-            tasks.push(ForgetTask::Delete(target_abs_path.clone()));
+            tasks.push(ForgetTask::Delete(source_file.to_path_buf()));
         } else {
-            info!("specify --force to delete source {:?}", target_abs_path);
+            info!("specify --force to delete source {:?}", source_file);
         }
     }
     Ok(())
@@ -275,7 +299,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
             ) {
                 Ok(v) => v,
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_path, e);
+                    warn_unreadable(target_path, &e);
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -288,7 +312,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         let target_abs_path = match fs::canonicalize(target_path) {
             Ok(abs) => abs,
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                warn!("skipping unreadable path {:?}: {}", target_path, e);
+                warn_unreadable(target_path, &e);
                 continue;
             }
             Err(e) => {
@@ -309,7 +333,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_abs_path, e);
+                    warn_unreadable(&target_abs_path, &e);
                 }
                 Err(e) => return Err(e),
             }
@@ -320,7 +344,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_abs_path, e);
+                    warn_unreadable(&target_abs_path, &e);
                 }
                 Err(e) => return Err(e),
             }

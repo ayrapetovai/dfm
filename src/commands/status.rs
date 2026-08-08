@@ -6,7 +6,7 @@ use std::process::{Command as ProcessCmd, Stdio};
 use std::io::Write;
 
 use colored::Colorize;
-use log::{debug, info, warn};
+use log::{debug, info};
 use regex::RegexSet;
 
 use dfm::*;
@@ -271,7 +271,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             let cmp = match compare_files(&settings.encrypted_postfix, &target_abs, &source_abs, Some(sync_time)) {
                 Ok(cmp) => cmp,
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_abs, e);
+                    warn_unreadable(&target_abs, &e);
                     continue;
                 }
                 Err(e) => return Err(e),

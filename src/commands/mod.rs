@@ -143,6 +143,11 @@ pub(crate) fn msg_nothing_to_do() -> &'static str {
     "nothing to do"
 }
 
+/// Message printed when a multi-file command fails partway through.
+pub(crate) fn msg_tasks_failure(completed: usize, total: usize) -> String {
+    format!("{} of {} tasks completed before failure", completed, total)
+}
+
 // ---------------------------------------------------------------------------
 // Shared symlink-pointer / source-variant helpers
 // ---------------------------------------------------------------------------

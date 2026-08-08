@@ -11,7 +11,7 @@ use dfm::*;
 use microxdg::Xdg;
 use super::{sync_file_copy, require_force, symlink_pointer_matches,
             update_sync_state, remove_sync_state, get_sync_time,
-            list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
+            list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
             prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling};
 
 /// Typed, pre-resolved arguments for the `add` command (built by the
@@ -389,7 +389,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_path, e);
+                    warn_unreadable(target_path, &e);
                 }
                 Err(e) => return Err(e),
             }
@@ -403,7 +403,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_path, e);
+                    warn_unreadable(target_path, &e);
                 }
                 Err(e) => return Err(e),
             }
@@ -449,10 +449,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
                 }
             }
             Err(e) => {
-                error!(
-                    "{} of {} tasks completed before failure",
-                    completed_tasks, total_tasks
-                );
+                error!("{}", msg_tasks_failure(completed_tasks, total_tasks));
                 return Err(e);
             }
         }
@@ -478,7 +475,7 @@ fn execute_add_task(
             match sync_file_copy(target_file, source_file, source_file, state, source_dir_abs_path) {
                 Ok(()) => Ok(true),
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    warn_unreadable(target_file, &e);
                     Ok(false)
                 }
                 Err(e) => Err(e),
@@ -488,7 +485,7 @@ fn execute_add_task(
             match sync_file_copy(target_file, source_file, source_file, state, source_dir_abs_path) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    warn_unreadable(target_file, &e);
                     return Ok(false);
                 }
                 Err(e) => return Err(e),
@@ -509,7 +506,7 @@ fn execute_add_task(
             match dfm::crypt::write_encrypted_file(settings, target_file, source_file) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    warn_unreadable(target_file, &e);
                     return Ok(false);
                 }
                 Err(e) => return Err(e),

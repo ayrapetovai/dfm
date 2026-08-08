@@ -9,7 +9,7 @@ use dfm::*;
 use crate::DfmError;
 use super::{sync_file_copy, require_force, read_symlink_pointer,
             update_sync_state, get_sync_time,
-            list_directory_or_error, msg_dry_run, msg_nothing_to_do, report_progress,
+            list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
             prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling};
 use microxdg::Xdg;
 
@@ -428,7 +428,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
                 Ok(Some(target)) => target,
                 Ok(None) => continue,
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_abs_path, e);
+                    warn_unreadable(&target_abs_path, &e);
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -445,7 +445,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
         ) {
             Ok(()) => {}
             Err(e) if e.is_permission_denied() => {
-                warn!("skipping unreadable path {:?}: {}", target_abs_path, e);
+                warn_unreadable(&target_abs_path, &e);
             }
             Err(e) => return Err(e),
         }
@@ -483,10 +483,7 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
                 }
             }
             Err(e) => {
-                error!(
-                    "{} of {} tasks completed before failure",
-                    completed_tasks, total_tasks
-                );
+                error!("{}", msg_tasks_failure(completed_tasks, total_tasks));
                 return Err(e);
             }
         }
@@ -511,7 +508,7 @@ fn execute_pull_task(
             match sync_file_copy(source_file, target_file, source_file, state, source_dir_abs_path) {
                 Ok(()) => Ok(true),
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    warn_unreadable(target_file, &e);
                     Ok(false)
                 }
                 Err(e) => Err(e),
@@ -537,7 +534,7 @@ fn execute_pull_task(
             match symlink::symlink_file(pointee, target_symlink_file_path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                    warn!("skipping unreadable path {:?}: {}", target_symlink_file_path, e);
+                    warn_unreadable(&target_symlink_file_path, &e);
                     return Ok(false);
                 }
                 Err(e) => return Err(io_err(target_symlink_file_path, e)),
@@ -549,7 +546,7 @@ fn execute_pull_task(
             match dfm::crypt::read_encrypted_file(settings, source_file, target_file) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
-                    warn!("skipping unreadable path {:?}: {}", target_file, e);
+                    warn_unreadable(target_file, &e);
                     return Ok(false);
                 }
                 Err(e) => return Err(e),

@@ -84,6 +84,12 @@ pub fn io_copy_err(from: &Path, to: &Path, e: io::Error) -> DfmError {
     ))
 }
 
+/// Warn about an unreadable path (permission denied) instead of aborting the
+/// command. Kept rule-consistent across all commands.
+pub fn warn_unreadable(path: &Path, e: impl std::fmt::Display) {
+    warn!("skipping unreadable path {:?}: {}", path, e);
+}
+
 impl From<regex::Error> for DfmError {
     fn from(e: regex::Error) -> Self {
         DfmError::Other(e.to_string())
@@ -1023,11 +1029,7 @@ pub fn list_directory(
                     Some(err) if err.kind() == io::ErrorKind::PermissionDenied => {
                         // Unreadable objects (strict permissions/ownership) are
                         // skipped with a warning instead of aborting the command.
-                        warn!(
-                            "skipping unreadable path {:?}: {}",
-                            e.path().unwrap_or(path),
-                            err
-                        );
+                        warn_unreadable(e.path().unwrap_or(path), err);
                     },
                     _ => {
                         error_messages.push(format!("error: {}", e));
