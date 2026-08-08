@@ -236,6 +236,29 @@ enum Command {
 
     /// Print paths
     Paths,
+
+    /// Encrypt a single file with a password into a dfm-encrypted blob.
+    Encrypt {
+        /// File to encrypt.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Output file (defaults to <PATH>.encrypted).
+        #[arg(long, short = 'o', value_name = "OUT")]
+        output: Option<PathBuf>,
+    },
+
+    /// Decrypt a dfm-encrypted file.
+    Decrypt {
+        /// Encrypted file.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Output file (defaults to the input name without the encrypted
+        /// postfix; required when the input has no postfix).
+        #[arg(long, short = 'o', value_name = "OUT")]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main_logic() -> Result<(), dfm::DfmError> {
@@ -426,6 +449,12 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             &path_to_config_file,
             &path_to_state_file,
         ),
+        Command::Encrypt { path, output } => {
+            encrypt_command(&settings, EncryptArgs { path, output })
+        }
+        Command::Decrypt { path, output } => {
+            decrypt_command(&settings, DecryptArgs { path, output })
+        },
         Command::Merge { paths, dry_run } => with_state(
             state_opt,
             state_read_error.as_ref(),

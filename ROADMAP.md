@@ -31,5 +31,11 @@ that are marked with 'LL' and are shown by 'status --all'
 - In the README.md there is the example of unmanaged symlinks (?L),
 but no example of managed symlinks (LL). Add the string with example to point 2.10 text field.
 
-## Switch license to GPL
+## Documents
+- Switch license to GPL
+- add man page to package
+- Describe what is 'pull' command, that it works only local.
+
+## Consider ideas
+- let pull take a path to where save the file
 
