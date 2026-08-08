@@ -5,7 +5,7 @@ A CLI tool to manage dotfiles: keep copies of configuration files from your home
 - Copy files between target and source with conflict detection
 - Three-way merge for conflicting files
 - Symlink tracking (files and their pointees)
-- AES-encrypted storage for sensitive files
+- Argon2id + XChaCha20-Poly1305 encrypted storage for sensitive files
 - Ignore lists for target and source files
 
 ## Quick start
@@ -37,7 +37,6 @@ git push
 | `git` | Git-info line in `status` output | Shows branch and dirty state of the source directory. Silently skipped if the source directory is not a git repository. |
 | `sh` (POSIX) | `obtain_password_shell_command` | The command is piped to `sh` stdin (not exposed in `ps`). Falls back to interactive password prompt when unset. |
 | A merge tool (`vimdiff` by default) | `merge` subcommand | Configured via `merge_tool_command`. Any command that accepts `{target}`, `{source}`, `{result}` placeholders works (e.g., `vimdiff`, `nvim -d`, `meld`). |
-| `7z` (p7zip) | Manual decryption of `.encrypted` files | Encrypted files are standard AES-256 ZIP archives and can be decrypted with any compatible tool. `7z` is recommended in the documentation. |
 
 ---
 
@@ -302,7 +301,20 @@ Managed symlinks (created by `add -s` / `pull -s`) are replaced with regular cop
 | `-f`, `--force` | Remove the source directory even if it has un-pulled or un-pushed changes. |
 | `-n`, `--dry-run` | Check without making changes. |
 
-### 2.10 `status`
+### 2.10 `encrypt` / `decrypt`
+
+Encrypt or decrypt a single file outside of the target/source workflow. See [Encryption](#4-encryption) for details on the format.
+
+```bash
+dfm encrypt [PATH] [-o OUTPUT]
+dfm decrypt [PATH] [-o OUTPUT]
+```
+
+| Flag | Description |
+|---|---|
+| `-o`, `--output` | Output path. `encrypt` defaults to `<input>.encrypted`; `decrypt` strips the `.encrypted` suffix (an explicit `-o` is required when the input has no suffix). |
+
+### 2.11 `status`
 
 Show the current state of managed files, unmanaged files, and ignore patterns.
 
@@ -408,7 +420,16 @@ The source and target directories are **not** stored in the config file — they
 
 ## 4 Encryption
 
-Sensitive files can be stored in AES-encrypted ZIP archives. Files matching `force_encryption_for` regexes (default: `\.ssh`) are automatically encrypted on `add`. Encryption can also be requested per-run with `--encrypt`.
+Sensitive files can be stored encrypted. Files matching `force_encryption_for` regexes (default: `\.ssh`) are automatically encrypted on `add`. Encryption can also be requested per-run with `--encrypt`.
+
+Each encrypted file (suffix `.encrypted`) is a self-contained, self-describing container:
+
+- The password is stretched with **Argon2id** (memory-hard KDF), making brute-force attacks against weak passwords expensive.
+- The payload is authenticated-encrypted with **XChaCha20-Poly1305** (AEAD): ciphertext tampering and wrong passwords are detected.
+- The **filename, file permissions, and directory structure are encrypted together with the content** — nothing about the payload is visible without the password.
+- The KDF cost parameters travel inside the archive, so files decrypt correctly even if the default costs change in a future version.
+
+`dfm` performs encryption/decryption transparently during `add` and `pull` (and `merge` / `purge` for encrypted sources).
 
 ### Obtaining a password
 
@@ -423,14 +444,20 @@ When the setting is empty (the default), dfm prompts interactively using `rpassw
 
 The password is cached in memory for the duration of the process, so you are prompted only once per `dfm` invocation.
 
-### Decryption manually
+### Standalone `encrypt` / `decrypt`
 
-Encrypted files (suffix `.encrypted`) are standard ZIP archives with AES-256 encryption. They can be decrypted with any tool that supports AES-encrypted ZIP, such as `7z`:
+Encrypted files can also be produced and inspected outside of the target/source workflow:
 
 ```bash
-# will ask for the password
-7z x filename.encrypted
+dfm encrypt path/to/file [-o output.encrypted]
+dfm decrypt file.encrypted [-o output]
 ```
+
+- `encrypt` writes `<input>.encrypted` next to the input by default (overridable with `-o`).
+- `decrypt` strips the `.encrypted` suffix for the default output path; if the input has no suffix, an explicit `-o` is required.
+- The same `obtain_password_shell_command` / interactive prompt rules apply. Decrypting also restores the file permissions recorded at encrypt time.
+
+There is no external tool requirement — `dfm decrypt` (or a future re-encrypting `dfm add`) is the supported way to read `.encrypted` files.
 
 ---
 
