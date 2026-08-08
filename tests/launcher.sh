@@ -115,21 +115,18 @@ function add_file() {
 }
 export -f add_file
 
-# Decrypt $PWD/dotfiles/<target>.encrypted with $PASSWORD and assert its
-# content matches the expected value.
+# Decrypt $PWD/dotfiles/<target_file>.encrypted with $PASSWORD and assert its
+# content matches the expected value. Uses the dfm standalone decrypt command,
+# which reads the password from the test's `obtain_password_shell_command`.
 # Usage: assert_encrypted <target_file> <expected_content>
-# Requires $PASSWORD to be set in the calling test.
+# Requires the test to have set `obtain_password_shell_command` and $PASSWORD.
 function assert_encrypted() {
     local target_file="$1"
     local expected="$2"
 
-    if command -v 7z > /dev/null 2>&1; then
-        rm -f "$target_file"
-        7z -p"$PASSWORD" x -y "${PWD}/dotfiles/${target_file}.encrypted" > /dev/null 2>&1
-        assert_content_eq "$target_file" "$expected"
-    else
-      return 0
-    fi
+    rm -f "$target_file"
+    "$EXECUTABLE" decrypt "$PWD/dotfiles/${target_file}.encrypted" -o "$target_file" > /dev/null 2>&1
+    assert_content_eq "$target_file" "$expected"
 }
 export -f assert_encrypted
 

@@ -546,7 +546,7 @@ fn execute_pull_task(
             Ok(true)
         },
         PullTask::Decrypt(target_file, source_file) => {
-            match dfm::crypt::read_zip_file(settings, source_file, target_file) {
+            match dfm::crypt::read_encrypted_file(settings, source_file, target_file) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
                     warn!("skipping unreadable path {:?}: {}", target_file, e);

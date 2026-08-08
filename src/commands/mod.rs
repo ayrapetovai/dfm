@@ -1,5 +1,6 @@
 pub(crate) mod add;
 pub(crate) mod config;
+pub(crate) mod encrypt;
 pub(crate) mod forget;
 pub(crate) mod ignore;
 pub(crate) mod init;
@@ -11,6 +12,7 @@ pub(crate) mod status;
 
 pub(crate) use add::add_command;
 pub(crate) use config::config_command;
+pub(crate) use encrypt::{encrypt_command, decrypt_command};
 pub(crate) use forget::forget_command;
 pub(crate) use ignore::ignore_command;
 pub(crate) use init::init_command;
@@ -22,6 +24,7 @@ pub(crate) use status::status_command;
 
 pub(crate) use add::AddArgs;
 pub(crate) use config::ConfigArgs;
+pub(crate) use encrypt::{EncryptArgs, DecryptArgs};
 pub(crate) use forget::ForgetArgs;
 pub(crate) use ignore::IgnoreArgs;
 pub(crate) use init::InitArgs;
@@ -421,7 +424,7 @@ pub(crate) fn run_merge(
     let result_path = merge_dir.join(format!("result.{}", file_name));
     fs::copy(target_abs_path, &target_path).map_err(|e| io_copy_err(target_abs_path, &target_path, e))?;
     if source_is_encrypted {
-        dfm::crypt::read_zip_file(settings, source_abs_path, &source_path)?;
+        dfm::crypt::read_encrypted_file(settings, source_abs_path, &source_path)?;
     } else {
         fs::copy(source_abs_path, &source_path).map_err(|e| io_copy_err(source_abs_path, &source_path, e))?;
     }
@@ -462,7 +465,7 @@ pub(crate) fn run_merge(
 
     // Copy the merged result to BOTH the source and the target
     if source_is_encrypted {
-        dfm::crypt::write_zip_file(settings, &result_path, source_abs_path)?;
+        dfm::crypt::write_encrypted_file(settings, &result_path, source_abs_path)?;
     } else {
         fs::copy(&result_path, source_abs_path).map_err(|e| io_copy_err(&result_path, source_abs_path, e))?;
     }

@@ -506,7 +506,7 @@ fn execute_add_task(
             Ok(true)
         },
         AddTask::CopyEncryptedFile(target_file, source_file) => {
-            match dfm::crypt::write_zip_file(settings, target_file, source_file) {
+            match dfm::crypt::write_encrypted_file(settings, target_file, source_file) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
                     warn!("skipping unreadable path {:?}: {}", target_file, e);

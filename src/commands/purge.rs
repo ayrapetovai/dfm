@@ -241,7 +241,7 @@ fn replace_managed_symlinks(
         }
 
         let copy_result = if pointee_abs.to_str().unwrap_or("").ends_with(&settings.encrypted_postfix) {
-            dfm::crypt::read_zip_file(settings, &pointee_abs, &target_abs)
+            dfm::crypt::read_encrypted_file(settings, &pointee_abs, &target_abs)
         } else {
             fs::copy(&pointee_abs, &target_abs).map_err(DfmError::from).map(|_| ())
         };
