@@ -1,11 +1,11 @@
-use std::process::{Command, Stdio};
+use crate::DfmError;
+use log::debug;
 use std::fs;
 use std::io::{Cursor, Write};
-use crate::DfmError;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use log::debug;
 use zip::ZipArchive;
 
 use crate::{Settings, file_path_relative_to, io_err};
@@ -49,10 +49,15 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
         return Ok(pw);
     }
 
-    debug!("get password command is set to {:?}", settings.obtain_password_shell_command);
+    debug!(
+        "get password command is set to {:?}",
+        settings.obtain_password_shell_command
+    );
 
-    let password = if let Some(get_password_command) = settings.obtain_password_shell_command.clone() &&
-            !get_password_command.is_empty() {
+    let password = if let Some(get_password_command) =
+        settings.obtain_password_shell_command.clone()
+        && !get_password_command.is_empty()
+    {
         debug!("launching get password program");
 
         // Pipe the command to `sh` stdin instead of using `$SHELL -c` so the
@@ -71,14 +76,17 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
         let output = child.wait_with_output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DfmError::other(format!("Error (return code {}): {}", output.status.code().unwrap_or(-1), stderr)));
+            return Err(DfmError::other(format!(
+                "Error (return code {}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr
+            )));
         }
         // Most password providers (e.g. `security find-generic-password`,
         // `pass`) emit a trailing newline on stdout. Trim a single trailing
         // line terminator so the stored password matches what the user typed.
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let trimmed = stdout
-            .trim_end_matches(['\r', '\n']);
+        let trimmed = stdout.trim_end_matches(['\r', '\n']);
         trimmed.to_string()
     } else {
         debug!("using default procedure to get password");
@@ -102,9 +110,9 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 // encrypted with XChaCha20-Poly1305. Layout (all integers little-endian):
 //
 //   magic            b"DFMENC\0"     8 bytes
-//   version          u8              1 byte  (1)
+//   version          u8              1 byte
 //   header_len       u32             4 bytes
-//   header           [header_len]    variable
+//   header           [header_len]    variable (v1) / fixed 52 bytes (v2)
 //   ciphertext+tag   rest            16-byte Poly1305 tag appended
 //
 // header:
@@ -113,10 +121,20 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 //   p_cost         u32  Argon2id parallelism
 //   salt           16 bytes
 //   nonce          24 bytes (XChaCha20 nonce)
+//
+// plaintext (encrypted):
+//   metadata_len   u32  length of the metadata section that follows
+//   metadata             inner_name + file_mode + dir entries (see below)
+//   content              the plaintext file bytes
+//
+// metadata:
 //   inner_name     u16 len + UTF-8  (target-relative path of the plaintext)
 //   file_mode      u32  unix permissions of the plaintext
 //   dir_count      u16
 //     per entry: dir_name u16 len + UTF-8 bytes, dir_mode u32
+//
+// Filenames, modes and directory structure are encrypted together with the
+// content, so nothing about the payload is visible without the password.
 //
 // The header is the AEAD "additional data": a tampered header fails
 // authentication, and a wrong password produces a tag mismatch that dfm uses
@@ -125,7 +143,7 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 // ---------------------------------------------------------------------------
 
 const MAGIC: &[u8; 7] = b"DFMENC\x00";
-const FORMAT_VERSION: u8 = 1;
+const FORMAT_VERSION: u8 = 2;
 
 // Argon2id cost parameters. 64 MiB / 3 iterations / 4 lanes: each password
 // guess costs ~64 MiB of memory and measurable CPU, which makes brute-forcing
@@ -176,13 +194,15 @@ impl From<DfmError> for DecryptError {
 }
 
 fn read_u16_le(data: &[u8], pos: usize) -> Result<u16, DfmError> {
-    let slice = data.get(pos..pos + 2)
+    let slice = data
+        .get(pos..pos + 2)
         .ok_or_else(|| DfmError::InvalidData("encrypted header is truncated".into()))?;
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
 fn read_u32_le(data: &[u8], at: usize) -> Result<u32, DfmError> {
-    let slice = data.get(at..at + 4)
+    let slice = data
+        .get(at..at + 4)
         .ok_or_else(|| DfmError::InvalidData("encrypted header is truncated".into()))?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
@@ -205,7 +225,9 @@ fn take_string(data: &[u8], pos: &mut usize) -> Result<String, DfmError> {
     let len = read_u16_le(data, *pos)? as usize;
     *pos += 2;
     if *pos + len > data.len() {
-        return Err(DfmError::InvalidData("encrypted header is truncated".into()));
+        return Err(DfmError::InvalidData(
+            "encrypted header is truncated".into(),
+        ));
     }
     let s = std::str::from_utf8(&data[*pos..*pos + len])
         .map_err(|_| DfmError::InvalidData("non-UTF-8 string in encrypted header".into()))?
@@ -215,16 +237,29 @@ fn take_string(data: &[u8], pos: &mut usize) -> Result<String, DfmError> {
 }
 
 /// Derive the symmetric key from the password exactly as the archive declares.
-fn derive_key(password: &str, salt: &[u8], m_cost: u32, t_cost: u32, p_cost: u32) -> Result<[u8; KEY_LEN], DfmError> {
+fn derive_key(
+    password: &str,
+    salt: &[u8],
+    m_cost: u32,
+    t_cost: u32,
+    p_cost: u32,
+) -> Result<[u8; KEY_LEN], DfmError> {
     use argon2::{Algorithm, Argon2, Params, Version};
     let params = Params::new(m_cost, t_cost, p_cost, Some(KEY_LEN)).map_err(DfmError::other)?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = [0u8; KEY_LEN];
-    argon.hash_password_into(password.as_bytes(), salt, &mut key).map_err(DfmError::other)?;
+    argon
+        .hash_password_into(password.as_bytes(), salt, &mut key)
+        .map_err(DfmError::other)?;
     Ok(key)
 }
 
 /// Build a self-contained encrypted blob for `content`.
+///
+/// The public header holds only what the decryptor needs before the key
+/// exists (KDF params, salt, nonce). Filename, file mode and directory
+/// metadata are serialized into the plaintext and encrypted together with the
+/// content, so nothing about the payload is visible without the password.
 pub fn encrypt_bytes(
     password: &str,
     content: &[u8],
@@ -249,17 +284,32 @@ pub fn encrypt_bytes(
     put_u32(&mut header, KDF_P_COST);
     header.extend_from_slice(&salt);
     header.extend_from_slice(&nonce);
-    push_string(&mut header, inner_name);
-    put_u32(&mut header, file_mode);
-    put_u16(&mut header, dirs.len() as u16);
+
+    // Metadata goes into the encrypted plaintext, prefixed by its length so
+    // the decryptor knows where metadata ends and file content begins.
+    let mut metadata: Vec<u8> = Vec::new();
+    push_string(&mut metadata, inner_name);
+    put_u32(&mut metadata, file_mode);
+    put_u16(&mut metadata, dirs.len() as u16);
     for (dir, mode) in dirs {
-        push_string(&mut header, &dir.to_string_lossy());
-        put_u32(&mut header, *mode);
+        push_string(&mut metadata, &dir.to_string_lossy());
+        put_u32(&mut metadata, *mode);
     }
+
+    let mut plaintext = Vec::with_capacity(4 + metadata.len() + content.len());
+    put_u32(&mut plaintext, metadata.len() as u32);
+    plaintext.extend_from_slice(&metadata);
+    plaintext.extend_from_slice(content);
 
     let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(DfmError::other)?;
     let blob = cipher
-        .encrypt(XNonce::from_slice(&nonce), Payload { msg: content, aad: &header })
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: &plaintext,
+                aad: &header,
+            },
+        )
         .map_err(|_| DfmError::other("encryption failed".to_string()))?;
 
     let mut out = Vec::with_capacity(12 + header.len() + blob.len());
@@ -274,65 +324,95 @@ pub fn encrypt_bytes(
 /// Parse + decrypt an encrypted blob produced by `encrypt_bytes`.
 fn decrypt_bytes(data: &[u8], password: &str) -> Result<Decrypted, DecryptError> {
     if data.len() < 12 {
-        return Err(DecryptError::Invalid(DfmError::InvalidData("encrypted file is too short".into())));
+        return Err(DecryptError::Invalid(DfmError::InvalidData(
+            "encrypted file is too short".into(),
+        )));
     }
     if &data[..7] != MAGIC {
-        return Err(DecryptError::Invalid(DfmError::InvalidData("not a dfm encrypted file (bad magic)".into())));
+        return Err(DecryptError::Invalid(DfmError::InvalidData(
+            "not a dfm encrypted file (bad magic)".into(),
+        )));
     }
-    if data[7] != FORMAT_VERSION {
+    let version = data[7];
+    if version != FORMAT_VERSION {
         return Err(DecryptError::Invalid(DfmError::InvalidData(format!(
-            "unsupported encrypted format version {}", data[7]
+            "unsupported encrypted format version {}",
+            version
         ))));
     }
     let header_len = read_u32_le(data, 8)? as usize;
     if 12 + header_len > data.len() {
-        return Err(DecryptError::Invalid(DfmError::InvalidData("encrypted header is truncated".into())));
+        return Err(DecryptError::Invalid(DfmError::InvalidData(
+            "encrypted header is truncated".into(),
+        )));
     }
     let header = &data[12..12 + header_len];
 
     if header.len() < HEADER_FIXED {
-        return Err(DecryptError::Invalid(DfmError::InvalidData("encrypted header is truncated".into())));
+        return Err(DecryptError::Invalid(DfmError::InvalidData(
+            "encrypted header is truncated".into(),
+        )));
     }
     let m_cost = read_u32_le(header, 0)?;
     let t_cost = read_u32_le(header, 4)?;
     let p_cost = read_u32_le(header, 8)?;
     let salt: [u8; SALT_LEN] = header[12..12 + SALT_LEN].try_into().unwrap();
-    let nonce: [u8; NONCE_LEN] = header[12 + SALT_LEN..12 + SALT_LEN + NONCE_LEN].try_into().unwrap();
-
-    let mut pos = HEADER_FIXED;
-    let inner_name = take_string(header, &mut pos)?;
-    let file_mode = read_u32_le(header, pos)?;
-    pos += 4;
-    let dir_count = read_u16_le(header, pos)? as usize;
-    pos += 2;
-    let mut dirs = Vec::with_capacity(dir_count);
-    for _ in 0..dir_count {
-        let name = take_string(header, &mut pos)?;
-        let mode = read_u32_le(header, pos)?;
-        pos += 4;
-        dirs.push((PathBuf::from(name), mode));
-    }
+    let nonce: [u8; NONCE_LEN] = header[12 + SALT_LEN..12 + SALT_LEN + NONCE_LEN]
+        .try_into()
+        .unwrap();
 
     let key = derive_key(password, &salt, m_cost, t_cost, p_cost)?;
     use chacha20poly1305::aead::{Aead, KeyInit, Payload};
     use chacha20poly1305::{XChaCha20Poly1305, XNonce};
     let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(DfmError::other)?;
-    let content = match cipher.decrypt(
+    let decrypted = match cipher.decrypt(
         XNonce::from_slice(&nonce),
-        Payload { msg: &data[12 + header_len..], aad: header },
+        Payload {
+            msg: &data[12 + header_len..],
+            aad: header,
+        },
     ) {
         Ok(c) => c,
         Err(_) => return Err(DecryptError::WrongPassword),
     };
 
-    Ok(Decrypted { content, file_mode, inner_name, dirs })
+    // The plaintext is: u32 metadata_len, then metadata, then the file bytes.
+    let metadata_len = read_u32_le(&decrypted, 0)? as usize;
+    if 4 + metadata_len > decrypted.len() {
+        return Err(DecryptError::Invalid(DfmError::InvalidData(
+            "encrypted metadata is truncated".into(),
+        )));
+    }
+    let metadata = &decrypted[4..4 + metadata_len];
+    let content = decrypted[4 + metadata_len..].to_vec();
+
+    let mut pos = 0;
+    let inner_name = take_string(metadata, &mut pos)?;
+    let file_mode = read_u32_le(metadata, pos)?;
+    pos += 4;
+    let dir_count = read_u16_le(metadata, pos)? as usize;
+    pos += 2;
+    let mut dirs = Vec::with_capacity(dir_count);
+    for _ in 0..dir_count {
+        let name = take_string(metadata, &mut pos)?;
+        let mode = read_u32_le(metadata, pos)?;
+        pos += 4;
+        dirs.push((PathBuf::from(name), mode));
+    }
+    Ok(Decrypted {
+        content,
+        file_mode,
+        inner_name,
+        dirs,
+    })
 }
 
 /// Ancestors of a `target_dir`-relative path, shallowest first. For `a/b/c`
 /// this yields `[a, a/b]`; a file directly in the target root yields none.
 fn enclosing_dirs(rel: &Path) -> Vec<PathBuf> {
     if let Some(parent) = rel.parent() {
-        parent.components()
+        parent
+            .components()
             .filter_map(|c| match c {
                 std::path::Component::Normal(c) => Some(c),
                 _ => None,
@@ -352,7 +432,8 @@ fn enclosing_dirs(rel: &Path) -> Vec<PathBuf> {
 /// e.g. a 0700 SSH directory.
 fn enclosing_dirs_with_modes(settings: &Settings, inner_name: &Path) -> Vec<(PathBuf, u32)> {
     let target_dir_path = PathBuf::from(&settings.target_dir);
-    enclosing_dirs(inner_name).into_iter()
+    enclosing_dirs(inner_name)
+        .into_iter()
         .filter_map(|dir_rel| {
             let dir_abs = target_dir_path.join(&dir_rel);
             fs::metadata(&dir_abs)
@@ -369,7 +450,11 @@ fn enclosing_dirs_with_modes(settings: &Settings, inner_name: &Path) -> Vec<(Pat
 /// Encrypt `target_file_path` into a new `*.encrypted` source file at
 /// `source_file_path`, recording the file's permissions and the permissions of
 /// every enclosing managed directory.
-pub fn write_encrypted_file(settings: &Settings, target_file_path: &PathBuf, source_file_path: &PathBuf) -> Result<(), DfmError> {
+pub fn write_encrypted_file(
+    settings: &Settings,
+    target_file_path: &PathBuf,
+    source_file_path: &PathBuf,
+) -> Result<(), DfmError> {
     // Ensure the parent directory exists (important when the source path has
     // subdirectories).
     if let Some(parent) = source_file_path.parent() {
@@ -389,17 +474,29 @@ pub fn write_encrypted_file(settings: &Settings, target_file_path: &PathBuf, sou
 
     let password = obtain_password(settings)?;
     let content = fs::read(target_file_path).map_err(|e| io_err(target_file_path, e))?;
-    let blob = encrypt_bytes(&password, &content, target_file_permissions.mode(), &inner_name, &dirs)?;
+    let blob = encrypt_bytes(
+        &password,
+        &content,
+        target_file_permissions.mode(),
+        &inner_name,
+        &dirs,
+    )?;
 
-    let mut out = std::fs::File::create(source_file_path).map_err(|e| io_err(source_file_path, e))?;
-    out.write_all(&blob).map_err(|e| io_err(source_file_path, e))?;
+    let mut out =
+        std::fs::File::create(source_file_path).map_err(|e| io_err(source_file_path, e))?;
+    out.write_all(&blob)
+        .map_err(|e| io_err(source_file_path, e))?;
     Ok(())
 }
 
 /// Decrypt an encrypted source file (new dfm format or legacy zip archive)
 /// and write the plaintext to `target_file_path`, recreating enclosing
 /// directory permissions recorded at encrypt time.
-pub fn read_encrypted_file(settings: &Settings, source_file_path: &PathBuf, target_file_path: &PathBuf) -> Result<(), DfmError> {
+pub fn read_encrypted_file(
+    settings: &Settings,
+    source_file_path: &PathBuf,
+    target_file_path: &PathBuf,
+) -> Result<(), DfmError> {
     // Ensure the target parent directory exists.
     if let Some(parent) = target_file_path.parent() {
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
@@ -424,7 +521,10 @@ pub fn read_encrypted_file(settings: &Settings, source_file_path: &PathBuf, targ
             }
             Err(DecryptError::WrongPassword) if !already_retried => {
                 clear_password_cache();
-                eprintln!("wrong password for {:?}, please try again.", source_file_path);
+                eprintln!(
+                    "wrong password for {:?}, please try again.",
+                    source_file_path
+                );
                 already_retried = true;
                 continue;
             }
@@ -458,15 +558,19 @@ fn restore_target(
     for (dir_rel, mode) in &decrypted.dirs {
         let dir_abs = target_root.join(dir_rel);
         fs::create_dir_all(&dir_abs).map_err(|e| io_err(&dir_abs, e))?;
-        fs::set_permissions(&dir_abs, fs::Permissions::from_mode(*mode)).map_err(|e| io_err(&dir_abs, e))?;
+        fs::set_permissions(&dir_abs, fs::Permissions::from_mode(*mode))
+            .map_err(|e| io_err(&dir_abs, e))?;
     }
 
     if let Some(parent) = target_file_path.parent() {
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
     fs::write(target_file_path, &decrypted.content).map_err(|e| io_err(target_file_path, e))?;
-    fs::set_permissions(target_file_path, fs::Permissions::from_mode(decrypted.file_mode))
-        .map_err(|e| io_err(target_file_path, e))?;
+    fs::set_permissions(
+        target_file_path,
+        fs::Permissions::from_mode(decrypted.file_mode),
+    )
+    .map_err(|e| io_err(target_file_path, e))?;
     Ok(())
 }
 
@@ -477,10 +581,18 @@ fn restore_target(
 /// Encrypt `input_path` into `output_path` (a standalone file, not bound to a
 /// target directory). The recorded inner name is the plain filename and no
 /// directory-permission metadata is emitted.
-pub fn encrypt_file_standalone(settings: &Settings, input_path: &PathBuf, output_path: &PathBuf) -> Result<(), DfmError> {
-    let file_mode = fs::metadata(input_path).map_err(|e| io_err(input_path, e))?.permissions().mode();
+pub fn encrypt_file_standalone(
+    settings: &Settings,
+    input_path: &PathBuf,
+    output_path: &PathBuf,
+) -> Result<(), DfmError> {
+    let file_mode = fs::metadata(input_path)
+        .map_err(|e| io_err(input_path, e))?
+        .permissions()
+        .mode();
     let content = fs::read(input_path).map_err(|e| io_err(input_path, e))?;
-    let inner_name = input_path.file_name()
+    let inner_name = input_path
+        .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| input_path.to_string_lossy().into_owned());
 
@@ -499,14 +611,21 @@ pub fn encrypt_file_standalone(settings: &Settings, input_path: &PathBuf, output
 /// Decrypt an encrypted standalone file `input_path` into `output_path`.
 /// Directory-permission metadata (if any) is applied relative to the output
 /// file's parent directory.
-pub fn decrypt_file_standalone(settings: &Settings, input_path: &PathBuf, output_path: &PathBuf) -> Result<(), DfmError> {
+pub fn decrypt_file_standalone(
+    settings: &Settings,
+    input_path: &PathBuf,
+    output_path: &PathBuf,
+) -> Result<(), DfmError> {
     let source_data = fs::read(input_path).map_err(|e| io_err(input_path, e))?;
 
     if source_data.len() >= 2 && &source_data[..2] == b"PK" {
         return read_zip_file(settings, input_path, output_path);
     }
 
-    let target_root = output_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let target_root = output_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
 
     let mut already_retried = false;
     loop {
@@ -542,7 +661,11 @@ pub fn decrypt_file_standalone(settings: &Settings, input_path: &PathBuf, output
 // New writes use the Argon2id + XChaCha20-Poly1305 format above.
 // ---------------------------------------------------------------------------
 
-fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file_path: &PathBuf) -> Result<(), DfmError> {
+fn read_zip_file(
+    settings: &Settings,
+    source_zip_path: &PathBuf,
+    target_file_path: &PathBuf,
+) -> Result<(), DfmError> {
     let archive_bytes = fs::read(source_zip_path).map_err(|e| io_err(source_zip_path, e))?;
 
     // The legacy archive holds one encrypted file entry plus a non-encrypted
@@ -574,7 +697,10 @@ fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file_pat
                 Ok(f) => f,
                 Err(zip::result::ZipError::InvalidPassword) if !already_retried => {
                     clear_password_cache();
-                    eprintln!("wrong password for {:?}, please try again.", source_zip_path);
+                    eprintln!(
+                        "wrong password for {:?}, please try again.",
+                        source_zip_path
+                    );
                     already_retried = true;
                     break;
                 }
@@ -597,11 +723,13 @@ fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file_pat
             if let Some(parent) = target_file_path.parent() {
                 fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
             }
-            let mut output_file = std::fs::File::create(target_file_path)
+            let mut output_file =
+                std::fs::File::create(target_file_path).map_err(|e| io_err(target_file_path, e))?;
+            std::io::copy(&mut zip_file, &mut output_file)
                 .map_err(|e| io_err(target_file_path, e))?;
-            std::io::copy(&mut zip_file, &mut output_file).map_err(|e| io_err(target_file_path, e))?;
             if let Some(perms) = permissions {
-                fs::set_permissions(target_file_path, perms).map_err(|e| io_err(target_file_path, e))?;
+                fs::set_permissions(target_file_path, perms)
+                    .map_err(|e| io_err(target_file_path, e))?;
             }
             wrote_file = true;
             break;
@@ -623,8 +751,8 @@ fn read_zip_file(settings: &Settings, source_zip_path: &PathBuf, target_file_pat
 
 fn default_read_password() -> Result<String, DfmError> {
     let config = rpassword::ConfigBuilder::new()
-         .password_feedback_mask('*')
-         .build();
+        .password_feedback_mask('*')
+        .build();
 
     rpassword::read_password_with_config(config)
         .map_err(|e| DfmError::other(format!("failed to read password: {}", e)))
@@ -659,7 +787,10 @@ mod tests {
     #[test]
     fn wrong_password_fails() {
         let blob = encrypt_bytes("one", b"data", 0o644, "a", &[]).unwrap();
-        assert!(matches!(decrypt_bytes(&blob, "two"), Err(DecryptError::WrongPassword)));
+        assert!(matches!(
+            decrypt_bytes(&blob, "two"),
+            Err(DecryptError::WrongPassword)
+        ));
     }
 
     #[test]
@@ -668,7 +799,10 @@ mod tests {
         // Flip a bit inside the header (in the header_len field region).
         let mut tampered = blob.clone();
         tampered[9] ^= 0x01;
-        assert!(matches!(decrypt_bytes(&tampered, "pw"), Err(DecryptError::Invalid(_))));
+        assert!(matches!(
+            decrypt_bytes(&tampered, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
     }
 
     #[test]
@@ -677,6 +811,48 @@ mod tests {
         let mut tampered = blob.clone();
         let last = tampered.len() - 1;
         tampered[last] ^= 0x01;
-        assert!(matches!(decrypt_bytes(&tampered, "pw"), Err(DecryptError::WrongPassword)));
+        assert!(matches!(
+            decrypt_bytes(&tampered, "pw"),
+            Err(DecryptError::WrongPassword)
+        ));
+    }
+
+    #[test]
+    fn metadata_not_visible_in_blob() {
+        let content = b"super-secret-content".to_vec();
+        let mut dirs = Vec::new();
+        dirs.push((PathBuf::from("private"), 0o700));
+        let blob = encrypt_bytes("pw", &content, 0o600, "private/secret.txt", &dirs).unwrap();
+
+        // Neither the inner filename, its directory, nor the plaintext content
+        // may appear in the encrypted blob without the password.
+        for needle in ["private", "secret.txt", "super-secret-content"] {
+            let found = blob.windows(needle.len()).any(|w| w == needle.as_bytes());
+            assert!(
+                !found,
+                "metadata/content leaked: {:?} found in blob",
+                needle
+            );
+        }
+
+        // The metadata must be recoverable with the right password.
+        let dec = decrypt_bytes(&blob, "pw").unwrap();
+        assert_eq!(dec.inner_name, "private/secret.txt");
+        assert_eq!(dec.dirs, dirs);
+        assert_eq!(dec.content, content);
+    }
+
+    #[test]
+    fn rejects_old_version() {
+        // A v1 blob (metadata in the plaintext header) must be rejected.
+        let blob = encrypt_bytes("pw", b"data", 0o644, "a", &[]).unwrap();
+        let mut v1 = blob.clone();
+        v1[7] = 1;
+        assert!(matches!(
+            decrypt_bytes(&v1, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
     }
 }
+
+
