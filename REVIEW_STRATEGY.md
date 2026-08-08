@@ -1,13 +1,22 @@
 Review source code and integrations tests for:
-- best practices.
-- duplicated code.
+- best practices and development patterns for Rust are used.
+- no code is duplicated.
 - robust error handling.
-- logs do not hide the case of error.
-- security, cryptographic stability, the encrypted files could be published to public repositories.
+- clear and generalized code-structure, common for all subcommands.
+- logs do not hide the case of error, every step is logged with debug level.
+- security, cryptographic stability, the encrypted files could be published to public repositories. No command injection and no root access are possible.
 - ergonomics, all behavior is expected according to the best practices of CLI tools.
 - safety, no information outside the source or target directories could be corrupted. No unmanaged information could be overwritten without explicit command.
 - documents, license, manual, help subcommand.
-- tests could not corrupt files outside the testing directory.
+- tests must not corrupt files outside the testing directory.
+- comments are concise and not bloated, no useless commented dashes like '//-------', or other non-informative separators.
+- the code is clear to understand for human and for AI LLM.
+- context.txt file is up to date with the source code logic, it is optimised for AI does not need to parse a lot of source code to learn the project.
+- README.md is up to date with the source code logic.
+- all subcommand work as 'all or nothing', if some operation fails than all other files (and preferable all files) are not changed.
+- the program's binary being built as release dos not contain debug info, is self contained, is optimised, encryption library is build for production.
+- During handling big amount of files of files of big size, no data is accumulated in memory, no memory leaks.
 
+Step throw these points several times one-by-one.
 Write a result of the review into file REVIEW.md.
 
