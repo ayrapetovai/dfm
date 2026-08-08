@@ -131,8 +131,22 @@ const FORMAT_VERSION: u8 = 1;
 // guess costs ~64 MiB of memory and measurable CPU, which makes brute-forcing
 // a weak password far more expensive than the old fast-hash-and-zip scheme.
 // Parameters are stored per-archive, so raising them later stays compatible.
+// Argon2id parameters. Debug builds (cargo build / cargo test) use weak params
+// so the encryption tests run fast; release builds use production-strength
+// params. The header records whichever params were used, so files stay
+// self-describing and decryptable across build profiles.
+#[cfg(debug_assertions)]
+const KDF_M_COST_KIB: u32 = 8192;
+#[cfg(debug_assertions)]
+const KDF_T_COST: u32 = 1;
+#[cfg(debug_assertions)]
+const KDF_P_COST: u32 = 1;
+
+#[cfg(not(debug_assertions))]
 const KDF_M_COST_KIB: u32 = 65536;
+#[cfg(not(debug_assertions))]
 const KDF_T_COST: u32 = 3;
+#[cfg(not(debug_assertions))]
 const KDF_P_COST: u32 = 4;
 
 const SALT_LEN: usize = 16;
