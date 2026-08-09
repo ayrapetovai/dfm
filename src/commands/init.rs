@@ -26,6 +26,7 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
     debug!("init with source path {:?}", path_to_source);
     debug!("init with target path {:?}", path_to_target_opt);
 
+    #[allow(clippy::enum_variant_names)]
     enum InitTask {
         CreateSourceRootFile(PathBuf),
         CreateSourceIgnoreFile(),
@@ -63,16 +64,38 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
 
     let mut source_directory_pointer = path_to_source.join(".dfm_root");
     let source_dir_path = if source_directory_pointer.exists() {
+        const MAX_POINTER_HOPS: u32 = 8;
+        let mut hops: u32 = 0;
         loop {
+            hops += 1;
+            if hops > MAX_POINTER_HOPS {
+                return Err(DfmError::InvalidData(format!(
+                    "too many chained {} pointers (limit {}) starting from {:?}",
+                    ".dfm_root", MAX_POINTER_HOPS, source_directory_pointer
+                )));
+            }
             let pointer_content = fs::read_to_string(&source_directory_pointer)
                 .map_err(|e| io_err(&source_directory_pointer, e))?
                 .trim()
                 .to_owned();
             if pointer_content == "." {
                 break;
-            } else {
-                source_directory_pointer = source_directory_pointer.join(&pointer_content);
             }
+            // Only a plain directory name is a valid pointer target. Absolute
+            // paths, `..`, `.`, empty strings and nested paths would escape
+            // the source directory or recurse forever, so reject them.
+            let mut components = std::path::Path::new(&pointer_content).components();
+            let is_single_component = matches!(
+                components.next(),
+                Some(std::path::Component::Normal(_))
+            ) && components.next().is_none();
+            if !is_single_component {
+                return Err(DfmError::InvalidData(format!(
+                    "invalid {} pointer value {:?} in {:?}: expected a single directory name or \".\"",
+                    ".dfm_root", pointer_content, source_directory_pointer
+                )));
+            }
+            source_directory_pointer = source_directory_pointer.join(&pointer_content);
             trace!("searching .dfm_root in {:?}", source_directory_pointer);
         }
         fs::canonicalize(source_directory_pointer.parent().unwrap())?

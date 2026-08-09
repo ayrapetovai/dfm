@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use log::{debug, info};
 
@@ -183,7 +183,7 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
 /// Map a state key (source-relative path) to the target-relative path and the
 /// absolute target path, stripping the dot-prefix and the symlink/encrypted
 /// postfixes.
-fn state_key_to_target(target_dir_abs_path: &PathBuf, source_rel: &str, settings: &Settings) -> (String, PathBuf) {
+fn state_key_to_target(target_dir_abs_path: &Path, source_rel: &str, settings: &Settings) -> (String, PathBuf) {
     let target_rel = source_rel_to_target_rel(
         source_rel,
         &settings.dot_prefix,
@@ -198,8 +198,8 @@ fn state_key_to_target(target_dir_abs_path: &PathBuf, source_rel: &str, settings
 /// `.symlink` pointer file) with regular copies of the files they point to.
 fn replace_managed_symlinks(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
     state: &StateObject,
     dry_run: bool,
     errors: &mut Vec<String>,

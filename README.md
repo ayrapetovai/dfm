@@ -133,11 +133,11 @@ When traversed paths include symlinks, `add` resolves each symlink using these r
 
 | Scenario | Behavior |
 |---|---|
-| Symlink points *outside* the source directory | Create a symlink file in the source directory (with `--force` only). |
-| Symlink points to the corresponding source file | Do nothing. |
-| Symlink points to a *different* source file | Update the symlink file (with `--force` only). |
-| Symlink has an existing symlink file in source | Update the symlink file if the pointee differs. |
-| Symlink has *no* symlink file in source | Create a symlink file (with `--force` only). |
+| Symlink has an existing symlink file pointing to the correct pointee | Do nothing (already managed). |
+| Symlink has an existing symlink file pointing to a *different* pointee | Update the symlink file to the current pointee. |
+| Symlink has *no* symlink file and the pointee is outside the source directory | Create a symlink file pointing to the pointee. |
+| Symlink has *no* symlink file and the pointee is inside the source directory | Do nothing (pointee is handled as a regular file). |
+| `--force` | Always (re)create the symlink file using the current pointee, overriding the cases above. |
 
 ### 2.3 `pull`
 
@@ -367,6 +367,7 @@ Ignore patterns:
 | `LL` | Managed symlink — symlink tracked via a `.symlink` pointer file. |
 | `!!` | Ignored — file matches an ignore pattern. A fully-ignored directory is shown as a single `!! dir/` entry (with trailing slash) instead of its contents. |
 | `!L` | Ignored symlink — symlink matches an ignore pattern. |
+| `!P` | Stale pattern — ignore pattern matches no files, shown by `--unused-patterns`. |
 
 Codes are two characters: the first represents the **target** side, the second represents the **source** side. A space (` `) means "no change" on that side.
 
@@ -459,6 +460,10 @@ dfm decrypt file.encrypted [-o output]
 
 There is no external tool requirement — `dfm decrypt` (or a future re-encrypting `dfm add`) is the supported way to read `.encrypted` files.
 
+### Memory use
+
+Encryption and decryption currently hold the whole file, the encrypted block, and the decrypted plaintext in RAM (roughly a few times the file size). For typical dotfiles this is negligible; there is no hard size cap, but very large secrets (e.g. multi-GB) are better stored with a purpose-built tool. Streaming encryption is a possible future improvement (see ROADMAP).
+
 ---
 
 ## 5 Conflict detection
@@ -480,6 +485,16 @@ The algorithm:
 | No sync time recorded | **NeverSynchronized** | Record sync if content equal; require `--force` otherwise | Require `--force` |
 
 For encrypted source files, the conflict check is performed against the encrypted file's mtime; decryption is only scheduled when safe (or forced). The `dfm merge` subcommand also handles encrypted sources by decrypting, merging, and re-encrypting the result.
+
+### All-or-nothing per-run semantics
+
+Each `add`, `pull`, or `merge` run is atomic **per file**, not per run:
+
+- Files already processed remain applied if a later file fails mid-run.
+- The sync state is written **only when the whole command succeeds** (state is committed at the end via `with_state`). A failed run persists no state, so a later run re-evaluates every file from scratch.
+- `forget`/`purge` intentionally continue past per-file errors (best-effort), and `forget` persists state even on failure.
+
+This means a multi-file sync is never left half-committed in the state file, even though individual copies made during a failed run are not rolled back.
 
 ---
 

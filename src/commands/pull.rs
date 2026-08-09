@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use log::{debug, error, info, warn};
 use regex::RegexSet;
@@ -47,8 +47,8 @@ fn describe_pull_task(task: &PullTask) -> String {
 /// Pushes a `Decrypt` task or returns an error via `require_force`.
 fn handle_encrypted_timestamps(
     cmp: CompareByTimestamp,
-    source_abs: &PathBuf,
-    target_abs: &PathBuf,
+    source_abs: &Path,
+    target_abs: &Path,
     force: bool,
     tasks: &mut Vec<PullTask>,
 ) -> Result<(), DfmError> {
@@ -56,12 +56,12 @@ fn handle_encrypted_timestamps(
         CompareByTimestamp::BothModified => {
             warn!("both target and encrypted source {:?} were modified, merge needed", source_abs);
             require_force(force, "target and encrypted source have conflicting modifications")?;
-            tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+            tasks.push(PullTask::Decrypt(target_abs.to_path_buf(), source_abs.to_path_buf()));
         },
         CompareByTimestamp::NonModified => {
             if force {
                 info!("force flag set, decrypting despite no modifications");
-                tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+                tasks.push(PullTask::Decrypt(target_abs.to_path_buf(), source_abs.to_path_buf()));
             } else {
                 info!("neither target nor encrypted source were modified, no action needed, skipping...");
             }
@@ -69,16 +69,16 @@ fn handle_encrypted_timestamps(
         CompareByTimestamp::TargetModified => {
             warn!("target was modified, pulling encrypted source will overwrite those changes");
             require_force(force, "target was modified")?;
-            tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+            tasks.push(PullTask::Decrypt(target_abs.to_path_buf(), source_abs.to_path_buf()));
         },
         CompareByTimestamp::SourceModified => {
             info!("only the encrypted source was modified, decrypting...");
-            tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+            tasks.push(PullTask::Decrypt(target_abs.to_path_buf(), source_abs.to_path_buf()));
         },
         CompareByTimestamp::NeverSynchronized => {
             warn!("target {:?}\n\tand encrypted source {:?}\n\twere not synchronized.", target_abs, source_abs);
             require_force(force, "encrypted source was not synchronized")?;
-            tasks.push(PullTask::Decrypt(target_abs.clone(), source_abs.clone()));
+            tasks.push(PullTask::Decrypt(target_abs.to_path_buf(), source_abs.to_path_buf()));
         },
     }
     Ok(())
@@ -88,13 +88,14 @@ fn handle_encrypted_timestamps(
 /// directory). Returns `None` when the path was fully handled — a task was
 /// queued or the entry was skipped — and `Some(target_file_abs_path)` to fall
 /// through to regular target processing below.
+#[allow(clippy::too_many_arguments)]
 fn handle_source_path(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
-    source_file_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    source_file_abs_path: &Path,
     target_ignore_regex: &RegexSet,
-    target_ignore_file_path: &PathBuf,
+    target_ignore_file_path: &Path,
     target_must_be_symlink: bool,
     force: bool,
     state: &StateObject,
@@ -127,7 +128,7 @@ fn handle_source_path(
             return Ok(None);
         } else if source_name.ends_with(&settings.encrypted_postfix) {
             debug!("decrypting source {:?}\n\tto target {:?}", source_file_abs_path, target_file_abs_path);
-            tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path.clone()));
+            tasks.push(PullTask::Decrypt(target_file_abs_path, source_file_abs_path.to_path_buf()));
             return Ok(None);
         } else {
             if target_must_be_symlink {
@@ -135,7 +136,7 @@ fn handle_source_path(
                 tasks.push(PullTask::CreateOrUpdateSymlink(target_file_abs_path.clone(), source_file_abs_path.to_string_lossy().into_owned()));
             } else {
                 debug!("regular file creating task");
-                tasks.push(PullTask::Copy(target_file_abs_path, source_file_abs_path.clone()));
+                tasks.push(PullTask::Copy(target_file_abs_path, source_file_abs_path.to_path_buf()));
             }
             return Ok(None);
         }
@@ -168,16 +169,17 @@ fn handle_source_path(
 
 /// Handle a path resolved to the target directory. Applies the ignore check
 /// and dispatches to the existing-target or missing-target scenario.
+#[allow(clippy::too_many_arguments)]
 fn handle_target_path(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
-    target_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    target_abs_path: &Path,
     target_must_be_symlink: bool,
     force: bool,
     state: &StateObject,
     target_ignore_regex: &RegexSet,
-    target_ignore_file_path: &PathBuf,
+    target_ignore_file_path: &Path,
     tasks: &mut Vec<PullTask>,
     patterns_to_remove: &mut Vec<String>,
     error_list: &mut Vec<String>,
@@ -203,11 +205,12 @@ fn handle_target_path(
 
 /// Target path exists. Queue a symlink fix-up, an encrypted decrypt, or a
 /// plain copy, applying the conflict check for regular files.
+#[allow(clippy::too_many_arguments)]
 fn handle_existing_target(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
-    target_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    target_abs_path: &Path,
     force: bool,
     state: &StateObject,
     tasks: &mut Vec<PullTask>,
@@ -236,7 +239,7 @@ fn handle_existing_target(
                 return Ok(());
             } else {
                 info!("target symlink {:?}\n\tpoints to {},\n\tmust point to {:?}", target_abs_path, target_symlink_pointee_path.to_string_lossy(), source_file_content);
-                tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
+                tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.to_path_buf(), source_file_content));
                 return Ok(());
             }
         } else {
@@ -249,7 +252,7 @@ fn handle_existing_target(
 
         // also the case is handled when the symlink points inside the source directory but
         // to the wrong file
-        tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_string_lossy().into_owned()));
+        tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.to_path_buf(), source_file_abs_path.to_string_lossy().into_owned()));
         return Ok(());
     }
 
@@ -304,7 +307,7 @@ fn handle_existing_target(
             }
         },
     }
-    tasks.push(PullTask::Copy(target_abs_path.clone(), source_abs_path));
+    tasks.push(PullTask::Copy(target_abs_path.to_path_buf(), source_abs_path));
     Ok(())
 }
 
@@ -312,9 +315,9 @@ fn handle_existing_target(
 /// matching source variant, or error when no source exists.
 fn handle_missing_target(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
-    target_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    target_abs_path: &Path,
     target_must_be_symlink: bool,
     tasks: &mut Vec<PullTask>,
 ) -> Result<(), DfmError> {
@@ -355,9 +358,9 @@ fn handle_missing_target(
 
         info!("source {:?} will be copied\n\tto the target {:?}", source_file_abs_path, target_abs_path);
         if target_must_be_symlink {
-            tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_abs_path.to_string_lossy().into_owned()));
+            tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.to_path_buf(), source_file_abs_path.to_string_lossy().into_owned()));
         } else {
-            tasks.push(PullTask::Copy(target_abs_path.clone(), source_file_abs_path));
+            tasks.push(PullTask::Copy(target_abs_path.to_path_buf(), source_file_abs_path.to_path_buf()));
         }
         return Ok(());
     }
@@ -365,7 +368,7 @@ fn handle_missing_target(
     let source_encrypted_file_abs_path = filepath_in_source_dir(&settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path, Some(&settings.encrypted_postfix));
     if source_encrypted_file_abs_path.exists() {
         info!("encrypted source {:?} will be decrypted\n\tto the target {:?}", source_encrypted_file_abs_path, target_abs_path);
-        tasks.push(PullTask::Decrypt(target_abs_path.clone(), source_encrypted_file_abs_path));
+        tasks.push(PullTask::Decrypt(target_abs_path.to_path_buf(), source_encrypted_file_abs_path));
         return Ok(());
     }
 
@@ -373,7 +376,7 @@ fn handle_missing_target(
     if source_symlink_file_abs_path.exists() {
         info!("source symlink file {:?} will be used to create a target symlink", source_symlink_file_abs_path);
         let source_file_content = read_symlink_pointer(&source_symlink_file_abs_path)?;
-        tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.clone(), source_file_content));
+        tasks.push(PullTask::CreateOrUpdateSymlink(target_abs_path.to_path_buf(), source_file_content));
         return Ok(());
     }
 
@@ -501,7 +504,7 @@ fn execute_pull_task(
     task: &PullTask,
     settings: &Settings,
     state: &mut StateObject,
-    source_dir_abs_path: &PathBuf,
+    source_dir_abs_path: &Path,
 ) -> Result<bool, DfmError> {
     match task {
         PullTask::Copy(target_file, source_file) => {
@@ -524,17 +527,13 @@ fn execute_pull_task(
                     _ => return Err(io_err(target_symlink_file_path, e)),
                 }
             }
-            let points_to = if points_to.starts_with("./") {
-                &points_to[2..]
-            } else {
-                points_to.as_str()
-            };
+            let points_to = points_to.strip_prefix("./").unwrap_or(points_to.as_str());
             let pointee = PathBuf::from(points_to);
 
             match symlink::symlink_file(pointee, target_symlink_file_path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                    warn_unreadable(&target_symlink_file_path, &e);
+                    warn_unreadable(target_symlink_file_path, &e);
                     return Ok(false);
                 }
                 Err(e) => return Err(io_err(target_symlink_file_path, e)),

@@ -6,7 +6,7 @@ Rust CLI that syncs dotfiles between a **target** dir (usually `$HOME`) and a
 **source** dir (a git repo like `~/dotfiles`).
 
 Commands: `init`, `add` (target→source), `pull` (source→target), `merge`,
-`forget`, `purge`, `ignore`, `paths`, `config`, `status`.
+`forget`, `purge`, `ignore`, `paths`, `config`, `status`, `encrypt`, `decrypt`.
 
 Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 `-v 1` brief (default), `-v 2` info, `-v 3` debug.
@@ -16,23 +16,32 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 ```bash
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
-cargo test                             # 14 unit tests in src/lib.rs
-bash tests/launcher.sh -q              # 184 shell integration tests
+cargo test                             # 21 unit tests (lib.rs + crypt.rs)
+bash tests/launcher.sh -q              # 187 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
+cargo run --example gen-manpage        # regenerate dfm.1 (before cargo aur)
+cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
 
 ## Structure
 
 ```
-src/main.rs          clap Args/Command + dispatch; builds Xdg (microxdg), loads
-                     state+config, merges Settings, per-command typed arg structs
+src/main.rs          entry point: dispatch + state/config loading; uses clap
+                     Args/Command from dfm::cli
+src/cli.rs           pub clap Args/Command (Parser/Subcommand) shared by the
+                     binary and examples/gen-manpage.rs
 src/lib.rs           DfmError, Settings/Config/StateObject/SyncTime, path+ignore
                      helpers, list_directory, compare_files*, ProgressLine, #[test]s
-src/crypt.rs         AES-256 zip write/read, password cache, obtain_password
-src/commands/mod.rs  re-exports + shared helpers (below)
-src/commands/{add,pull,merge,forget,init,ignore,purge,config,paths,status}.rs
+src/crypt.rs         DFMENC blob (Argon2id + XChaCha20-Poly1305) encrypt/decrypt,
+                     password cache, obtain_password
+src/commands/mod.rs  re-exports + shared helpers (below); split_command
+src/commands/{add,pull,merge,forget,init,ignore,purge,config,paths,status,encrypt}.rs
+examples/gen-manpage.rs  renders dfm.1 via clap_mangen into the project root
+                     (cargo run --example gen-manpage); [package.metadata.aur]
+                     files packs it into the cargo-aur tarball and installs it
+                     to /usr/share/man/man1/dfm.1
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      184 shell tests
+tests/test_*.sh      187 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -44,7 +53,9 @@ tests/test_*.sh      184 shell tests
   `dot_prefix` ("dot_"), `symlink_postfix` (".symlink"), `encrypted_postfix`
   (".encrypted"), `force_encryption_for` (default `\.ssh`),
   `obtain_password_shell_command`, `merge_tool_command` (default
-  `vimdiff {target} {source} {result}`).
+  `vimdiff {target} {source} {result}`). `force_encryption_for` is checked
+  against `BY_DEFAULT_FORCE_ENCRYPTION_FILES` (`std::sync::LazyLock<Vec<Regex>>`,
+  default `\.ssh`).
 - **`Config`** — same fields, optional, TOML. **source_dir/target_dir are NOT
   in config** — they come from the state file.
 - **`StateObject`** — `{ source_directory, target_directory, syncs:
@@ -132,6 +143,9 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   successful add/pull `--force`, drop the matched target-ignore patterns);
   `list_directory_or_error`; `msg_dry_run()`/`msg_nothing_to_do()`;
   `read_symlink_pointer`/`symlink_pointer_matches`.
+- `split_command(cmd) -> (Option<&str>, Vec<&str>)` — whitespace-split a command
+  template into program + args; shared by `run_merge` (merge tool) and
+  `print_paged` (pager).
 - `report_progress` + `ProgressLine` — single self-overwriting stderr line
   (`\r` + pad); shown at `-v 0/1`, suppressed at `-v ≥ 2` (single gate in
   `ProgressLine::set`, no-op when `log::max_level() >= Info`). `report_progress`
@@ -197,7 +211,12 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   log (works with `$HOME` unset). Removal I/O errors aggregated at the end.
 - **`config --get|--set|--list`** — TOML properties; `--set` stores strings;
   array fields not settable.
-- **`paths`** — prints Source/Target/Config/State/Local ignore/Source ignore.
+- **`encrypt <FILE> [-o]` / `decrypt <FILE.encrypted> [-o]`** — standalone
+  (crypt.rs) DFMENC blob operations, outside the target/source workflow;
+  `decrypt` restores recorded perms. Both go through `obtain_password`.
+- **`paths`** — prints Source/Target/Config/State/Local ignore/Source ignore;
+  `unresolved` for Config/State/Local ignore when the XDG path cannot be
+  resolved (no panic with `$HOME` unset).
 - **`status [PATH...] [--short|--porcelain] [filters]`** — Phase 1
   `state.syncs` → codes; Phase 2 walk target for unmanaged/ignored files (skips
   dfm internal files: state, config, target-ignore, and anything inside the
@@ -213,6 +232,8 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   with PATHS. Codes: `--` ok, `MM` both modified, `M ` target, ` M` source,
   `NM` never-synced, `!?` unpulled, `??` unmanaged, `?L` unmanaged symlink,
   `LL` managed symlink, `!!` ignored, `!L` ignored symlink, `!P` stale pattern.
+  Entries are **sorted by path** before output so every mode (porcelain/short/
+  default) is deterministic despite Phase 1 iterating a HashMap.
   `LL` shown only when the symlink's *pointee* resolves into source dir **and**
   is in state (or pointer file in state). Default view (grouped into "Changes
   to merge/add/pull", "Unpulled", "Unmanaged files", "Up to date", "Ignored",
@@ -226,17 +247,26 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 
 ## Encryption (crypt.rs)
 
-`write_zip_file`: **AES-256** (Bzip2), inner name = target-rel path, preserves
-unix perms on the file **and** records a non-encrypted directory entry for every
-enclosing directory (so a pull can restore e.g. a 0700 SSH dir); prints
-`file <path> needs an encryption password` to **stderr**. `read_zip_file`:
-walks every entry (`by_index_decrypt`), recreates those directories+perms, then
-the file entry (restoring its perms); on `InvalidPassword` clears the cache and
-re-prompts once (re-opens a fresh archive — a failed decrypt advances the
-reader). `obtain_password`: process-global `Mutex<Option<String>>` cache; if
-`obtain_password_shell_command` set, pipe it to `sh` **stdin** (not `-c`,
+`encrypt_bytes`: builds a self-contained **DFMENC** (magic `DFMENC`,
+`FORMAT_VERSION = 2`) blob. Public header: Argon2id KDF cost params
+(`m_cost` KiB, `t_cost`, `p_cost`), 16-byte salt, 24-byte nonce. Key derived
+with Argon2id (release: 64 MiB / t=3 / p=4; debug: 8 MiB / t=1 / p=1) over the
+password; payload is **XChaCha20-Poly1305** AEAD where the encrypted plaintext
+is `u32 metadata_len, metadata, content` — metadata carries the inner name,
+file mode and a non-encrypted directory entry per enclosing directory (so a
+pull restores e.g. a 0700 SSH dir). `decrypt_bytes` reads `m_cost/t_cost/p_cost`
+**and caps them** (`m_cost ≤ 16 GiB`, `t_cost ≤ 10`, `p_cost ≤ 1024`) so a
+crafted blob in a public repo cannot force an absurd Argon2 allocation on
+`pull`. Wrong password / tampered ciphertext (`decrypt` returns
+`WrongPassword`). Decryption retries once on a wrong password
+(`decrypt_blob_with_retry`: clears the cache, prints `wrong password for
+{:?}, please try again.` to stderr, re-prompts). The password cache is a
+process-global `Mutex<Option<String>>`. `obtain_password`: if
+`obtain_password_shell_command` is set, pipe it to `sh` **stdin** (not `-c`,
 invisible in `ps`) and read stdout (`trim_end_matches(['\r','\n'])` so manual
-`7z x` works); else masked `rpassword` prompt. All notices go to **stderr**.
+decrypt works); else masked `rpassword` prompt. All notices go to **stderr**.
+Files are fully buffered (a few × file size) — no streaming; see README §4
+"Memory use".
 
 ## Traversal (list_directory, lib.rs)
 
@@ -297,11 +327,14 @@ warning**, never a command failure:
 - Helpers: `assert <expr...>`, `assert_fail <cmd...>` (fails the test if the
   command *exits 0*), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
-  `assert_encrypted` (needs `7z` + `$PASSWORD`), `uuid` stub for CI.
-- Counts: **184 shell tests**, **14 Rust unit tests in src/lib.rs**
-  (`test_file_path_relative_to`, `test_remove_dots_from_path`,
+  `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
+- Counts: **187 shell tests**, **21 Rust unit tests** (14 in src/lib.rs
+  — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
-  `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`).
+  `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components` —
+  and 7 in src/crypt.rs: round-trip, wrong-password, tampered header,
+  **absurd_kdf_params_rejected**, tampered ciphertext, metadata-not-visible,
+  etc.).
   No `sealed_test` dependency.
 
 ### Testing assertions: got-it-right rule

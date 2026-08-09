@@ -51,9 +51,10 @@ fn describe_add_task(task: &AddTask) -> String {
 /// Target path is a symlink. Resolve its pointee and point the matching source
 /// symlink file at it. A fully-handled symlink never falls through to pointee
 /// processing (the pointee is discovered independently by the traversal).
+#[allow(clippy::too_many_arguments)]
 fn handle_target_symlink(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
     source_dir_abs_path: &PathBuf,
     target_path: &PathBuf,
     target_ignore_regex: &RegexSet,
@@ -162,7 +163,7 @@ fn handle_target_file(
     source_dir_abs_path: &PathBuf,
     target_path: &Path,
     target_ignore_regex: &RegexSet,
-    target_ignore_file_path: &PathBuf,
+    target_ignore_file_path: &Path,
     internal_dfm_paths: &[PathBuf],
     encryption_regex_set: &RegexSet,
     symlink: bool,
@@ -467,8 +468,8 @@ fn execute_add_task(
     task: &AddTask,
     settings: &Settings,
     state: &mut StateObject,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
 ) -> Result<bool, DfmError> {
     match task {
         AddTask::Copy(target_file, source_file) => {

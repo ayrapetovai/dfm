@@ -46,14 +46,22 @@ use regex::RegexSet;
 
 use dfm::*;
 
-// ---------------------------------------------------------------------------
+/// Split a command line template into its program and arguments. Returns
+/// `(None, [])` for an empty/whitespace-only command.
+pub(crate) fn split_command(command: &str) -> (Option<&str>, Vec<&str>) {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    match parts.split_first() {
+        Some((prog, args)) => (Some(*prog), args.to_vec()),
+        None => (None, Vec::new()),
+    }
+}
+
 // Shared state helpers
-// ---------------------------------------------------------------------------
 
 /// Compute the state key (source-relative path) for an absolute path under a
 /// root directory. This is the canonical key used throughout: `file_path_relative_to`
 /// followed by dot-normalization, lossily stringified.
-pub(crate) fn state_key_for(abs_path: &PathBuf, root: &PathBuf) -> String {
+pub(crate) fn state_key_for(abs_path: &Path, root: &Path) -> String {
     let rel = file_path_relative_to(abs_path, root);
     let rel = remove_dots_from_path(&rel);
     rel.to_string_lossy().into_owned()
@@ -62,8 +70,8 @@ pub(crate) fn state_key_for(abs_path: &PathBuf, root: &PathBuf) -> String {
 /// Get the sync time for a file, computing the state key from its absolute path.
 pub(crate) fn get_sync_time<'a>(
     state: &'a StateObject,
-    path: &PathBuf,
-    source_dir: &PathBuf,
+    path: &Path,
+    source_dir: &Path,
 ) -> Option<&'a SyncTime> {
     state.syncs.get(state_key_for(path, source_dir).as_str())
 }
@@ -71,8 +79,8 @@ pub(crate) fn get_sync_time<'a>(
 /// Remove the sync entry for a file, computing the state key from its absolute path.
 pub(crate) fn remove_sync_state(
     state: &mut StateObject,
-    path: &PathBuf,
-    source_dir: &PathBuf,
+    path: &Path,
+    source_dir: &Path,
 ) {
     state.syncs.remove(state_key_for(path, source_dir).as_str());
 }
@@ -81,9 +89,9 @@ pub(crate) fn remove_sync_state(
 /// and the target-side file.
 pub(crate) fn update_sync_state(
     state: &mut StateObject,
-    source_abs: &PathBuf,
-    target_abs: &PathBuf,
-    source_dir_abs: &PathBuf,
+    source_abs: &Path,
+    target_abs: &Path,
+    source_dir_abs: &Path,
 ) -> Result<(), DfmError> {
     let sync_creation = SystemTime::now();
     let source_rel_path = state_key_for(source_abs, source_dir_abs);
@@ -129,9 +137,7 @@ pub(crate) fn report_progress(progress: &mut ProgressLine, done: usize, total: u
     }
 }
 
-// ---------------------------------------------------------------------------
 // Shared message templates
-// ---------------------------------------------------------------------------
 
 /// Message printed when --dry-run is active.
 pub(crate) fn msg_dry_run() -> &'static str {
@@ -148,9 +154,7 @@ pub(crate) fn msg_tasks_failure(completed: usize, total: usize) -> String {
     format!("{} of {} tasks completed before failure", completed, total)
 }
 
-// ---------------------------------------------------------------------------
 // Shared symlink-pointer / source-variant helpers
-// ---------------------------------------------------------------------------
 
 /// Read a symlink pointer file's content with surrounding whitespace trimmed.
 pub(crate) fn read_symlink_pointer(pointer_file: &Path) -> Result<String, DfmError> {
@@ -177,9 +181,9 @@ pub(crate) enum SourceVariant {
 /// exists on disk, or `None` when the target has no source at all.
 pub(crate) fn resolve_source_variant(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
-    target_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    target_abs_path: &Path,
 ) -> Option<(SourceVariant, PathBuf)> {
     let plain = filepath_in_source_dir(
         &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path, None,
@@ -204,9 +208,7 @@ pub(crate) fn resolve_source_variant(
     None
 }
 
-// ---------------------------------------------------------------------------
 // Shared --dry-run / --force helpers
-// ---------------------------------------------------------------------------
 
 /// Resolve the effective dry-run value: `true` if either the per-command flag
 /// *or* the global `--dry-run` flag is set.
@@ -302,11 +304,11 @@ pub(crate) enum IgnoreHandling {
 /// returned — the caller continues.
 pub(crate) fn handle_ignore_or_override(
     target_ignore_regex: &RegexSet,
-    rel_path: &PathBuf,
+    rel_path: &Path,
     force: bool,
     patterns_to_remove: &mut Vec<String>,
-    ignored_log_target: &PathBuf,
-    ignore_file_path: &PathBuf,
+    ignored_log_target: &Path,
+    ignore_file_path: &Path,
 ) -> IgnoreHandling {
     let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, rel_path) else {
         return IgnoreHandling::NotIgnored;
@@ -329,11 +331,11 @@ pub(crate) fn handle_ignore_or_override(
 /// `source_file_in_source_dir` — the file residing in the source directory,
 /// used to compute the state key.
 pub(crate) fn sync_file_copy(
-    from: &PathBuf,
-    to: &PathBuf,
-    source_file_in_source_dir: &PathBuf,
+    from: &Path,
+    to: &Path,
+    source_file_in_source_dir: &Path,
     state: &mut StateObject,
-    source_dir_abs_path: &PathBuf,
+    source_dir_abs_path: &Path,
 ) -> Result<(), DfmError> {
     let to_parent = to
         .parent()
@@ -343,7 +345,7 @@ pub(crate) fn sync_file_copy(
 
     let permissions = from.metadata().map_err(|e| io_err(from, e))?.permissions();
     trace!("copy permissions {:o}", permissions.mode());
-    if let Err(e) = fs::set_permissions(to.clone(), permissions.clone()) {
+    if let Err(e) = fs::set_permissions(to, permissions.clone()) {
         error!("failed to set permissions {:?} to {:?}: {}", permissions.mode(), to, e);
     }
 
@@ -399,10 +401,10 @@ impl Drop for DirGuard {
 /// the sync state is updated.
 pub(crate) fn run_merge(
     settings: &Settings,
-    source_abs_path: &PathBuf,
-    target_abs_path: &PathBuf,
+    source_abs_path: &Path,
+    target_abs_path: &Path,
     state: &mut StateObject,
-    source_dir_abs_path: &PathBuf,
+    source_dir_abs_path: &Path,
 ) -> Result<(), DfmError> {
     let source_dir = PathBuf::from(&settings.source_dir);
     let merge_dir = source_dir.join(".current_merge");
@@ -437,11 +439,8 @@ pub(crate) fn run_merge(
 
     // Parse command template: first token is the program, rest are arguments
     // with {target}, {source} and {result} replaced by actual temp file paths.
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.is_empty() {
-        return Err(DfmError::Other("merge command is empty".into()));
-    }
-    let (prog, args) = parts.split_first().unwrap();
+    let (prog, args) = split_command(&command);
+    let prog = prog.ok_or_else(|| DfmError::Other("merge command is empty".into()))?;
     let target_str = target_path.to_string_lossy();
     let source_str = source_path.to_string_lossy();
     let result_str = result_path.to_string_lossy();

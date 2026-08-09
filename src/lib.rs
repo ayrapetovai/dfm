@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod crypt;
 
 use std::collections::HashMap;
@@ -12,16 +13,14 @@ use std::time::SystemTime;
 use log::{debug, trace, warn};
 use microxdg::Xdg;
 use regex::{Regex, RegexSet};
+use std::sync::LazyLock;
 use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
 use toml::{Table, Value};
 use walkdir::{DirEntry, WalkDir};
-use lazy_static::lazy_static;
 
-// ---------------------------------------------------------------------------
 // Error type
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Error)]
 pub enum DfmError {
@@ -124,10 +123,8 @@ pub const IGNORE_DIR_PROBE_CHILD: &str = "x";
 /// Sentinel leading `.` component (e.g. `./file.txt`) skipped in matching.
 pub const LEADING_DOT_COMPONENT: &str = ".";
 
-lazy_static! {
-    // file name must be relative to target directory
-    static ref BY_DEFAULT_FORCE_ENCRYPTION_FILES: Vec<Regex> = vec![Regex::from_str("\\.ssh").unwrap()];
-}
+// file name must be relative to target directory
+static BY_DEFAULT_FORCE_ENCRYPTION_FILES: LazyLock<Vec<Regex>> = LazyLock::new(|| vec![Regex::from_str("\\.ssh").unwrap()]);
 
 impl StateObject {
     pub fn new(target_directory: PathBuf, source_directory: PathBuf) -> Self {
@@ -188,20 +185,19 @@ pub fn open_or_create_target_ignore_file(xdg: &Xdg) -> Result<File, DfmError> {
     open_or_create_file(&p)
 }
 
-pub fn open_or_create_file(path_to_file: &PathBuf) -> Result<File, DfmError> {
-    Ok(OpenOptions::new()
-        .write(true)
+pub fn open_or_create_file(path_to_file: &Path) -> Result<File, DfmError> {
+    OpenOptions::new()
         .append(true)
         .create(true)
         .open(path_to_file)
-        .map_err(|e| io_err(path_to_file, e))?)
+        .map_err(|e| io_err(path_to_file, e))
 }
 
-pub fn calc_source_ignore_file(source_dir_abs_path: &PathBuf) -> PathBuf {
+pub fn calc_source_ignore_file(source_dir_abs_path: &Path) -> PathBuf {
     source_dir_abs_path.join(IGNORE_FILE_NAME_IN_SOURCE_DIR)
 }
 
-pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmError> {
+pub fn load_ignore_regex(ignore_file_path : &Path) -> Result<RegexSet, DfmError> {
     if !ignore_file_path.exists() {
         return Ok(RegexSet::empty());
     }
@@ -210,7 +206,7 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmErr
     let reader = BufReader::new(file);
     let mut patterns = vec![];
 
-    for (_, line) in reader.lines().enumerate() {
+    for line in reader.lines() {
         let line = line.map_err(|e| io_err(ignore_file_path, e))?;
         let mut prev = ' ';
         let mut end = line.len();
@@ -227,7 +223,7 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmErr
         }
     }
 
-    return if patterns.is_empty() {
+    if patterns.is_empty() {
         Ok(RegexSet::empty())
     } else {
         match RegexSet::new(patterns) {
@@ -246,7 +242,7 @@ pub fn load_ignore_regex(ignore_file_path : &PathBuf) -> Result<RegexSet, DfmErr
 /// `/home/user/.ssh/config`), not just the exact final component. Everything
 /// else (ignore files) uses `check_path_matches_regex_component_wise`, which
 /// anchors per path component.
-pub fn check_path_matches_regex_substring(regex: &RegexSet, haystack: &PathBuf) -> Option<String> {
+pub fn check_path_matches_regex_substring(regex: &RegexSet, haystack: &Path) -> Option<String> {
     let haystack = haystack.to_string_lossy();
     let matched_idx = regex.matches(haystack.as_ref()).iter().next()?;
     Some(regex.patterns()[matched_idx].to_owned())
@@ -387,7 +383,7 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
 /// file is being checked (target or source).
 pub fn check_path_matches_regex_component_wise(
     regex_set: &RegexSet,
-    haystack: &PathBuf,
+    haystack: &Path,
 ) -> Option<String> {
     let haystack_str = haystack.to_string_lossy();
     if !regex_set.matches(haystack_str.as_ref()).matched_any() {
@@ -522,11 +518,11 @@ pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<()
             return Err(DfmError::other(e));
         }
     };
-    if let Some(config_parent_directory) = path_to_config_file.parent() {
-        if !config_parent_directory.exists() {
-            fs::create_dir_all(config_parent_directory)
-                .map_err(|e| io_err(config_parent_directory, e))?;
-        }
+    if let Some(config_parent_directory) = path_to_config_file.parent()
+        && !config_parent_directory.exists()
+    {
+        fs::create_dir_all(config_parent_directory)
+            .map_err(|e| io_err(config_parent_directory, e))?;
     }
     fs::write(path_to_config_file, content).map_err(|e| io_err(path_to_config_file, e))?;
     Ok(())
@@ -563,7 +559,7 @@ pub fn calc_config_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError>{
         }
     };
 
-    return Ok(path_to_config_file);
+    Ok(path_to_config_file)
 }
 
 pub fn create_default_settings() -> Settings {
@@ -589,16 +585,14 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, DfmError> {
         }
     };
 
-    return match toml::from_str(&config_file_content) {
-        Err(e) => {
-            return Err(DfmError::other(format!(
-                "config file corrupt: {}: {}",
-                path_to_config_file.display(),
-                e
-            )));
-        },
+    match toml::from_str(&config_file_content) {
+        Err(e) => Err(DfmError::other(format!(
+            "config file corrupt: {}: {}",
+            path_to_config_file.display(),
+            e
+        ))),
         Ok(c) => Ok(c)
-    };
+    }
 }
 
 pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_object: Option<&StateObject>) -> Settings {
@@ -643,7 +637,7 @@ pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_obj
     }
 }
 
-pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &PathBuf) -> PathBuf {
+pub fn file_path_relative_to(file_abs_path: &Path, relative_to_abs_path: &Path) -> PathBuf {
     let mut target_file_rel_to_target_dir_path_opt: Option<PathBuf> = None;
     let mut path_components = Vec::new();
     for target_file_parent in file_abs_path.ancestors() {
@@ -658,19 +652,19 @@ pub fn file_path_relative_to(file_abs_path: &PathBuf, relative_to_abs_path: &Pat
     }
 
     if let Some(ret) = target_file_rel_to_target_dir_path_opt {
-        return if ret.as_os_str().is_empty() { PathBuf::from(".") } else { ret };
+        if ret.as_os_str().is_empty() { PathBuf::from(".") } else { ret }
     } else {
         let mut target_file_rel_to_target_dir_path_with_backs = file_abs_path.to_string_lossy().into_owned();
         for _ in 0..path_components.len() {
             target_file_rel_to_target_dir_path_with_backs.insert_str(0, "/..")
         }
-        target_file_rel_to_target_dir_path_with_backs.insert_str(0, ".");
+        target_file_rel_to_target_dir_path_with_backs.insert(0, '.');
         PathBuf::from(target_file_rel_to_target_dir_path_with_backs)
     }
 }
 
-pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, source_dir_abs_path: &PathBuf, target_abs_path: &PathBuf, add_postfix_opt: Option<&str>) -> PathBuf {
-    let target_file_rel_to_target_dir_path = file_path_relative_to(target_abs_path, &target_dir_abs_path);
+pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &Path, source_dir_abs_path: &Path, target_abs_path: &Path, add_postfix_opt: Option<&str>) -> PathBuf {
+    let target_file_rel_to_target_dir_path = file_path_relative_to(target_abs_path, target_dir_abs_path);
 
     trace!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
 
@@ -691,8 +685,8 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &PathBuf, s
         match component {
             Component::Normal(name) => {
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') {
-                    source_rel.push(format!("{}{}", dot_prefix, &name_str[1..]));
+                if let Some(rest) = name_str.strip_prefix('.') {
+                    source_rel.push(format!("{}{}", dot_prefix, rest));
                 } else if name_str.starts_with(dot_prefix) || name_str.starts_with('~') {
                     source_rel.push(format!("~{}", name_str));
                 } else {
@@ -844,12 +838,10 @@ pub fn calc_working_dir_paths_unchecked(settings: &Settings) -> Result<(PathBuf,
         Err(e) => return Err(DfmError::other(e)),
     };
 
-    return Ok((target_dir_abs_path, source_dir_abs_path));
+    Ok((target_dir_abs_path, source_dir_abs_path))
 }
 
-// ---------------------------------------------------------------------------
 // Single-line progress indicator
-// ---------------------------------------------------------------------------
 
 /// Renders a self-overwriting progress line on stderr.
 ///
@@ -999,14 +991,13 @@ pub fn list_directory(
             match filter {
                 None => true,
                 Some(TraversalFilter::KeepMatching(regex)) => regex.is_match(rel_str),
-                Some(TraversalFilter::PruneIgnoredDirs(regex)) => {
-                    if dir_entry.file_type().is_dir() && is_dir_ignored(regex, rel_str) {
-                        pruned_dirs.push(rel_str.to_string());
-                        false
-                    } else {
-                        true
-                    }
+                Some(TraversalFilter::PruneIgnoredDirs(regex))
+                    if dir_entry.file_type().is_dir() && is_dir_ignored(regex, rel_str) =>
+                {
+                    pruned_dirs.push(rel_str.to_string());
+                    false
                 }
+                Some(TraversalFilter::PruneIgnoredDirs(_)) => true,
             }
         };
 
@@ -1017,7 +1008,7 @@ pub fn list_directory(
             .filter_entry(keep_entry)
         {
             visited += 1;
-            if visited % TRAVERSE_PROGRESS_STEP == 0 {
+            if visited.is_multiple_of(TRAVERSE_PROGRESS_STEP) {
                 progress.set(&format!("traversing... {} entries visited", visited));
             }
             match entry {
@@ -1060,7 +1051,7 @@ pub enum CompareByTimestamp {
     NeverSynchronized,
 }
 
-pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &PathBuf, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, DfmError> {
+pub fn compare_files_by_timestamps(target_abs_path: &Path, source_abs_path: &Path, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, DfmError> {
     let target_file_meta = match target_abs_path.metadata() {
         Ok(m) => m,
         Err(e) => return Err(io_err(target_abs_path, e)),
@@ -1079,8 +1070,8 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
             return Ok(CompareByTimestamp::NeverSynchronized);
         }
     };
-    let target_file_modified = target_file_meta.modified().unwrap();
-    let source_file_modified = source_file_meta.modified().unwrap();
+    let target_file_modified = target_file_meta.modified().map_err(|e| io_err(target_abs_path, e))?;
+    let source_file_modified = source_file_meta.modified().map_err(|e| io_err(source_abs_path, e))?;
 
     debug!("current state:\n target: mtime={:?}\n source: sync={:?},\n         mtime={:?}",
              target_file_modified, source_file_synced, source_file_modified);
@@ -1119,7 +1110,7 @@ pub fn compare_files_by_timestamps(target_abs_path: &PathBuf, source_abs_path: &
 }
 
 /// SHA-256 of the file contents, hex-encoded.
-pub fn compute_sha256(path: &PathBuf) -> Result<String, DfmError> {
+pub fn compute_sha256(path: &Path) -> Result<String, DfmError> {
     use sha2::{Digest, Sha256};
     let file = fs::File::open(path).map_err(|e| io_err(path, e))?;
     let mut reader = BufReader::with_capacity(1 << 17, file);
@@ -1140,8 +1131,8 @@ pub fn compute_sha256(path: &PathBuf) -> Result<String, DfmError> {
 /// No mtime comparison is involved, so the result does not depend on
 /// filesystem timestamp granularity.
 pub fn compare_files_by_content(
-    target_abs_path: &PathBuf,
-    source_abs_path: &PathBuf,
+    target_abs_path: &Path,
+    source_abs_path: &Path,
     sync_time_opt: Option<&SyncTime>,
 ) -> Result<CompareByTimestamp, DfmError> {
     let sync = match sync_time_opt {
@@ -1165,8 +1156,8 @@ pub fn compare_files_by_content(
 /// different bytes, so hashing is meaningless), plain files by content.
 pub fn compare_files(
     encrypted_postfix: &str,
-    target_abs_path: &PathBuf,
-    source_abs_path: &PathBuf,
+    target_abs_path: &Path,
+    source_abs_path: &Path,
     sync_time_opt: Option<&SyncTime>,
 ) -> Result<CompareByTimestamp, DfmError> {
     if source_abs_path.as_os_str().to_string_lossy().ends_with(encrypted_postfix) {
@@ -1181,12 +1172,10 @@ pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str
     let config: Table = toml::from_str(&config_file_content).map_err(|e| {
         DfmError::other(format!("config file corrupt: {}: {}", path_to_config_file.display(), e))
     })?;
-    return match config.get(param_name) {
-        Some(v) => {
-            Ok(Some(v.to_string()))
-        },
+    match config.get(param_name) {
+        Some(v) => Ok(Some(v.to_string())),
         None => Ok(None)
-    };
+    }
 }
 
 pub fn write_property_to_config(path_to_config_file: &PathBuf, param_name: &str, param_new_value: &str) -> Result<(), DfmError> {
@@ -1206,7 +1195,7 @@ pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<
         DfmError::other(format!("config file corrupt: {}: {}", path_to_config_file.display(), e))
     })?;
     let mut params = vec![];
-    for (_, (name, value)) in config.iter().enumerate() {
+    for (name, value) in config.iter() {
         params.push(format!("{} = {}", name, value));
     }
     Ok(params)

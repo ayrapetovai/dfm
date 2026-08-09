@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCmd, Stdio};
 use std::io::Write;
 
@@ -12,7 +12,7 @@ use regex::RegexSet;
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{list_directory, report_progress, state_key_for};
+use super::{list_directory, report_progress, split_command, state_key_for};
 
 /// Typed, per-command arguments for `status` (built by the dispatcher).
 pub struct StatusArgs {
@@ -32,9 +32,7 @@ pub struct StatusArgs {
     pub paths: Option<Vec<PathBuf>>,
 }
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 /// Two-letter status code. The `Display` output is part of the CLI contract
 /// (`--porcelain` is stable, machine-readable) and must stay byte-identical.
@@ -111,9 +109,7 @@ struct StatusEntry {
     matched_pattern: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
 // Status command entry point
-// ---------------------------------------------------------------------------
 
 /// Resolve user-provided status paths (absolute or relative to the target
 /// directory) to absolute roots for traversal. With `None`, the whole target
@@ -125,12 +121,12 @@ struct StatusEntry {
 /// can naturally ask about a managed file by either of its two locations.
 fn resolve_status_paths(
     paths: Option<&Vec<PathBuf>>,
-    target_dir_abs: &PathBuf,
-    source_dir_abs: &PathBuf,
+    target_dir_abs: &Path,
+    source_dir_abs: &Path,
     settings: &Settings,
 ) -> Result<Vec<PathBuf>, DfmError> {
     match paths {
-        None => Ok(vec![target_dir_abs.clone()]),
+        None => Ok(vec![target_dir_abs.to_path_buf()]),
         Some(paths) => {
             let mut roots = Vec::with_capacity(paths.len());
             for p in paths {
@@ -470,6 +466,11 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // ------------------------------------------------------------------
     // Apply filters
     // ------------------------------------------------------------------
+    // Sort once here so every output mode (porcelain, short, default) is
+    // deterministic. Phase 1 iterates a HashMap and Phase 2 a walk, so without
+    // this the line order could change between runs.
+    entries.sort_by_key(|a| (a.path.clone(), a.code.to_string()));
+
     let filtered: Vec<&StatusEntry> = entries.iter().filter(|e| {
         if *conflicted && e.code != StatusCode::BothModified { return false; }
         if *modified && !e.code.is_modified() { return false; }
@@ -511,9 +512,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // Phase 2 classifiers (target directory walk)
-// ---------------------------------------------------------------------------
 
 /// A target path is a symlink. Classify it as a managed symlink (`LL`, only
 /// shown with `--all`), an ignored symlink (`!L`), or an unmanaged symlink
@@ -522,8 +521,8 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 #[allow(clippy::too_many_arguments)]
 fn classify_target_symlink(
     settings: &Settings,
-    target_dir_abs: &PathBuf,
-    source_dir_abs: &PathBuf,
+    target_dir_abs: &Path,
+    source_dir_abs: &Path,
     target_ignore_regex: &RegexSet,
     target_abs: &PathBuf,
     rel_str: &str,
@@ -561,7 +560,14 @@ fn classify_target_symlink(
         })
         .unwrap_or(false);
 
-    if pointer_in_state || pointee_in_state {
+    if pointer_in_state {
+        // Phase 1 already emitted the `LL` entry for this symlink's
+        // `*.symlink` state key (it iterates every state entry). Returning
+        // here keeps `--all` output free of duplicate lines.
+        return;
+    }
+
+    if pointee_in_state {
         if all {
             entries.push(StatusEntry {
                 code: StatusCode::ManagedSymlink,
@@ -595,10 +601,10 @@ fn classify_target_symlink(
 #[allow(clippy::too_many_arguments)]
 fn classify_target_file(
     settings: &Settings,
-    target_dir_abs: &PathBuf,
-    source_dir_abs: &PathBuf,
+    target_dir_abs: &Path,
+    source_dir_abs: &Path,
     target_ignore_regex: &RegexSet,
-    target_abs: &PathBuf,
+    target_abs: &Path,
     rel_str: &str,
     state_keys: &HashSet<String>,
     all: bool,
@@ -640,9 +646,7 @@ fn classify_target_file(
     });
 }
 
-// ---------------------------------------------------------------------------
 // Default categorized output
-// ---------------------------------------------------------------------------
 
 /// Collapse a set of paths (code, path, matched-pattern) so that a directory
 /// with ≥2 entries beneath it is shown as a single `{dir}/*` entry.
@@ -743,7 +747,7 @@ fn color_path(code: StatusCode, path: &str) -> String {
     }
 }
 
-fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &PathBuf, source_dir_abs: &PathBuf, has_managed: bool) -> String {
+fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &Path, source_dir_abs: &Path, has_managed: bool) -> String {
     let mut out = String::new();
 
     // Header — replace home directory prefix with ~
@@ -879,9 +883,7 @@ fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_p
     out
 }
 
-// ---------------------------------------------------------------------------
 // Pager
-// ---------------------------------------------------------------------------
 
 fn print_paged(output: &str) -> Result<(), DfmError> {
     // Detect terminal height
@@ -893,12 +895,14 @@ fn print_paged(output: &str) -> Result<(), DfmError> {
         // TODO create a field in config file and settings for the paging command
         // by default in config it must be 'less -FRSX', but env PAGER has the priority.
         let pager_cmd = env::var("PAGER").unwrap_or_else(|_| "less -FRSX".to_string());
-        let parts: Vec<&str> = pager_cmd.split_whitespace().collect();
-        if parts.is_empty() {
-            print!("{}", output);
-            return Ok(());
-        }
-        let (prog, args) = parts.split_first().unwrap();
+        let (prog, args) = split_command(&pager_cmd);
+        let prog = match prog {
+            Some(p) => p,
+            None => {
+                print!("{}", output);
+                return Ok(());
+            }
+        };
         let mut child = ProcessCmd::new(prog)
             .args(args)
             .stdin(Stdio::piped())
@@ -928,11 +932,9 @@ fn terminal_height() -> Option<usize> {
     None
 }
 
-// ---------------------------------------------------------------------------
 // Git integration
-// ---------------------------------------------------------------------------
 
-fn get_git_info(source_dir: &PathBuf) -> Option<String> {
+fn get_git_info(source_dir: &Path) -> Option<String> {
     let source_dir_str = source_dir.to_string_lossy();
     // Single call, not two: `--branch` emits a `## <branch>...<upstream>
     // [ahead N, behind M]` header line plus one line per uncommitted change, so
@@ -983,9 +985,7 @@ fn get_git_info(source_dir: &PathBuf) -> Option<String> {
     Some(format!("branch: {}, {}", branch, parts.join(", ")))
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Replace the home directory prefix with "~" for display.
 fn tilde_path(path: &str) -> String {

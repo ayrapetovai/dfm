@@ -26,7 +26,7 @@ enum ForgetTask {
     RemoveState(String),
 }
 
-fn source_to_state_key(source_abs: &PathBuf, source_dir_abs: &PathBuf) -> String {
+fn source_to_state_key(source_abs: &Path, source_dir_abs: &Path) -> String {
     state_key_for(source_abs, source_dir_abs)
 }
 
@@ -46,9 +46,9 @@ fn remove_source_object(source_file: &Path) -> io::Result<()> {
 /// loop falls through to pointee processing).
 fn handle_target_symlink(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
-    target_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    target_path: &Path,
     force: bool,
     tasks: &mut Vec<ForgetTask>,
 ) -> Result<bool, DfmError> {
@@ -86,8 +86,8 @@ fn handle_target_symlink(
 /// through the plain/encrypted/symlink variants.
 fn handle_missing_target(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
     target_path: &PathBuf,
     tasks: &mut Vec<ForgetTask>,
 ) -> Result<(), DfmError> {
@@ -115,15 +115,15 @@ fn handle_missing_target(
 /// Queues deletion of the source file or symlink pointer.
 fn handle_source_path(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
-    target_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    target_abs_path: &Path,
     force: bool,
     tasks: &mut Vec<ForgetTask>,
 ) -> Result<(), DfmError> {
     if !target_abs_path.to_string_lossy().ends_with(&settings.symlink_postfix) {
         info!("source {:?} will be removed", target_abs_path);
-        tasks.push(ForgetTask::Delete(target_abs_path.clone()));
+        tasks.push(ForgetTask::Delete(target_abs_path.to_path_buf()));
         return Ok(());
     }
 
@@ -187,11 +187,12 @@ fn handle_symlink_pointer(
 
 /// Target path is a regular file inside the target directory. Queue deletion
 /// of its plain/encrypted source, subject to the conflict check.
+#[allow(clippy::too_many_arguments)]
 fn handle_target_file(
     settings: &Settings,
-    target_dir_abs_path: &PathBuf,
-    source_dir_abs_path: &PathBuf,
-    target_abs_path: &PathBuf,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    target_abs_path: &Path,
     force: bool,
     state: &StateObject,
     tasks: &mut Vec<ForgetTask>,

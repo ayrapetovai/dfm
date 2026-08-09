@@ -9,7 +9,6 @@ use std::sync::Mutex;
 
 use crate::{Settings, file_path_relative_to, io_err};
 
-// ---------------------------------------------------------------------------
 // Password cache — ask only once per `dfm` process
 //
 // SECURITY NOTE: the passphrase lives in a plain `String` for the entire
@@ -19,7 +18,6 @@ use crate::{Settings, file_path_relative_to, io_err};
 // subprocess stdout / tty and passed to the cipher provider, so the cache adds
 // no new exposure beyond that. If this ever became a long-lived daemon or a
 // library, migrate to `zeroize`/`secrecy` wrapping instead of `String`.
-// ---------------------------------------------------------------------------
 
 static PASSWORD_CACHE: Mutex<Option<String>> = Mutex::new(None);
 
@@ -101,7 +99,6 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
     Ok(password)
 }
 
-// ---------------------------------------------------------------------------
 // Encrypted blob format.
 //
 // Every `*.encrypted` file is a self-describing container: the password is
@@ -139,7 +136,6 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 // authentication, and a wrong password produces a tag mismatch that dfm uses
 // to detect/retry. The KDF parameters travel in the header, so archives keep
 // decrypting even when the code defaults change later.
-// ---------------------------------------------------------------------------
 
 const MAGIC: &[u8; 7] = b"DFMENC\x00";
 const FORMAT_VERSION: u8 = 2;
@@ -166,6 +162,14 @@ const KDF_P_COST: u32 = 4;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 const KEY_LEN: usize = 32;
+
+// Upper bounds accepted when reading KDF cost parameters from an encrypted
+// blob's header. A crafted file committed to a shared repo must not be able
+// to force a multi-GiB Argon2 allocation or a huge iteration count during
+// `pull`. These caps are far above any legitimate value.
+const MAX_KDF_M_COST_KIB: u32 = 16 * 1024 * 1024; // 16 GiB
+const MAX_KDF_T_COST: u32 = 10;
+const MAX_KDF_P_COST: u32 = 1024;
 
 const HEADER_FIXED: usize = 12 + SALT_LEN + NONCE_LEN;
 
@@ -352,6 +356,12 @@ fn decrypt_bytes(data: &[u8], password: &str) -> Result<Decrypted, DecryptError>
     let m_cost = read_u32_le(header, 0)?;
     let t_cost = read_u32_le(header, 4)?;
     let p_cost = read_u32_le(header, 8)?;
+    if m_cost > MAX_KDF_M_COST_KIB || t_cost > MAX_KDF_T_COST || p_cost > MAX_KDF_P_COST {
+        return Err(DecryptError::Invalid(DfmError::InvalidData(format!(
+            "unreasonable KDF parameters in encrypted header: m_cost={}, t_cost={}, p_cost={}",
+            m_cost, t_cost, p_cost
+        ))));
+    }
     let salt: [u8; SALT_LEN] = header[12..12 + SALT_LEN].try_into().unwrap();
     let nonce: [u8; NONCE_LEN] = header[12 + SALT_LEN..12 + SALT_LEN + NONCE_LEN]
         .try_into()
@@ -439,17 +449,15 @@ fn enclosing_dirs_with_modes(settings: &Settings, inner_name: &Path) -> Vec<(Pat
         .collect()
 }
 
-// ---------------------------------------------------------------------------
 // Public writer/reader used by add / pull / merge / purge.
-// ---------------------------------------------------------------------------
 
 /// Encrypt `target_file_path` into a new `*.encrypted` source file at
 /// `source_file_path`, recording the file's permissions and the permissions of
 /// every enclosing managed directory.
 pub fn write_encrypted_file(
     settings: &Settings,
-    target_file_path: &PathBuf,
-    source_file_path: &PathBuf,
+    target_file_path: &Path,
+    source_file_path: &Path,
 ) -> Result<(), DfmError> {
     // Ensure the parent directory exists (important when the source path has
     // subdirectories).
@@ -490,8 +498,8 @@ pub fn write_encrypted_file(
 /// encrypt time.
 pub fn read_encrypted_file(
     settings: &Settings,
-    source_file_path: &PathBuf,
-    target_file_path: &PathBuf,
+    source_file_path: &Path,
+    target_file_path: &Path,
 ) -> Result<(), DfmError> {
     // Ensure the target parent directory exists.
     if let Some(parent) = target_file_path.parent() {
@@ -574,9 +582,7 @@ fn restore_target(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // Standalone `dfm encrypt` / `dfm decrypt` commands.
-// ---------------------------------------------------------------------------
 
 /// Encrypt `input_path` into `output_path` (a standalone file, not bound to a
 /// target directory). The recorded inner name is the plain filename and no
@@ -613,8 +619,8 @@ pub fn encrypt_file_standalone(
 /// file's parent directory.
 pub fn decrypt_file_standalone(
     settings: &Settings,
-    input_path: &PathBuf,
-    output_path: &PathBuf,
+    input_path: &Path,
+    output_path: &Path,
 ) -> Result<(), DfmError> {
     let source_data = fs::read(input_path).map_err(|e| io_err(input_path, e))?;
 
@@ -643,9 +649,7 @@ mod tests {
     fn encrypt_decrypt_roundtrip() {
         let password = "correct horse battery staple";
         let content = b"the quick brown fox jumps over the lazy dog".to_vec();
-        let mut dirs = Vec::new();
-        dirs.push((PathBuf::from("private"), 0o700));
-        dirs.push((PathBuf::from("private/sub"), 0o710));
+        let dirs = vec![(PathBuf::from("private"), 0o700), (PathBuf::from("private/sub"), 0o710)];
 
         let blob = encrypt_bytes(password, &content, 0o600, "private/sub/f.conf", &dirs).unwrap();
 
@@ -683,6 +687,28 @@ mod tests {
     }
 
     #[test]
+    fn absurd_kdf_params_rejected() {
+        let blob = encrypt_bytes("pw", b"data", 0o644, "a", &[]).unwrap();
+        // m_cost lives at blob offset 12 (right after magic/version/header_len).
+        // Set it to a multi-GiB value: decryption must fail fast with Invalid
+        // rather than attempt the Argon2 allocation.
+        let mut tampered = blob.clone();
+        tampered[12..16].copy_from_slice(&(MAX_KDF_M_COST_KIB + 1).to_le_bytes());
+        assert!(matches!(
+            decrypt_bytes(&tampered, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
+
+        // Same for an excessive t_cost (offset 16).
+        let mut tampered = blob.clone();
+        tampered[16..20].copy_from_slice(&(MAX_KDF_T_COST + 1).to_le_bytes());
+        assert!(matches!(
+            decrypt_bytes(&tampered, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
+    }
+
+    #[test]
     fn tampered_ciphertext_fails() {
         let blob = encrypt_bytes("pw", b"data", 0o644, "a", &[]).unwrap();
         let mut tampered = blob.clone();
@@ -697,8 +723,7 @@ mod tests {
     #[test]
     fn metadata_not_visible_in_blob() {
         let content = b"super-secret-content".to_vec();
-        let mut dirs = Vec::new();
-        dirs.push((PathBuf::from("private"), 0o700));
+        let dirs = vec![(PathBuf::from("private"), 0o700)];
         let blob = encrypt_bytes("pw", &content, 0o600, "private/secret.txt", &dirs).unwrap();
 
         // Neither the inner filename, its directory, nor the plaintext content

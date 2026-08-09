@@ -15,6 +15,10 @@ dfm status --all 2>/dev/null | grep -qF "LL  linked.txt"
 dfm status --short --all 2>/dev/null | grep -q "^LL linked.txt$"
 dfm status --porcelain --all 2>/dev/null | grep -q $'^LL\tlinked.txt$'
 
+# Each managed symlink must be reported exactly once across short/porcelain
+assert $(( $(dfm status --short --all 2>/dev/null | grep -c "^LL linked.txt$") )) -eq 1
+assert $(( $(dfm status --porcelain --all 2>/dev/null | grep -c $'^LL\tlinked.txt$') )) -eq 1
+
 # LL should NOT appear in default status (just like --)
 ! dfm status 2>/dev/null | grep -q "linked.txt"
 
