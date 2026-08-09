@@ -19,27 +19,28 @@ cargo build --release                  # panic=abort, opt-level z, lto fat
 cargo test                             # 21 unit tests (lib.rs + crypt.rs)
 bash tests/launcher.sh -q              # 187 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
-cargo run --example gen-manpage        # regenerate dfm.1 (before cargo aur)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
+
+Build.rs renders `dfm.1` (via clap_mangen) into target/<profile>/dfm.1 on every
+build; `cargo aur`'s release build puts it at target/release/dfm.1, which
+`[package.metadata.aur] files` packs and installs to /usr/share/man/man1/dfm.1.
 
 ## Structure
 
 ```
 src/main.rs          entry point: dispatch + state/config loading; uses clap
                      Args/Command from dfm::cli
-src/cli.rs           pub clap Args/Command (Parser/Subcommand) shared by the
-                     binary and examples/gen-manpage.rs
+src/cli.rs           pub clap Args/Command (Parser/Subcommand); included by
+                     build.rs via #[path]
 src/lib.rs           DfmError, Settings/Config/StateObject/SyncTime, path+ignore
                      helpers, list_directory, compare_files*, ProgressLine, #[test]s
 src/crypt.rs         DFMENC blob (Argon2id + XChaCha20-Poly1305) encrypt/decrypt,
                      password cache, obtain_password
+build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
+                     included cli.rs; build-deps clap + clap_mangen
 src/commands/mod.rs  re-exports + shared helpers (below); split_command
 src/commands/{add,pull,merge,forget,init,ignore,purge,config,paths,status,encrypt}.rs
-examples/gen-manpage.rs  renders dfm.1 via clap_mangen into the project root
-                     (cargo run --example gen-manpage); [package.metadata.aur]
-                     files packs it into the cargo-aur tarball and installs it
-                     to /usr/share/man/man1/dfm.1
 tests/launcher.sh    runner (exports helper functions)
 tests/test_*.sh      187 shell tests
 ```

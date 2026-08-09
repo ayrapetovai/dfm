@@ -12,22 +12,16 @@ cargo install cargo-aur
 
 ### Generate the man page
 
-The man page is generated from the CLI definition with `clap_mangen`:
-
-```shell
-# from project root
-cargo run --example gen-manpage
-```
-
-This writes `dfm.1` to the project root. It must exist **before** running
-`cargo aur` below: `[package.metadata.aur] files` packs it into the release
-tarball and the PKGBUILD installs it to `/usr/share/man/man1/dfm.1`.
+`build.rs` renders `dfm.1` from the CLI definition (via `clap_mangen`) into
+`target/<profile>/dfm.1` on every build — no separate step needed. Since
+`cargo aur` first runs `cargo build --release`, the man page lands in
+`target/release/dfm.1`, which `[package.metadata.aur] files` packs into the
+release tarball and the PKGBUILD installs to `/usr/share/man/man1/dfm.1`.
 
 ### Create a package from sources
 
 ```shell
 # from project root
-cargo run --example gen-manpage   # regenerate dfm.1 (required, see above)
 cargo aur
 cd ./target/cargo-aur
 makepkg
@@ -50,13 +44,12 @@ sudo pacman -R dfm-bin
 Rise version in Cargo.toml, than create tag and draft release.
 
 ```shell
-cargo run --example gen-manpage   # regenerate dfm.1 to match the new version
-cargo aur                          # rebuild ./target/cargo-aur tarball + PKGBUILD
+cargo aur                          # builds release + target/release/dfm.1, then tarball
 makepkg -C ../target/cargo-aur     # build the .pkg.tar.zst
 git push
 git tag -a v0.0.0
 git push --tags
-gh release create v0.0.0 --title "release v0.0.0" --draft --notes "unstable" ./target/release/dfm ./target/cargo-aur/dfm-0.0.0-x86_64.tar.gz ./target/cargo-aur/PKGBUILD
+gh release create v0.0.0 --title "unstable v0.0.0" --draft --notes "feature list" ./target/release/dfm ./target/cargo-aur/dfm-bin-0.0.0-1-x86_64.tar.gz.zst ./target/cargo-aur/PKGBUILD
 ```
 
 The GitHub `source=` in the PKGBUILD points at the

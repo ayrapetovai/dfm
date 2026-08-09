@@ -23,17 +23,13 @@ This feature must be added to README.md.
 - For synchronized files (managed, not ignored) 'status' command must show that file is encrypted, by (encrypted).
 
 ## Fix bugs
-- The 'status --managed' does not show managed symlinks,
-that are marked with 'LL' and are shown by 'status --all'
-
 - In the README.md there is the example of unmanaged symlinks (?L),
 but no example of managed symlinks (LL). Add the string with example to point 2.10 text field.
 
+- (open) encrypted files are read fully into RAM (a few × file size).
+  Consider streaming encryption (chunked AEAD) for very large secrets.
+
 ## Documents
 - Switch license to GPL
-- Add man page to package
-- In README.md describe what is 'pull' command, that it works only local.
-
-## Consider ideas
-- Let pull take a path to where save the file
+- In README.md describe what is 'pull' and 'add' commands, that they work only locally.
 

@@ -8,7 +8,7 @@ Review source code and integrations tests for:
 - ergonomics, all behavior is expected according to the best practices of CLI tools.
 - safety, no information outside the source or target directories could be corrupted. No unmanaged information could be overwritten without explicit command.
 - documents, license, manual, help subcommand.
-- tests must not corrupt files outside the testing directory.
+- tests must not corrupt files outside the testing directory, tests must not have false-positive commands.
 - comments are concise and not bloated, no useless commented dashes like '//-------', or other non-informative separators.
 - the code is clear to understand for human and for AI LLM.
 - context.txt file is up to date with the source code logic, it is optimised for AI does not need to parse a lot of source code to learn the project.
