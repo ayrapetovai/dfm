@@ -58,11 +58,12 @@ fn handle_target_symlink(
     source_dir_abs_path: &PathBuf,
     target_path: &PathBuf,
     target_ignore_regex: &RegexSet,
-    target_ignore_file_path: &PathBuf,
+    target_ignore_file_path: &Path,
     encrypt: bool,
     force: bool,
     tasks: &mut Vec<AddTask>,
     error_messages: &mut Vec<String>,
+    patterns_to_remove: &mut Vec<String>,
     explicitly_named: bool,
 ) -> Result<(), DfmError> {
     if encrypt {
@@ -104,8 +105,10 @@ fn handle_target_symlink(
     }
 
     let symlink_rel = file_path_relative_to(&target_symlink_abs_path, target_dir_abs_path);
-    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &symlink_rel) {
-        info!("target symlink {:?} is ignored by regex /{}/ in file {:?}", target_symlink_abs_path, pattern, target_ignore_file_path);
+    if handle_ignore_or_override(
+        target_ignore_regex, &symlink_rel, force,
+        patterns_to_remove, &target_symlink_abs_path, target_ignore_file_path,
+    ) == IgnoreHandling::Skip {
         return Ok(());
     }
 
@@ -400,7 +403,7 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
             match handle_target_symlink(
                 settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
                 &target_ignore_regex, &target_ignore_file_path,
-                *encrypt, *force, &mut tasks, &mut error_messages, explicitly_named,
+                *encrypt, *force, &mut tasks, &mut error_messages, &mut patterns_to_remove, explicitly_named,
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
@@ -506,15 +509,32 @@ fn execute_add_task(
                 Err(e) => return Err(e),
             }
 
-            // 2. Remove the original target file
-            fs::remove_file(target_file).map_err(|e| io_err(target_file, e))?;
-
-            // 3. Create a symlink at the target pointing to the source file
+            // 2. Move the original target aside instead of deleting it, so the
+            //    content is preserved if creating the symlink fails.
             let target_parent = target_file.parent()
                 .ok_or_else(|| DfmError::other("target file has no parent directory"))?
                 .to_path_buf();
+            let backup_file = target_parent.join(format!(
+                ".{}.dfm-backup",
+                target_file.file_name()
+                    .ok_or_else(|| DfmError::other("target file has no file name"))?
+                    .to_string_lossy(),
+            ));
+            fs::rename(target_file, &backup_file).map_err(|e| io_err(target_file, e))?;
+
+            // 3. Create a symlink at the target pointing to the source file.
             let link_target = file_path_relative_to(source_file, &target_parent);
-            symlink::symlink_file(&link_target, target_file).map_err(|e| io_err(target_file, e))?;
+            if let Err(e) = symlink::symlink_file(&link_target, target_file) {
+                // Restore the original file over the (failed) symlink creation
+                // attempt, then report both failures.
+                fs::rename(&backup_file, target_file)
+                    .map_err(|restore_err| DfmError::Other(format!(
+                        "symlink {:?} creation failed: {}; restore of backup {:?} also failed: {}",
+                        target_file, e, backup_file, restore_err,
+                    )))?;
+                return Err(io_err(target_file, e));
+            }
+            fs::remove_file(&backup_file).map_err(|e| io_err(&backup_file, e))?;
             Ok(true)
         },
         AddTask::CopyEncryptedFile(target_file, source_file) => {

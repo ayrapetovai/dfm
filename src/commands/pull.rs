@@ -10,7 +10,8 @@ use crate::DfmError;
 use super::{sync_file_copy, require_force, read_symlink_pointer,
             update_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
-            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling};
+            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling,
+            source_rel_to_target_abs};
 use microxdg::Xdg;
 
 /// Typed, per-command arguments for `pull` (built by the dispatcher).
@@ -106,11 +107,8 @@ fn handle_source_path(
 
     let source_name = source_file_abs_path.to_string_lossy().into_owned();
     let source_rel_str = file_path_relative_to(source_file_abs_path, source_dir_abs_path).to_string_lossy().into_owned();
-    let target_file_rel_to_target_dir = source_rel_to_target_rel(
-        &source_rel_str, &settings.dot_prefix,
-        &settings.symlink_postfix, &settings.encrypted_postfix,
-    );
-    let target_file_abs_path = remove_dots_from_path(&target_dir_abs_path.join(&target_file_rel_to_target_dir));
+    let (target_file_rel_to_target_dir, target_file_abs_path) =
+        source_rel_to_target_abs(&source_rel_str, target_dir_abs_path, settings);
     debug!("inferred target {:?}", target_file_abs_path);
 
     if handle_ignore_or_override(

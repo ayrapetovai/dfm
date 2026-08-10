@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCmd, Stdio};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use colored::Colorize;
 use log::{debug, info};
@@ -12,7 +12,7 @@ use regex::RegexSet;
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{list_directory, report_progress, split_command, state_key_for};
+use super::{list_directory, report_progress, split_command, state_key_for, source_rel_to_target_abs};
 
 /// Typed, per-command arguments for `status` (built by the dispatcher).
 pub struct StatusArgs {
@@ -145,13 +145,12 @@ fn resolve_status_paths(
                 // `dot_files/...` -> `target/...` with postfixes stripped.
                 let root = if abs.starts_with(source_dir_abs) {
                     let source_rel = file_path_relative_to(&abs, source_dir_abs);
-                    let target_rel = source_rel_to_target_rel(
+                    let (_, target_abs) = source_rel_to_target_abs(
                         &source_rel.to_string_lossy(),
-                        &settings.dot_prefix,
-                        &settings.symlink_postfix,
-                        &settings.encrypted_postfix,
+                        target_dir_abs,
+                        settings,
                     );
-                    remove_dots_from_path(&target_dir_abs.join(target_rel))
+                    target_abs
                 } else {
                     abs
                 };
@@ -906,6 +905,12 @@ fn write_stdout(s: &str) -> Result<(), DfmError> {
 }
 
 fn print_paged(output: &str) -> Result<(), DfmError> {
+    // The pager only makes sense for an interactive terminal: when stdout is a
+    // pipe or file, page the output directly (a pipe cannot be scrolled, and a
+    // captured pager would corrupt e.g. `dfm status | grep`).
+    if !std::io::stdout().is_terminal() {
+        return write_stdout(output);
+    }
     // Detect terminal height
     let line_count = output.lines().count();
     let term_height = terminal_height().unwrap_or(24);

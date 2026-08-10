@@ -3,7 +3,7 @@ use log::{debug, info, warn};
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{run_merge, msg_dry_run, state_key_for};
+use super::{run_merge, msg_dry_run, state_key_for, source_rel_to_target_abs};
 
 /// Typed, per-command arguments for `merge` (built by the dispatcher).
 pub struct MergeArgs {
@@ -69,12 +69,8 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
                 let source_rel_str = state_key_for(&source_abs, &source_dir_abs_path);
 
                 // Derive target path (replace dot_prefix, strip postfixes)
-                let target_rel = source_rel_to_target_rel(
-                    &source_rel_str, &settings.dot_prefix,
-                    &settings.symlink_postfix, &settings.encrypted_postfix,
-                );
-                let inferred_target_abs = target_dir_abs_path.join(&target_rel);
-                let inferred_target_abs = remove_dots_from_path(&inferred_target_abs);
+                let (_, inferred_target_abs) =
+                    source_rel_to_target_abs(&source_rel_str, &target_dir_abs_path, settings);
 
                 if let Some(sync_time) = state.syncs.get(source_rel_str.as_str()) {
                     candidates.push((source_abs, inferred_target_abs, sync_time.clone()));

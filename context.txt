@@ -16,8 +16,8 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 ```bash
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
-cargo test                             # 21 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 187 shell integration tests
+cargo test                             # 22 unit tests (lib.rs + crypt.rs)
+bash tests/launcher.sh -q              # 191 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
@@ -42,7 +42,7 @@ build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
 src/commands/mod.rs  re-exports + shared helpers (below); split_command
 src/commands/{add,pull,merge,forget,init,ignore,purge,config,paths,status,encrypt}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      187 shell tests
+tests/test_*.sh      191 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -137,6 +137,9 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   plain → encrypted → symlink pointer; `None` when the target has no source.
 - `source_rel_to_target_rel(state_key, ...)` — state key → target-rel: strip
   `dot_prefix`→`.`, drop one trailing symlink/encrypted postfix.
+- `source_rel_to_target_abs(source_rel, target_dir_abs, settings) →
+  (target_rel, target_abs)` — shared source−-rel→target mapping (join + remove
+  dots) used by pull, merge, status, purge.
 - `resolve_dry_run(cmd_flag, global_flag)`; `require_force(force, msg)`;
   `prune_ignore_file(path, should_ignore, dry_run)` (keeps blank lines + full
   kept-line text, returns removed, writes only when something removed and
@@ -161,13 +164,17 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - **`add [PATH...] [-f] [-s] [-e]`** — traverse target (or given paths). Skips
   internal dfm files, out-of-target paths, source-dir paths. Symlink →
   pointer-file (`CreateSymlinkFilePointer`, no pointee fallthrough). Ignored →
-  skip unless `--force`, which also removes the matching target-ignore pattern.
-  Conflicts (`SourceModified`/`BothModified`/`NeverSynchronized`(≠content))
+  skip unless `--force`; `--force` **also overrides for ignored symlinks**
+  (both use `handle_ignore_or_override`, which removes the matching
+  target-ignore pattern). Conflicts
+  (`SourceModified`/`BothModified`/`NeverSynchronized`(≠content))
   need `--force`; `conflict_detected` set only for explicitly-named paths
   (silent skip during traversal). Tasks: `Copy`, `CopyEncryptedFile`,
-  `CreateSymlinkFilePointer`, `CopyAndSymlink` (copy→source, rm target, symlink
-  target→source relative), `UpdateSync`. `-s` and `-e` mutually exclusive;
-  `-e` on a symlink is an error; encrypted add deletes stale plain source+state.
+  `CreateSymlinkFilePointer`, `CopyAndSymlink` (copy→source, rename target to a
+  `.dfm-backup` sibling, symlink target→source relative, drop backup; on
+  symlink failure the backup is restored over the target), `UpdateSync`. `-s`
+  and `-e` mutually exclusive; `-e` on a symlink is an error; encrypted add
+  deletes stale plain source+state.
 - **`pull [PATH...] [-f] [-s]`** — traverse source (dotfiles pruned via
   `^(.+/)?[^.][^/]+$`) or given paths (source→infer target, target→compute
   source). Missing target: symlink-file→`CreateOrUpdateSymlink`; `.encrypted`→
@@ -180,7 +187,8 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   entries. With paths: merge any modified file; resolve source/target path,
   try state keys exact/`.encrypted`/`.symlink` (`resolve_state_key`); skip
   symlink targets + ignored. Calls `run_merge` (mod.rs): `.current_merge/` in
-  source dir, copy `target.<f>`/`source.<f>` (decrypted if encrypted), result
+  source dir (**resolved from `source_dir_abs_path`, and a stale leftover
+  `.current_merge` is removed first**), copy `target.<f>`/`source.<f>` (decrypted if encrypted), result
   `<f>` is **not pre-created**; `merge_tool_command` = first whitespace token =
   program, rest = args with `{target}`/`{source}`/`{result}` replaced, run
   directly (no shell). Success = exit 0 **and** result exists; copy result to
@@ -210,6 +218,10 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   (mtime > sync). Removes config (unless `-c`), source dir (unless `-s`), state
   dir. Each component resolved independently; unresolvable → skipped with info
   log (works with `$HOME` unset). Removal I/O errors aggregated at the end.
+  The config file's **parent directory** is removed only when the config file
+  is the default one (matches `calc_config_file_path`, and never `$HOME`); a
+  custom `-c PATH` removes just the file — a sibling file next to a custom
+  config survives a purge.
 - **`config --get|--set|--list`** — TOML properties; `--set` stores strings;
   array fields not settable.
 - **`encrypt <FILE> [-o]` / `decrypt <FILE.encrypted> [-o]`** — standalone
@@ -242,7 +254,8 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   (`collapse_shared_dirs`), git header via `git -C <source> status --porcelain
   -b` (`get_git_info`: branch + ahead/behind + dirty/clean), paged
   (`$PAGER`/`less -FRSX`, via `stty size`) only when output exceeds terminal
-  height. `--short` = `<code> <path>`; `--porcelain` = tab-separated, both
+  height **and stdout is a terminal** (`IsTerminal` — a pipe/file is never
+  paged). `--short` = `<code> <path>`; `--porcelain` = tab-separated, both
   uncolored & never paged. Filters: `-a -c -m -U -M -p -i -l -u` (hidden by
   default: up-to-date, `LL`, ignored).
 
@@ -329,7 +342,7 @@ warning**, never a command failure:
   command *exits 0*), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **188 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
+- Counts: **191 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components` —
@@ -340,7 +353,7 @@ warning**, never a command failure:
 
 ## Review fixes (REVIEW.md / FIX_PLAN.md)
 
-Implemented and verified (build + `cargo test` 22 + `clippy` + all 188 shell
+Implemented and verified (build + `cargo test` 22 + `clippy` + all 191 shell
 tests green):
 
 - **C1** (critical): `add` of an explicitly-named symlink outside the target
@@ -369,9 +382,41 @@ tests green):
 - **M4** (review finding): **kept existing behavior by decision** — the
   `forget` state-entry-removal-on-delete-failure contract is deliberate and
   asserted by `tests/test_forget_d2_remove_fails.sh`; reverting my change kept
-  all 188 tests green with no code change. L3 `.symlink` pointer verbatim =
+  all 191 tests green with no code change. L3 `.symlink` pointer verbatim =
   intentionally not fixed (legitimate absolute/`..` pointees; C1 blocks new
   escaping records).
+
+### Review round 2 (current session)
+
+Implemented and verified (build + `cargo test` 22 + `clippy` clean + all 191
+shell tests green):
+
+- **H1** (critical): `purge` with a custom `-c PATH` deleted PATH's entire
+  parent directory (a sibling keepme.txt was wiped). purge.rs now removes the
+  config file's parent directory only when the config file is the default one
+  (matches `calc_config_file_path`, home dir excluded); a custom `-c` path
+  removes just the file. Regression:
+  `tests/test_purge_custom_config_path.sh`.
+- **H2** (critical): `add --force` silently skipped an ignored **symlink**
+  (the symlink lower-prioritized regex check short-circuited before the force
+  handling). `handle_target_symlink` now routes through
+  `handle_ignore_or_override` + `patterns_to_remove` (like
+  `handle_target_file`) so `--force` adds it and prunes the pattern.
+  Regression: `tests/test_add_symlink_ignored_force.sh`.
+- **M1**: `CopyAndSymlink` deletes the target before symlinking; a symlink
+  failure permanently lost the target. Now the target is renamed to a
+  `.dfm-backup` sibling, the symlink is created, and the backup is dropped
+  only on success (restored over the target on failure, both errors reported).
+- **M3/L3**: `run_merge` resolved `.current_merge` from the un-expanded
+  `settings.source_dir` and never cleared a stale leftover directory — a stale
+  `result.*` from a killed merge tool was mistaken for fresh output. It now
+  uses `source_dir_abs_path` and removes a stale `.current_merge` up front.
+  Regression: `tests/test_merge_stale_merge_dir.sh`.
+- **L1**: the source→target mapping was duplicated in pull.rs / merge.rs /
+  status.rs / purge.rs; extracted `source_rel_to_target_abs` in commands/mod.rs.
+- **L4**: `status` paged output through `$PAGER` even when stdout was a pipe;
+  now gated on `stdout().is_terminal()` (verified manually: no pager spawn when
+  piped, pager spawns only under a tty).
 
 ### Testing assertions: got-it-right rule
 

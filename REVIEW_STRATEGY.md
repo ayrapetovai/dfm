@@ -13,7 +13,7 @@ Review source code and integrations tests for:
 - the code is clear to understand for human and for AI LLM.
 - context.txt file is up to date with the source code logic, it is optimised for AI does not need to parse a lot of source code to learn the project.
 - README.md is up to date with the source code logic.
-- all subcommand work as 'all or nothing', if some operation fails than all other files (and preferable all files) are not changed.
+- all subcommands follow the documented all-or-nothing-per-run semantics (README "All-or-nothing per-run semantics"): atomic per file, sync state committed only when the whole command succeeds, `forget`/`purge` best-effort, `--dry-run` never mutating.
 - the program's binary being built as release dos not contain debug info, is self contained, is optimised, encryption library is build for production.
 - During handling big amount of files of files of big size, no data is accumulated in memory, no memory leaks.
 

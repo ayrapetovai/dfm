@@ -6,7 +6,7 @@ use log::{debug, info};
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{msg_dry_run};
+use super::{msg_dry_run, source_rel_to_target_abs};
 
 /// Typed, per-command arguments for `purge` (built by the dispatcher).
 pub struct PurgeArgs {
@@ -59,7 +59,7 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
         let mut un_pulled = vec![];
         let mut un_pushed = vec![];
         for (rel_path, sync_time) in &state.syncs {
-            let (target_rel, target_abs) = state_key_to_target(target_dir_abs_path, rel_path, settings);
+            let (target_rel, target_abs) = source_rel_to_target_abs(rel_path, target_dir_abs_path, settings);
             if let Ok(meta) = fs::symlink_metadata(&target_abs)
                 && meta.file_type().is_symlink()
             {
@@ -113,20 +113,28 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
                 }
                 info!("config removed {:?}", path_to_config_file);
 
-                if let Some(config_dir) = path_to_config_file.parent() {
-                    let is_home_dir = get_home_path()
-                        .map(|home| config_dir == home.as_path())
-                        .unwrap_or(false);
-                    if is_home_dir {
-                        info!("config directory is the home directory; skipping");
-                    } else if config_dir.exists() {
-                        if !dry_run
-                            && let Err(e) = fs::remove_dir_all(config_dir)
-                        {
-                            errors.push(format!("failed to remove config directory {:?}: {}", config_dir, e));
-                        }
-                        info!("config directory removed {:?}", config_dir);
+                // The config file's parent directory is removed only when the
+                // config file is the default one (resolved by
+                // `calc_config_file_path`). A custom `-c PATH` must never make
+                // purge delete PATH's parent directory — the config file itself
+                // is removed, nothing around it.
+                let is_default_config_file = calc_config_file_path(xdg)
+                    .map(|default_path| default_path == *path_to_config_file)
+                    .unwrap_or(false);
+                let is_home_dir = get_home_path()
+                    .map(|home| path_to_config_file.parent() == Some(home.as_path()))
+                    .unwrap_or(false);
+                if is_default_config_file
+                    && !is_home_dir
+                    && let Some(config_dir) = path_to_config_file.parent()
+                    && config_dir.exists()
+                {
+                    if !dry_run
+                        && let Err(e) = fs::remove_dir_all(config_dir)
+                    {
+                        errors.push(format!("failed to remove config directory {:?}: {}", config_dir, e));
                     }
+                    info!("config directory removed {:?}", config_dir);
                 }
             }
         }
@@ -180,20 +188,6 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
     Ok(())
 }
 
-/// Map a state key (source-relative path) to the target-relative path and the
-/// absolute target path, stripping the dot-prefix and the symlink/encrypted
-/// postfixes.
-fn state_key_to_target(target_dir_abs_path: &Path, source_rel: &str, settings: &Settings) -> (String, PathBuf) {
-    let target_rel = source_rel_to_target_rel(
-        source_rel,
-        &settings.dot_prefix,
-        &settings.symlink_postfix,
-        &settings.encrypted_postfix,
-    );
-    let target_abs = target_dir_abs_path.join(&target_rel);
-    (target_rel, remove_dots_from_path(&target_abs))
-}
-
 /// Replace managed target symlinks (created by `add -s` / `pull -s`, or from a
 /// `.symlink` pointer file) with regular copies of the files they point to.
 fn replace_managed_symlinks(
@@ -205,7 +199,7 @@ fn replace_managed_symlinks(
     errors: &mut Vec<String>,
 ) {
     for rel_path in state.syncs.keys() {
-        let (_, target_abs) = state_key_to_target(target_dir_abs_path, rel_path, settings);
+        let (_, target_abs) = source_rel_to_target_abs(rel_path, target_dir_abs_path, settings);
         let meta = match fs::symlink_metadata(&target_abs) {
             Ok(meta) => meta,
             Err(_) => continue,

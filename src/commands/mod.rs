@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use filetime_creation::{set_file_mtime, FileTime};
 use microxdg::Xdg;
-use log::{error, info, trace, log_enabled};
+use log::{debug, error, info, trace, log_enabled};
 use regex::RegexSet;
 
 use dfm::*;
@@ -65,6 +65,24 @@ pub(crate) fn state_key_for(abs_path: &Path, root: &Path) -> String {
     let rel = file_path_relative_to(abs_path, root);
     let rel = remove_dots_from_path(&rel);
     rel.to_string_lossy().into_owned()
+}
+
+/// Map a source-relative path (state key) to the target-relative path and the
+/// absolute target path, stripping the dot-prefix and the symlink/encrypted
+/// postfixes. Shared by pull, merge, status and purge so every command maps a
+/// source path to its target identically.
+pub(crate) fn source_rel_to_target_abs(
+    source_rel: &str,
+    target_dir_abs: &Path,
+    settings: &Settings,
+) -> (String, PathBuf) {
+    let target_rel = source_rel_to_target_rel(
+        source_rel,
+        &settings.dot_prefix,
+        &settings.symlink_postfix,
+        &settings.encrypted_postfix,
+    );
+    (target_rel.clone(), remove_dots_from_path(&target_dir_abs.join(&target_rel)))
 }
 
 /// Get the sync time for a file, computing the state key from its absolute path.
@@ -405,8 +423,16 @@ pub(crate) fn run_merge(
     state: &mut StateObject,
     source_dir_abs_path: &Path,
 ) -> Result<(), DfmError> {
-    let source_dir = PathBuf::from(&settings.source_dir);
-    let merge_dir = source_dir.join(".current_merge");
+    // Resolve from the already-resolved absolute source path so the merge
+    // directory lands in the real source directory regardless of how the
+    // command was invoked.
+    let merge_dir = source_dir_abs_path.join(".current_merge");
+    // A stale `.current_merge` (e.g. left behind by a killed merge tool)
+    // must not interfere: drop it before creating the fresh one.
+    if merge_dir.exists() {
+        debug!("removing stale merge directory {:?}", merge_dir);
+        fs::remove_dir_all(&merge_dir).map_err(|e| io_err(&merge_dir, e))?;
+    }
     let _guard = DirGuard(merge_dir.clone());
     fs::create_dir_all(&merge_dir).map_err(|e| io_err(&merge_dir, e))?;
 
