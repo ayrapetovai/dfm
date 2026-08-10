@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use log::{debug, trace, warn};
 use microxdg::Xdg;
 use regex::{Regex, RegexSet};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
@@ -87,6 +87,22 @@ pub fn io_copy_err(from: &Path, to: &Path, e: io::Error) -> DfmError {
 /// command. Kept rule-consistent across all commands.
 pub fn warn_unreadable(path: &Path, e: impl std::fmt::Display) {
     warn!("skipping unreadable path {:?}: {}", path, e);
+}
+
+/// Atomically replace `path` with `content`: write a sibling temp file and
+/// rename it over the target. A crash mid-write can no longer leave a
+/// truncated `state.toml` (whose corruption bricks every state-dependent
+/// command); a plain `fs::write` could. The temp file lives in the same
+/// directory so the rename is a single atomic operation on POSIX.
+pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> Result<(), DfmError> {
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "dfm".to_string());
+    let tmp = path.with_file_name(format!(".{}.tmp", file_name));
+    fs::write(&tmp, content).map_err(|e| io_err(&tmp, e))?;
+    fs::rename(&tmp, path).map_err(|e| io_err(path, e))?;
+    Ok(())
 }
 
 impl From<regex::Error> for DfmError {
@@ -248,6 +264,49 @@ pub fn check_path_matches_regex_substring(regex: &RegexSet, haystack: &Path) -> 
     Some(regex.patterns()[matched_idx].to_owned())
 }
 
+type ComponentRegexCache = HashMap<String, Arc<Vec<Option<Regex>>>>;
+
+/// Process-wide cache of the anchored per-component regexes of an ignore
+/// pattern. `pattern_matches_path_components` used to call `Regex::new` per
+/// sub-pattern on every invocation, making `status`/`add`/`pull` over a large
+/// tree O(files × patterns) compilations. Keys are the raw pattern strings
+/// (bounded by the ignore file sizes), values are immutable and deterministic,
+/// so a shared mutex-protected map is safe and cheap. An explicitly-anchored
+/// sub-pattern is the same regex text every time, so caching by pattern string
+/// never changes the match result.
+static COMPONENT_REGEX_CACHE: LazyLock<Mutex<ComponentRegexCache>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The anchored `/`-separated sub-pattern regexes for `pattern`, cached across
+/// calls. Index `i` corresponds to the `i`-th sub-pattern after dropping a
+/// trailing empty segment (see `pattern_matches_path_components`).
+fn component_sub_regexes(pattern: &str) -> Arc<Vec<Option<Regex>>> {
+    let mut sub_patterns: Vec<&str> = pattern.split('/').collect();
+    while sub_patterns.last() == Some(&"") {
+        sub_patterns.pop();
+    }
+    let anchored = |p: &str| -> String {
+        if p.starts_with('^') || p.ends_with('$') {
+            p.to_string()
+        } else {
+            format!("^(?:{})$", p)
+        }
+    };
+
+    let mut cache = COMPONENT_REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(compiled) = cache.get(pattern) {
+        return compiled.clone();
+    }
+    let compiled: Arc<Vec<Option<Regex>>> = Arc::new(
+        sub_patterns
+            .iter()
+            .map(|p| Regex::new(&anchored(p)).ok())
+            .collect(),
+    );
+    cache.insert(pattern.to_string(), compiled.clone());
+    compiled
+}
+
 /// Check if a regex pattern matches a relative path when matching is done
 /// component-wise (between `/` separators) with implicit anchoring at each
 /// component boundary.
@@ -297,27 +356,18 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
         return false;
     }
 
-    // Anchor the sub-pattern to match the entire component UNLESS it already
-    // has explicit anchors (^ or $).
-    let anchored = |p: &str| -> String {
-        if p.starts_with('^') || p.ends_with('$') {
-            p.to_string()
-        } else {
-            format!("^(?:{})$", p)
-        }
-    };
+    let sub_res = component_sub_regexes(pattern);
 
     if sub_patterns.len() == 1 {
         let sub = sub_patterns[0];
         // A leading glob (.* or ^) means "match any component at any depth".
         let has_left_glob = sub.starts_with(".*") || sub.starts_with('^');
+        let Some(re) = sub_res[0].as_ref() else { return false };
         if has_left_glob {
             // Wildcard at left — test every component
-            if let Ok(re) = Regex::new(&anchored(sub)) {
-                for comp in &components {
-                    if re.is_match(comp) {
-                        return true;
-                    }
+            for comp in &components {
+                if re.is_match(comp) {
+                    return true;
                 }
             }
             false
@@ -325,22 +375,18 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
             // No wildcard at left — match any component that is NOT the last
             // component (i.e., a directory prefix). A root-level path
             // (single component, possibly prefixed with "./") always matches.
-            if let Ok(re) = Regex::new(&anchored(sub)) {
             // Skip a leading "." component ("./file.txt" → "file.txt")
             let comps: &[&str] = if components.first() == Some(&LEADING_DOT_COMPONENT) {
                 &components[1..]
             } else {
                 &components[..]
             };
-                if comps.len() == 1 {
-                    // Root-level: match the single component
-                    re.is_match(comps[0])
-                } else {
-                    // Match any component except the last (filename) one
-                    comps[..comps.len() - 1].iter().any(|c| re.is_match(c))
-                }
+            if comps.len() == 1 {
+                // Root-level: match the single component
+                re.is_match(comps[0])
             } else {
-                false
+                // Match any component except the last (filename) one
+                comps[..comps.len() - 1].iter().any(|c| re.is_match(c))
             }
         }
     } else {
@@ -348,10 +394,6 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
         if sub_patterns.len() > components.len() {
             return false;
         }
-        let sub_res: Vec<Option<Regex>> = sub_patterns
-            .iter()
-            .map(|p| Regex::new(&anchored(p)).ok())
-            .collect();
         if sub_res.iter().any(|r| r.is_none()) {
             return false;
         }
@@ -466,9 +508,9 @@ fn validate_state_key(key: &str) -> Result<(), DfmError> {
     Ok(())
 }
 
-pub fn write_state(path_to_state_file: &PathBuf, state: &StateObject) -> Result<(), DfmError> {
+pub fn write_state(path_to_state_file: &Path, state: &StateObject) -> Result<(), DfmError> {
     let state_content = toml::to_string_pretty(state)?;
-    fs::write(path_to_state_file, state_content).map_err(|e| io_err(path_to_state_file, e))
+    atomic_write(path_to_state_file, state_content)
 }
 
 /// Config read from the TOML file on disk (all fields optional).
@@ -511,7 +553,7 @@ pub struct Settings {
     pub merge_tool_command: Option<String>,
 }
 
-pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<(), DfmError> {
+pub fn write_config(path_to_config_file: &Path, config: &Config) -> Result<(), DfmError> {
     let content = match toml::to_string_pretty(config) {
         Ok(c) => c,
         Err(e) => {
@@ -524,8 +566,7 @@ pub fn write_config(path_to_config_file: &PathBuf, config: &Config) -> Result<()
         fs::create_dir_all(config_parent_directory)
             .map_err(|e| io_err(config_parent_directory, e))?;
     }
-    fs::write(path_to_config_file, content).map_err(|e| io_err(path_to_config_file, e))?;
-    Ok(())
+    atomic_write(path_to_config_file, content)
 }
 
 pub fn get_home_path() -> Option<PathBuf> {
@@ -1185,8 +1226,7 @@ pub fn write_property_to_config(path_to_config_file: &PathBuf, param_name: &str,
     })?;
     config.insert(param_name.to_owned(), Value::String(param_new_value.to_owned()));
     let new_content = toml::to_string_pretty(&config)?;
-    fs::write(path_to_config_file, new_content).map_err(|e| io_err(path_to_config_file, e))?;
-    Ok(())
+    atomic_write(path_to_config_file, new_content)
 }
 
 pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<String>, DfmError> {

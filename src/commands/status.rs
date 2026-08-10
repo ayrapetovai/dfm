@@ -446,19 +446,23 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // Special mode: only list patterns
     // ------------------------------------------------------------------
     if *ignored_patterns {
+        let mut out = String::new();
         for p in target_ignore_regex.patterns() {
-            println!("{}", p);
+            out.push_str(p);
+            out.push('\n');
         }
-        return Ok(());
+        return write_stdout(&out);
     }
 
     if *unused_patterns {
         if stale_patterns.is_empty() {
             info!("unused ignore patterns");
         } else {
+            let mut out = String::new();
             for p in &stale_patterns {
-                println!("{}\t{}", StatusCode::StalePattern, p);
+                out.push_str(&format!("{}\t{}\n", StatusCode::StalePattern, p));
             }
+            return write_stdout(&out);
         }
         return Ok(());
     }
@@ -490,26 +494,29 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
     if *porcelain {
         // Tab-separated, stable, never paged
+        let mut out = String::new();
         for entry in &filtered {
-            println!("{}\t{}", entry.code, entry.path);
+            out.push_str(&format!("{}\t{}\n", entry.code, entry.path));
         }
         if *unused_patterns || filtered.is_empty() {
             // If we have stale patterns, output them too
             for p in &stale_patterns {
-                println!("{}\t{}", StatusCode::StalePattern, p);
+                out.push_str(&format!("{}\t{}\n", StatusCode::StalePattern, p));
             }
         }
+        write_stdout(&out)
     } else if *short {
+        let mut out = String::new();
         for entry in &filtered {
-            println!("{} {}", entry.code, entry.path);
+            out.push_str(&format!("{} {}\n", entry.code, entry.path));
         }
+        write_stdout(&out)
     } else {
         let has_managed = entries.iter().any(|e| e.code.is_managed());
         let output = format_default(&filtered, &entries, &stale_patterns, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
         print_paged(&output)?;
+        Ok(())
     }
-
-    Ok(())
 }
 
 // Phase 2 classifiers (target directory walk)
@@ -885,6 +892,19 @@ fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_p
 
 // Pager
 
+/// Write a string to stdout, tolerating a broken pipe: when the reader closes
+/// the stream on purpose (e.g. `dfm status | head -1`) the write-failed error
+/// from the closed pipe is not a failure of this command.
+fn write_stdout(s: &str) -> Result<(), DfmError> {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    match out.write_all(s.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(e) => Err(DfmError::Io(e)),
+    }
+}
+
 fn print_paged(output: &str) -> Result<(), DfmError> {
     // Detect terminal height
     let line_count = output.lines().count();
@@ -896,12 +916,8 @@ fn print_paged(output: &str) -> Result<(), DfmError> {
         // by default in config it must be 'less -FRSX', but env PAGER has the priority.
         let pager_cmd = env::var("PAGER").unwrap_or_else(|_| "less -FRSX".to_string());
         let (prog, args) = split_command(&pager_cmd);
-        let prog = match prog {
-            Some(p) => p,
-            None => {
-                print!("{}", output);
-                return Ok(());
-            }
+        let Some(prog) = prog else {
+            return write_stdout(output);
         };
         let mut child = ProcessCmd::new(prog)
             .args(args)
@@ -910,14 +926,24 @@ fn print_paged(output: &str) -> Result<(), DfmError> {
             .stderr(Stdio::inherit())
             .spawn()?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(output.as_bytes())?;
-            stdin.flush()?;
+            // The pager may exit early (e.g. `less` quit by the user): the
+            // resulting broken pipe is expected, not an error.
+            if let Err(e) = stdin.write_all(output.as_bytes())
+                && e.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(DfmError::Io(e));
+            }
+            if let Err(e) = stdin.flush()
+                && e.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(DfmError::Io(e));
+            }
         }
         child.wait()?;
+        Ok(())
     } else {
-        print!("{}", output);
+        write_stdout(output)
     }
-    Ok(())
 }
 
 fn terminal_height() -> Option<usize> {

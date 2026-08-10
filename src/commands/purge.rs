@@ -243,7 +243,9 @@ fn replace_managed_symlinks(
         let copy_result = if pointee_abs.to_str().unwrap_or("").ends_with(&settings.encrypted_postfix) {
             dfm::crypt::read_encrypted_file(settings, &pointee_abs, &target_abs)
         } else {
-            fs::copy(&pointee_abs, &target_abs).map_err(DfmError::from).map(|_| ())
+            fs::copy(&pointee_abs, &target_abs)
+                .map_err(|e| io_copy_err(&pointee_abs, &target_abs, e))
+                .map(|_| ())
         };
         if let Err(e) = copy_result {
             errors.push(format!("failed to replace target symlink {:?} with {:?}: {}", target_abs, pointee_abs, e));

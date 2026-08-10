@@ -549,6 +549,25 @@ fn decrypt_blob_with_retry(
     }
 }
 
+/// Reject a directory entry recorded in an encrypted blob whose path could
+/// escape the restore root: absolute paths, `..`-prefixed components and empty
+/// entries (the latter would chmod the root itself). Defense-in-depth: this is
+/// already gated by AEAD + a correct password, but a validly-decrypting blob
+/// must never touch anything outside the target directory.
+fn dir_rel_is_safe(dir_rel: &Path) -> bool {
+    let mut saw_normal = false;
+    for component in dir_rel.components() {
+        match component {
+            std::path::Component::Normal(_) => saw_normal = true,
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => return false,
+        }
+    }
+    saw_normal
+}
+
 /// Write the decrypted content to the target, restoring directory and file
 /// permissions that were recorded at encrypt time.
 ///
@@ -564,6 +583,12 @@ fn restore_target(
     // Recreate enclosing directories with their recorded permissions (e.g. a
     // 0700 SSH directory that `create_dir_all` would otherwise reset).
     for (dir_rel, mode) in &decrypted.dirs {
+        if !dir_rel_is_safe(dir_rel) {
+            return Err(DfmError::InvalidData(format!(
+                "encrypted file {:?} contains unsafe directory path {:?}",
+                target_file_path, dir_rel
+            )));
+        }
         let dir_abs = target_root.join(dir_rel);
         fs::create_dir_all(&dir_abs).map_err(|e| io_err(&dir_abs, e))?;
         fs::set_permissions(&dir_abs, fs::Permissions::from_mode(*mode))
@@ -754,6 +779,23 @@ mod tests {
             decrypt_bytes(&v1, "pw"),
             Err(DecryptError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn dir_rel_is_safe_rejects_escaping_paths() {
+        assert!(dir_rel_is_safe(Path::new("private")));
+        assert!(dir_rel_is_safe(Path::new("private/sub dir/deep")));
+
+        for escaping in ["..", "../evil", "a/../../evil", "/abs/evil", "a//../b"] {
+            assert!(
+                !dir_rel_is_safe(Path::new(escaping)),
+                "{:?} must be rejected",
+                escaping
+            );
+        }
+        // An empty entry would chmod the restore root itself, never allowed.
+        assert!(!dir_rel_is_safe(Path::new(".")));
+        assert!(!dir_rel_is_safe(Path::new("")));
     }
 }
 

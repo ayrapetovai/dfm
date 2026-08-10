@@ -58,7 +58,18 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         },
     };
     let config_from_file = match &path_to_config_file {
-        Some(p) => read_config(p).ok(),
+        Some(p) => match read_config(p) {
+            Ok(config) => Some(config),
+            Err(e) => {
+                // A corrupt/unreadable config must not silently change
+                // behavior: fall back to defaults but tell the user.
+                warn!(
+                    "config file {:?} could not be read ({}); continuing with default settings",
+                    p, e
+                );
+                None
+            }
+        },
         None => None,
     };
     let settings = merge_settings(&default_settings, &config_from_file, state_opt.as_ref());

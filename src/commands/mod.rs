@@ -247,8 +247,7 @@ pub(crate) fn prune_ignore_file(
         }
     }
     if !removed.is_empty() && !dry_run {
-        fs::write(ignore_file_path, kept.join("\n"))
-            .map_err(|e| io_err(ignore_file_path, e))?;
+        atomic_write(ignore_file_path, kept.join("\n"))?;
     }
     Ok(removed)
 }

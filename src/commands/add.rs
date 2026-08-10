@@ -89,6 +89,20 @@ fn handle_target_symlink(
     target_symlink_abs_path.push(target_symlink_abs_path_raw.file_name()
         .ok_or_else(|| DfmError::InvalidInput("path has no file name".into()))?);
 
+    // A symlink outside the target directory would compute a `..`-escaping
+    // source path (its pointer file would be written outside the source dir and
+    // the state key would poison state.toml), so it is skipped like
+    // `handle_target_file` skips out-of-target files.
+    if target_symlink_abs_path.starts_with(source_dir_abs_path) {
+        info!("target symlink {:?} resides in source directory, ignoring", target_symlink_abs_path);
+        return Ok(());
+    }
+
+    if !target_symlink_abs_path.starts_with(target_dir_abs_path) {
+        info!("target symlink {:?} does not reside in target directory {:?}, skipping...", target_symlink_abs_path, target_dir_abs_path);
+        return Ok(());
+    }
+
     let symlink_rel = file_path_relative_to(&target_symlink_abs_path, target_dir_abs_path);
     if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &symlink_rel) {
         info!("target symlink {:?} is ignored by regex /{}/ in file {:?}", target_symlink_abs_path, pattern, target_ignore_file_path);

@@ -237,8 +237,7 @@ fn migrate_ignore_line(ignore_file_path: &PathBuf, old: &str, new: &str) -> Resu
     if !text.is_empty() {
         text.push('\n');
     }
-    fs::write(ignore_file_path, text).map_err(|e| io_err(ignore_file_path, e))?;
-    Ok(())
+    atomic_write(ignore_file_path, text)
 }
 
 fn remove_ignore_records(xdg: &Xdg, records: &[String], dry_run: bool) -> Result<(), DfmError> {

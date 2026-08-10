@@ -329,14 +329,49 @@ warning**, never a command failure:
   command *exits 0*), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **187 shell tests**, **21 Rust unit tests** (14 in src/lib.rs
+- Counts: **188 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components` —
-  and 7 in src/crypt.rs: round-trip, wrong-password, tampered header,
+  and 8 in src/crypt.rs: round-trip, wrong-password, tampered header,
   **absurd_kdf_params_rejected**, tampered ciphertext, metadata-not-visible,
-  etc.).
+  **dir_rel_is_safe_rejects_escaping_paths**, etc.).
   No `sealed_test` dependency.
+
+## Review fixes (REVIEW.md / FIX_PLAN.md)
+
+Implemented and verified (build + `cargo test` 22 + `clippy` + all 188 shell
+tests green):
+
+- **C1** (critical): `add` of an explicitly-named symlink outside the target
+  dir used to write a `.symlink` pointer outside the source dir and inject a
+  `..`-escaping key into state.toml. `handle_target_symlink` (add.rs) now
+  guards `starts_with` against the target/source dirs like `handle_target_file`.
+  Regression: `tests/test_add_symlink_outside_target_dir.sh`.
+- **H1**: `main_logic` `warn!`s on an unreadable config instead of silent
+  `read_config(p).ok()` fallback.
+- **M1**: ignore matching regexes cached — `COMPONENT_REGEX_CACHE`
+  (`LazyLock<Mutex<HashMap<String, Arc<Vec<Option<Regex>>>>>`) +
+  `component_sub_regexes()` in lib.rs; `pattern_matches_path_components` uses
+  anchored cached sub-patterns (deterministic; never changes match results).
+- **M2**: shared `atomic_write(path, content)` (sibling temp + `rename`,
+  name `.{file_name}.tmp`) in lib.rs; used by `write_state`, `write_config`,
+  `write_property_to_config`, `prune_ignore_file`, `migrate_ignore_line`.
+  `write_state`/`write_config` signatures widened `&PathBuf` → `&Path`.
+- **M3**: `status` uses `write_stdout()` which tolerates `ErrorKind::BrokenPipe`
+  (both plain stdout and pager stdin/flush); no more broken-pipe error on
+  `dfm status | head -1`.
+- **L1**: purge `fs::copy` now maps via `io_copy_err` (path context in message).
+- **L2**: crypt `restore_target` validates each decrypted `dirs` entry through
+  `dir_rel_is_safe` (rejects ParentDir/RootDir/Prefix/empty, requires a Normal
+  component) — defense-in-depth against a validly-decrypting blob escaping the
+  restore root.
+- **M4** (review finding): **kept existing behavior by decision** — the
+  `forget` state-entry-removal-on-delete-failure contract is deliberate and
+  asserted by `tests/test_forget_d2_remove_fails.sh`; reverting my change kept
+  all 188 tests green with no code change. L3 `.symlink` pointer verbatim =
+  intentionally not fixed (legitimate absolute/`..` pointees; C1 blocks new
+  escaping records).
 
 ### Testing assertions: got-it-right rule
 
