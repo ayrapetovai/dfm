@@ -16,9 +16,10 @@ dfm init /path/to/dotfiles/repo
 dfm pull
 
 # Initialize with a new directory
-git clone link/to/new/dotfiles/repo
-dfm init /path/to/new/dotfiles/repo
+git clone url-to-reop/dotfiles
+dfm init dotfiles
 dfm add ~/.bashrc ~/.config/git/config
+cd dotfiles
 git add .
 git commit -m "initial"
 git push
@@ -291,6 +292,8 @@ dfm purge [--keep-source] [--keep-config-file] [--force] [--dry-run]
 ```
 
 Before removing the source directory, `purge` checks for un-pulled changes (source files modified since their last sync) and un-pushed changes (target files modified since their last sync). If any exist, the command aborts unless `--force` is given.
+
+The config file is removed (unless `--keep-config-file`). When the config file is the default one (at `$XDG_CONFIG_HOME/dfm/config.toml`), its parent directory is removed along with it; a config passed via `-c PATH` removes only the file, never the directory around it.
 
 Managed symlinks (created by `add -s` / `pull -s`) are replaced with regular copies of the files they point to before the source directory is removed, so no dangling symlinks are left behind. Symlinks pointing outside the source directory are left untouched.
 
