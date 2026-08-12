@@ -152,12 +152,17 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - `split_command(cmd) -> (Option<&str>, Vec<&str>)` — whitespace-split a command
   template into program + args; shared by `run_merge` (merge tool),
   `run_diff` (diff tool), and `print_paged` (pager).
-- `resolve_tool_command(command_opt: &Option<String>, tool_name) -> Result<String,
-  DfmError>` (mod.rs) — returns the configured tool command, or errors with
-  `Other("no {tool_name} tool configured — set the corresponding command in
-  config")` when unset/empty; used by `run_merge`/`run_diff`.
+- `resolve_tool_command(command_opt: &Option<String>, tool_name, config_key) ->
+  Result<String, DfmError>` (mod.rs) — returns the configured tool command, or
+  errors with `Other("no {tool_name} tool configured — set {config_key} in
+  config")` when unset/empty; used by `run_merge`/`run_diff` (config key
+  `merge_tool_command`/`diff_tool_command`).
 - `DirGuard` (mod.rs, `pub(crate)`) — removes a `.current_merge`/`.current_diff`
   dir on Drop; `run_merge` and `run_diff` remove a stale leftover up front.
+- `create_private_temp_dir(path)` (mod.rs) — recursive mkdir with mode 0700
+  (`DirBuilderExt::mode`), so decrypted scratch files in `.current_merge`/
+  `.current_diff` are not world-readable while a tool runs; used by both
+  `run_merge` and `run_diff`.
 - `report_progress` + `ProgressLine` — single self-overwriting stderr line
   (`\r` + pad); shown at `-v 0/1`, suppressed at `-v ≥ 2` (single gate in
   `ProgressLine::set`, no-op when `log::max_level() >= Info`). `report_progress`
@@ -167,8 +172,9 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 
 - **`init <SOURCE> [TARGET]`** — create source dir; follow/create `.dfm_root`
   pointer chain (content `.`); extend source ignore with `.dfm_root`, `.git`,
-  `.dfm_ignore_source`, `.dfm_ignore_target`; create state file + default
-  config. Does **NOT** look for config inside the source dir (README matches).
+  `.dfm_ignore_source`, `.dfm_ignore_target`, `.current_merge`, `.current_diff`
+  (the merge/diff temp dirs); create state file + default config. Does **NOT**
+  look for config inside the source dir (README matches).
 - **`add [PATH...] [-f] [-s] [-e]`** — traverse target (or given paths). Skips
   internal dfm files, out-of-target paths, source-dir paths. Symlink →
   pointer-file (`CreateSymlinkFilePointer`, no pointee fallthrough). Ignored →
@@ -194,13 +200,14 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - **`merge [PATH...] [-n]`** — no paths: merge only `BothModified` state
   entries. With paths: merge any modified file; resolve source/target path,
   try state keys exact/`.encrypted`/`.symlink` (`resolve_state_key`); skip
-  symlink targets + ignored. Calls `run_merge` (mod.rs): `.current_merge/` in
+  symlink targets + ignored.   Calls `run_merge` (mod.rs): `.current_merge/` in
   source dir (**resolved from `source_dir_abs_path`, and a stale leftover
-  `.current_merge` is removed first**), copy `target.<f>`/`source.<f>` (decrypted if encrypted), result
+  `.current_merge` is removed first**, created with mode 0700), copy `target.<f>`/`source.<f>` (decrypted if encrypted), result
   `<f>` is **not pre-created**; `merge_tool_command` = first whitespace token =
   program, rest = args with `{target}`/`{source}`/`{result}` replaced, run
   directly (no shell). Success = exit 0 **and** result exists; copy result to
-  both sides (re-encrypt if needed), `update_sync_state`, clean up.
+  both sides (re-encrypt if needed), `update_sync_state`, clean up. Program
+  missing → `NotFound("merge tool {prog} not found")`.
 - **`diff [PATH...]`** — read-only; no paths → do nothing, exit 0 (also does
   nothing when the state file is missing, like no paths). `diff_one_path`
   resolves source-side (target-rel via `starts_with(source_dir_abs_path)` +
@@ -213,9 +220,11 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   → `skipping unreadable path ...`; `get_sync_time`/`compare_files` → NonModified
   → `<path> is synchronized`, else encrypted content-compare
   (`read_encrypted_bytes` vs `fs::read(target)`) or sha256 compare → differ →
-  `run_diff` (mod.rs): removes stale `.current_diff/` (resolved from
-  `source_dir_abs_path`), `DirGuard`, writes decrypted `source.<filename>` temp,
-  substitutes `{target}`/`{source}` via `split_command`, run directly (no
+  `run_diff` (mod.rs): `DirGuard`; the `.current_diff/` scratch dir (created
+  with mode 0700 when needed) is only touched for **encrypted** sources — plain
+  diffs pass `{source}` straight through and never write into the source dir
+  (read-only dirs work), substitutes `{target}`/`{source}` via `split_command`,
+  run directly (no
   shell). Decrypted content is offered **as a file only**, never via stdin —
   vim reads a piped stdin into a `[No Name]` buffer and `:qa` then fails with
   E37/E162. Program missing → `NotFound("diff tool {prog} not found")` (exit
@@ -463,6 +472,33 @@ clean + all 200 shell tests green):
   starts with `-`/`+`, so grep needs `assert_succ grep -qF -- "-$VAR"`. New tests avoid
   `dfm ... | grep ...` pipes; they capture with a here-string instead:
   `assert_succ grep -qF "..." <<<$(dfm ... 2>/dev/null)`.
+
+### Current session: `dfm diff` hardening (REVIEW.md fixes)
+
+Approved fix plan applied, verified below (build + `cargo test` 22 + `clippy`
+clean + all 200 shell tests green):
+
+- **B1** (lazy `.current_diff`): plain diffs pass `{source}` through directly
+  and never create/remove the temp dir → `dfm diff` works on a read-only source
+  dir. `.current_diff` is created (0700) only when the source is encrypted.
+- **B2** (temp-dir hygiene): `.current_merge`/`.current_diff` now get mode 0700
+  via `create_private_temp_dir` (`DirBuilderExt::mode`), and `init` adds both to
+  the source ignore records so the tools' scratch files are never picked up as
+  managed paths on existing installs.
+- **B3**: `run_merge` now maps a missing tool binary to
+  `NotFound("merge tool {prog} not found")` (spawn `NotFound`), mirroring
+  `run_diff`; other spawn errors stay `Io`.
+- **B4**: `resolve_tool_command` takes the config key name so its error names
+  the exact setting to fix: `no merge tool configured — set
+  merge_tool_command in config` / `... diff_tool_command ...`.
+- **A1**: `announce_encryption_password` takes the precomputed inner name
+  (String) instead of recomputing `file_path_relative_to`; `write_encrypted_file`
+  computes it once, `diff`'s decrypt path passes its computed inner name.
+- **A2/A3**: fixed stale "piped to stdin" comment in `test_diff_encrypted.sh`
+  and the `3>/dev/null` typo in `test_diff_not_managed.sh`.
+- **A4**: README §2.5 documents `diff` as files-only (directories are not
+  traversed, error remains); file-layout adds `.current_merge/`/`.current_diff/`
+  (0700, transient) and the init ignore list mentions them.
 
 ### Testing assertions: got-it-right rule
 

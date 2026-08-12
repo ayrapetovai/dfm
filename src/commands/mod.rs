@@ -390,10 +390,12 @@ pub(crate) fn sync_file_copy(
 }
 
 /// Resolve a tool command template (merge/diff) from settings, or error when
-/// it is missing or empty.
+/// it is missing or empty. `config_key` names the setting so the error tells
+/// the user exactly what to set.
 pub(crate) fn resolve_tool_command(
     command_opt: &Option<String>,
     tool_name: &str,
+    config_key: &str,
 ) -> Result<String, DfmError> {
     if let Some(cmd) = command_opt
         && !cmd.is_empty()
@@ -401,8 +403,8 @@ pub(crate) fn resolve_tool_command(
         return Ok(cmd.clone());
     }
     Err(DfmError::Other(format!(
-        "no {} tool configured — set the corresponding command in config",
-        tool_name
+        "no {} tool configured — set {} in config",
+        tool_name, config_key
     )))
 }
 
@@ -415,6 +417,18 @@ impl Drop for DirGuard {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+/// Create a private (0700) recursive temp directory for the merge/diff tools,
+/// so decrypted content written there is not readable by other users while a
+/// tool runs.
+pub(crate) fn create_private_temp_dir(path: &Path) -> Result<(), DfmError> {
+    use std::os::unix::fs::DirBuilderExt;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+        .map_err(|e| io_err(path, e))
 }
 
 /// Run the merge tool inside `.current_merge/` in the source directory.
@@ -443,7 +457,7 @@ pub(crate) fn run_merge(
         fs::remove_dir_all(&merge_dir).map_err(|e| io_err(&merge_dir, e))?;
     }
     let _guard = DirGuard(merge_dir.clone());
-    fs::create_dir_all(&merge_dir).map_err(|e| io_err(&merge_dir, e))?;
+    create_private_temp_dir(&merge_dir)?;
 
     let file_name = target_abs_path
         .file_name()
@@ -469,7 +483,7 @@ pub(crate) fn run_merge(
     } else {
         fs::copy(source_abs_path, &source_path).map_err(|e| io_copy_err(source_abs_path, &source_path, e))?;
     }
-    let command = resolve_tool_command(&settings.merge_tool_command, "merge")?;
+    let command = resolve_tool_command(&settings.merge_tool_command, "merge", "merge_tool_command")?;
 
     // Parse command template: first token is the program, rest are arguments
     // with {target}, {source} and {result} replaced by actual temp file paths.
@@ -487,10 +501,14 @@ pub(crate) fn run_merge(
 
     info!("running merge tool: {} {:?}", prog, args);
 
-    let status = std::process::Command::new(prog)
-        .args(&args)
-        .status()
-        .map_err(DfmError::Io)?;
+    let mut child = match std::process::Command::new(prog).args(&args).spawn() {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(DfmError::NotFound(format!("merge tool {} not found", prog)));
+        }
+        Err(e) => return Err(DfmError::Io(e)),
+    };
+    let status = child.wait().map_err(DfmError::Io)?;
 
     if !status.success() || !result_path.exists() {
         let reason = if !status.success() {

@@ -189,6 +189,8 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                     ".git",
                     ".dfm_ignore_source",
                     ".dfm_ignore_target",
+                    ".current_merge",
+                    ".current_diff",
                 ];
 
                 fs::create_dir_all(source_ignore_file_path.parent().unwrap())

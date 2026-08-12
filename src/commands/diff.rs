@@ -8,7 +8,7 @@ use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
 use super::{
-    resolve_tool_command, split_command, DirGuard,
+    resolve_tool_command, split_command, DirGuard, create_private_temp_dir,
     state_key_for, source_rel_to_target_abs, resolve_source_variant,
     read_symlink_pointer, get_sync_time, SourceVariant,
 };
@@ -213,7 +213,8 @@ fn diff_regular(
         .to_string_lossy()
         .ends_with(&settings.encrypted_postfix);
     if source_is_encrypted {
-        dfm::crypt::announce_encryption_password(target_abs, Path::new(&settings.target_dir));
+        let inner_name = file_path_relative_to(target_abs, Path::new(&settings.target_dir));
+        dfm::crypt::announce_encryption_password(&inner_name.to_string_lossy());
         let (decrypted, _mode) = dfm::crypt::read_encrypted_bytes(settings, source_abs)?;
         let target_bytes = fs::read(target_abs).map_err(|e| io_err(target_abs, e))?;
         if decrypted == target_bytes {
@@ -244,14 +245,16 @@ fn run_diff(
     source_abs: &Path,
     decrypted_source: Option<Vec<u8>>,
 ) -> Result<(), DfmError> {
+    // The temp dir is only needed when the source is encrypted (to hold the
+    // decrypted `{source}`); plain diffs must not write into the source dir.
     let diff_dir = source_dir_abs_path.join(".current_diff");
-    if diff_dir.exists() {
-        fs::remove_dir_all(&diff_dir).map_err(|e| io_err(&diff_dir, e))?;
-    }
     let _guard = DirGuard(diff_dir.clone());
-    fs::create_dir_all(&diff_dir).map_err(|e| io_err(&diff_dir, e))?;
 
     let source_arg = if let Some(bytes) = &decrypted_source {
+        if diff_dir.exists() {
+            fs::remove_dir_all(&diff_dir).map_err(|e| io_err(&diff_dir, e))?;
+        }
+        create_private_temp_dir(&diff_dir)?;
         let file_name = target_abs
             .file_name()
             .ok_or_else(|| DfmError::Other("target path has no file name".into()))?
@@ -263,7 +266,7 @@ fn run_diff(
         source_abs.to_path_buf()
     };
 
-    let command = resolve_tool_command(&settings.diff_tool_command, "diff")?;
+    let command = resolve_tool_command(&settings.diff_tool_command, "diff", "diff_tool_command")?;
     let (prog, args) = split_command(&command);
     let prog = prog.ok_or_else(|| DfmError::Other("diff command is empty".into()))?;
     let target_str = target_abs.to_string_lossy();

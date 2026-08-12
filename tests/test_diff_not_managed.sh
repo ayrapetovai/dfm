@@ -8,7 +8,7 @@ write "orphan" unmanaged.txt
 assert_succ grep -qF "unmanaged.txt is not managed" <<<$(dfm diff unmanaged.txt 2>/dev/null)
 
 # nonexistent target path with no source
-assert_succ grep -qF "ghost.txt is not managed" <<<$(dfm diff ghost.txt 3>/dev/null)
+assert_succ grep -qF "ghost.txt is not managed" <<<$(dfm diff ghost.txt 2>/dev/null)
 
 # source path whose target does not exist
 write "not-pulled" "$PWD/dotfiles/dot_bashrc"

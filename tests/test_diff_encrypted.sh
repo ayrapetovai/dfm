@@ -1,7 +1,8 @@
 # `dfm diff` on an encrypted source shows a diff of the *decrypted* content:
-# the configured diff tool receives the plaintext (both as a temp file for
-# {source} and piped to its stdin), never the .encrypted bytes. An encrypted
-# file that is not modified reports "is synchronized" without prompting.
+# the configured diff tool receives the plaintext as a temp file for {source}
+# (never via stdin, so vimdiff quits cleanly), never the .encrypted bytes. An
+# encrypted file that is not modified reports "is synchronized" without
+# prompting.
 
 PASSWORD="$(uuid)"
 SECRET="$(uuid)"

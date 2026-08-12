@@ -101,7 +101,7 @@ dfm init <PATH> [TARGET]
 
 `init` will:
 1. Locate or create the source directory (recursively searches parent directories for `.dfm_root`).
-2. Create the source ignore file if it does not exist (with `.dfm_root` and git-related entries).
+2. Create the source ignore file if it does not exist (with `.dfm_root`, git-related entries, and the `.current_merge`/`.current_diff` temp dirs used by `merge`/`diff`).
 3. Create or clear the state file at `$XDG_STATE_HOME/dfm/state.toml`, writing the target and source directory paths into it.
 4. Create the config file at `$XDG_CONFIG_HOME/dfm/config.toml` with defaults if it does not exist.
 
@@ -207,7 +207,7 @@ Show the differences between a managed target file and its source using a diff t
 dfm diff [PATH...]
 ```
 
-- `PATH...` — files or directories to diff. Pass a target path or a source path; the corresponding counter-part is resolved automatically (same as `pull`).
+- `PATH...` — files to diff. Pass a target path or a source path; the corresponding counter-part is resolved automatically (same as `pull`).
 - Without arguments, `dfm diff` does nothing and exits successfully.
 - `dfm diff` **never modifies any file** — it only reads.
 
@@ -551,6 +551,8 @@ source_dir/.dfm_ignore_file                -- source-side ignore patterns
 source_dir/dot_bashrc                      -- managed copy of ~/.bashrc
 source_dir/dot_bashrc.encrypted            -- encrypted managed copy
 source_dir/dot_bashrc.symlink              -- symlink pointer file
+source_dir/.current_merge/                 -- transient merge-tool scratch dir (0700, removed on exit)
+source_dir/.current_diff/                  -- transient diff-tool scratch dir (0700, encrypted diffs only)
 ```
 
 ---

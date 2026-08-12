@@ -451,13 +451,11 @@ fn enclosing_dirs_with_modes(settings: &Settings, inner_name: &Path) -> Vec<(Pat
 
 // Public writer/reader used by add / pull / merge / purge.
 
-/// Print the "needs an encryption password" info line for the given target
-/// file, exactly as `add` does before encrypting. Shared with the `diff`
-/// command so a password prompt (prompting or decrypting) is always preceded
-/// by the same "which file needs a password" info.
-pub fn announce_encryption_password(target_file_path: &Path, target_dir: &Path) {
-    let inner_name = file_path_relative_to(target_file_path, target_dir);
-    let inner_name = inner_name.to_string_lossy();
+/// Print the "needs an encryption password" info line for the given file's
+/// target-relative name, exactly as `add` does before encrypting. Shared with
+/// the `diff` command so a password prompt (prompting or decrypting) is always
+/// preceded by the same "which file needs a password" info.
+pub fn announce_encryption_password(inner_name: &str) {
     eprintln!("file {:?} needs an encryption password", inner_name);
 }
 /// Encrypt `target_file_path` into a new `*.encrypted` source file at
@@ -483,7 +481,7 @@ pub fn write_encrypted_file(
     let inner_name = inner_name_p.to_string_lossy().into_owned();
     let dirs = enclosing_dirs_with_modes(settings, &inner_name_p);
 
-    announce_encryption_password(target_file_path, &target_dir_path);
+    announce_encryption_password(&inner_name);
 
     let password = obtain_password(settings)?;
     let content = fs::read(target_file_path).map_err(|e| io_err(target_file_path, e))?;
