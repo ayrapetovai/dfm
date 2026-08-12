@@ -49,7 +49,7 @@ makepkg -C ../target/cargo-aur     # build the .pkg.tar.zst
 git push
 git tag -a v0.0.0
 git push --tags
-gh release create v0.0.0 --title "unstable v0.0.0" --draft --notes "feature list" ./target/release/dfm ./target/cargo-aur/dfm-bin-0.0.0-1-x86_64.tar.gz.zst ./target/cargo-aur/PKGBUILD
+gh release create v0.0.0 --title "unstable v0.0.0" --draft --notes "feature list" ./target/release/dfm ./target/cargo-aur/dfm-bin-0.0.0-1-x86_64.pkg.tar.zst ./target/cargo-aur/PKGBUILD
 ```
 
 The GitHub `source=` in the PKGBUILD points at the
