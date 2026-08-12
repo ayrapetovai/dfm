@@ -228,8 +228,8 @@ The diff tool is configured by the `diff_tool_command` setting (default: `vimdif
 
 | Placeholder | Description |
 |---|---|
-| `{target}` | Working-directory side (plain text). |
-| `{source}` | Cellar side. When the source is encrypted, the *decrypted* plaintext is passed to the tool as a temporary file (substituted for `{source}`); it is never piped to the tool's stdin (an interactive tool like `vimdiff` would read stdin into an extra buffer and refuse to quit), and the `.encrypted` bytes are never shown. |
+| `{target}` | Target directory side (usually plain text). |
+| `{source}` | Source directory side. When the source file is encrypted, the *decrypted* plaintext is passed to the tool as a temporary file (substituted for `{source}`); it is never piped to the tool's stdin (an interactive tool like `vimdiff` would read stdin into an extra buffer and refuse to quit), and the `.encrypted` bytes are never shown. |
 
 Like the merge tool, the diff tool is launched directly (fork-exec, no shell). A missing diff tool makes `dfm diff` fail with exit code 1.
 
