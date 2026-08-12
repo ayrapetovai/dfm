@@ -6,7 +6,8 @@ Rust CLI that syncs dotfiles between a **target** dir (usually `$HOME`) and a
 **source** dir (a git repo like `~/dotfiles`).
 
 Commands: `init`, `add` (target→source), `pull` (source→target), `merge`,
-`forget`, `purge`, `ignore`, `paths`, `config`, `status`, `encrypt`, `decrypt`.
+`diff`, `forget`, `purge`, `ignore`, `paths`, `config`, `status`,
+`encrypt`, `decrypt`.
 
 Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 `-v 1` brief (default), `-v 2` info, `-v 3` debug.
@@ -17,7 +18,7 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
 cargo test                             # 22 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 191 shell integration tests
+bash tests/launcher.sh -q              # 200 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
@@ -40,9 +41,9 @@ src/crypt.rs         DFMENC blob (Argon2id + XChaCha20-Poly1305) encrypt/decrypt
 build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
                      included cli.rs; build-deps clap + clap_mangen
 src/commands/mod.rs  re-exports + shared helpers (below); split_command
-src/commands/{add,pull,merge,forget,init,ignore,purge,config,paths,status,encrypt}.rs
+src/commands/{add,pull,merge,diff,forget,init,ignore,purge,config,paths,status,encrypt}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      191 shell tests
+tests/test_*.sh      200 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -54,7 +55,8 @@ tests/test_*.sh      191 shell tests
   `dot_prefix` ("dot_"), `symlink_postfix` (".symlink"), `encrypted_postfix`
   (".encrypted"), `force_encryption_for` (default `\.ssh`),
   `obtain_password_shell_command`, `merge_tool_command` (default
-  `vimdiff {target} {source} {result}`). `force_encryption_for` is checked
+  `vimdiff {target} {source} {result}`), `diff_tool_command` (default
+  `vimdiff -M {target} {source}` — read-only). `force_encryption_for` is checked
   against `BY_DEFAULT_FORCE_ENCRYPTION_FILES` (`std::sync::LazyLock<Vec<Regex>>`,
   default `\.ssh`).
 - **`Config`** — same fields, optional, TOML. **source_dir/target_dir are NOT
@@ -148,8 +150,14 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   `list_directory_or_error`; `msg_dry_run()`/`msg_nothing_to_do()`;
   `read_symlink_pointer`/`symlink_pointer_matches`.
 - `split_command(cmd) -> (Option<&str>, Vec<&str>)` — whitespace-split a command
-  template into program + args; shared by `run_merge` (merge tool) and
-  `print_paged` (pager).
+  template into program + args; shared by `run_merge` (merge tool),
+  `run_diff` (diff tool), and `print_paged` (pager).
+- `resolve_tool_command(command_opt: &Option<String>, tool_name) -> Result<String,
+  DfmError>` (mod.rs) — returns the configured tool command, or errors with
+  `Other("no {tool_name} tool configured — set the corresponding command in
+  config")` when unset/empty; used by `run_merge`/`run_diff`.
+- `DirGuard` (mod.rs, `pub(crate)`) — removes a `.current_merge`/`.current_diff`
+  dir on Drop; `run_merge` and `run_diff` remove a stale leftover up front.
 - `report_progress` + `ProgressLine` — single self-overwriting stderr line
   (`\r` + pad); shown at `-v 0/1`, suppressed at `-v ≥ 2` (single gate in
   `ProgressLine::set`, no-op when `log::max_level() >= Info`). `report_progress`
@@ -193,6 +201,26 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   program, rest = args with `{target}`/`{source}`/`{result}` replaced, run
   directly (no shell). Success = exit 0 **and** result exists; copy result to
   both sides (re-encrypt if needed), `update_sync_state`, clean up.
+- **`diff [PATH...]`** — read-only; no paths → do nothing, exit 0 (also does
+  nothing when the state file is missing, like no paths). `diff_one_path`
+  resolves source-side (target-rel via `starts_with(source_dir_abs_path)` +
+  `state_key_for`) or target-side (via `file_path_relative_to`, `!starts_with(
+  target_dir_abs_path)` → not managed); `path_exists` (via `symlink_metadata`,
+  `NotFound` only) distinguishes a missing path from permission-denied.
+  Situations: target symlink → print both pointees; source missing → `<path> is
+  not pulled` (computed target abs path); no source → `<path> is not managed`;
+  ignored (target ignore file only) → `<path> is ignored by <regexp>`; unreadable
+  → `skipping unreadable path ...`; `get_sync_time`/`compare_files` → NonModified
+  → `<path> is synchronized`, else encrypted content-compare
+  (`read_encrypted_bytes` vs `fs::read(target)`) or sha256 compare → differ →
+  `run_diff` (mod.rs): removes stale `.current_diff/` (resolved from
+  `source_dir_abs_path`), `DirGuard`, writes decrypted `source.<filename>` temp,
+  substitutes `{target}`/`{source}` via `split_command`, run directly (no
+  shell). Decrypted content is offered **as a file only**, never via stdin —
+  vim reads a piped stdin into a `[No Name]` buffer and `:qa` then fails with
+  E37/E162. Program missing → `NotFound("diff tool {prog} not found")` (exit
+  1); tool's non-zero exit → `debug!` only. Never writes state (immutable
+  borrow) nor touches the target.
 - **`forget [PATH...] [-f]`** — never deletes targets. No paths → all
   (traverse target + orphan state keys; orphan source checked modified → needs
   `--force`). Dispatches per path: `handle_target_symlink` (returns bool: fully
@@ -328,8 +356,9 @@ warning**, never a command failure:
   commands then error via `with_state`.
 - `source_rel_to_target_rel`/`resolve_source_variant`/`get_sync_time` live in
   **commands/mod.rs**, not lib.rs.
-- `merge_tool_command` runs directly (no shell) — `|`, `>`, `$VAR` don't work.
-- main.rs requires the state file for add/pull/forget/merge/status
+- `merge_tool_command`/`diff_tool_command` run directly (no shell) — `|`, `>`,
+  `$VAR` don't work.
+- main.rs requires the state file for add/pull/forget/merge/diff/status
   (`NotFound` otherwise); init/config/purge/ignore/paths work without it.
 
 ## Testing
@@ -342,7 +371,7 @@ warning**, never a command failure:
   command *exits 0*), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **191 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
+- Counts: **200 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components` —
@@ -417,6 +446,23 @@ shell tests green):
 - **L4**: `status` paged output through `$PAGER` even when stdout was a pipe;
   now gated on `stdout().is_terminal()` (verified manually: no pager spawn when
   piped, pager spawns only under a tty).
+
+### Current session: `dfm diff`
+
+Implemented `diff` (read-only) + verified (build + `cargo test` 22 + `clippy`
+clean + all 200 shell tests green):
+
+- `Settings`/`Config`: `diff_tool_command` (default `vimdiff -M {target}
+  {source}`, read-only), merged like `merge_tool_command`.
+- crypt.rs: extracted shared `decrypt_with_retry`; added
+  `read_encrypted_bytes(source_file_path) -> (Vec<u8>, u32 perms)`.
+- mod.rs: `resolve_merge_command` generalized → `resolve_tool_command`;
+  `DirGuard` now `pub(crate)`.
+- Tests: `test_diff_{no_args,synchronized,modified,not_managed,ignored,symlink,
+  encrypted,tool_not_found,unreadable}.sh`. Note for modified test: diff output
+  starts with `-`/`+`, so grep needs `assert_succ grep -qF -- "-$VAR"`. New tests avoid
+  `dfm ... | grep ...` pipes; they capture with a here-string instead:
+  `assert_succ grep -qF "..." <<<$(dfm ... 2>/dev/null)`.
 
 ### Testing assertions: got-it-right rule
 

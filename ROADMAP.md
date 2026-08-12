@@ -2,13 +2,6 @@
 
 ## Implement features
 
-- 'dfm diff' Add command 'diff'. When called without arguments must show files BothModified, TargetModified, SourceModified
-file list. When called with path must show a diff (like git diff) using difftool, that must
-be specified in config file, and have a default value "vimdiff {target} {source}".
-The 'diff' command must not modify any files.
-This feature must be added to README.md.
-The command of difftool must not be lauched in shell, it must be fork-exec.
-
 - Add the following records to the ignore_file at `dfm init`
 ```text
 \.rustup

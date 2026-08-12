@@ -524,6 +524,7 @@ pub struct Config {
     pub force_encryption_for: Vec<Regex>,
     pub obtain_password_shell_command: Option<String>,
     pub merge_tool_command: Option<String>,
+    pub diff_tool_command: Option<String>,
 }
 
 impl Config {
@@ -535,6 +536,7 @@ impl Config {
             force_encryption_for: settings.force_encryption_for.clone(),
             obtain_password_shell_command: settings.obtain_password_shell_command.clone(),
             merge_tool_command: settings.merge_tool_command.clone(),
+            diff_tool_command: settings.diff_tool_command.clone(),
         }
     }
 }
@@ -551,6 +553,7 @@ pub struct Settings {
     pub force_encryption_for: Vec<Regex>,
     pub obtain_password_shell_command: Option<String>,
     pub merge_tool_command: Option<String>,
+    pub diff_tool_command: Option<String>,
 }
 
 pub fn write_config(path_to_config_file: &Path, config: &Config) -> Result<(), DfmError> {
@@ -613,6 +616,7 @@ pub fn create_default_settings() -> Settings {
         force_encryption_for: BY_DEFAULT_FORCE_ENCRYPTION_FILES.to_vec(),
         obtain_password_shell_command: Some("".to_owned()), // TODO need to make serde to add empty files to file
         merge_tool_command: Some("vimdiff {target} {source} {result}".to_owned()),
+        diff_tool_command: Some("vimdiff -M {target} {source}".to_owned()),
     }
 }
 
@@ -668,6 +672,8 @@ pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_obj
                     .or_else(|| default.obtain_password_shell_command.clone()),
                 merge_tool_command: custom.merge_tool_command.clone()
                     .or_else(|| default.merge_tool_command.clone()),
+                diff_tool_command: custom.diff_tool_command.clone()
+                    .or_else(|| default.diff_tool_command.clone()),
             }
         }
         None => Settings {
@@ -1331,6 +1337,7 @@ fn test_merge_settings() {
         force_encryption_for: vec![],
         obtain_password_shell_command: None,
         merge_tool_command: Some("meld {target} {source} {result}".to_string()),
+        diff_tool_command: Some("meld {target} {source}".to_string()),
     };
     let merged = merge_settings(&default, &Some(custom), Some(&state));
     assert_eq!(merged.source_dir, "/home/user/dotfiles");
@@ -1338,6 +1345,7 @@ fn test_merge_settings() {
     // Config values win per field.
     assert_eq!(merged.dot_prefix, "cfg_");
     assert_eq!(merged.merge_tool_command, Some("meld {target} {source} {result}".to_string()));
+    assert_eq!(merged.diff_tool_command, Some("meld {target} {source}".to_string()));
     // Missing config fields fall back to defaults.
     assert_eq!(merged.symlink_postfix, default.symlink_postfix);
     assert_eq!(merged.encrypted_postfix, default.encrypted_postfix);
@@ -1353,6 +1361,7 @@ fn test_merge_settings() {
         force_encryption_for: vec![Regex::new(r"\.ssh").unwrap()],
         obtain_password_shell_command: None,
         merge_tool_command: None,
+        diff_tool_command: None,
     };
     let merged = merge_settings(&default, &Some(custom), None);
     assert_eq!(patterns(&merged.force_encryption_for), vec![r"\.ssh"]);

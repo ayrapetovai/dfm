@@ -231,6 +231,20 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 )
             },
         ),
+        Command::Diff { paths } => {
+            // No paths — do nothing, without even requiring the state file.
+            if paths.is_none() {
+                return Ok(());
+            }
+            let state =
+                state_opt.ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
+            diff_command(
+                &settings,
+                &xdg,
+                DiffArgs { paths },
+                &state,
+            )
+        },
         Command::Status {
             all,
             short,

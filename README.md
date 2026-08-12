@@ -33,11 +33,12 @@ git push
 
 | Tool | Required for | Notes |
 |---|---|---|
-| — | Core functionality | Add, pull, forget, merge, status, purge all work out of the box. |
+| — | Core functionality | Add, pull, forget, merge, diff, status, purge all work out of the box. |
 | `less` (or `$PAGER`) | Paged `status` output | Default pager is `less -FRSX`. Falls back to plain stdout if unavailable. |
 | `git` | Git-info line in `status` output | Shows branch and dirty state of the source directory. Silently skipped if the source directory is not a git repository. |
 | `sh` (POSIX) | `obtain_password_shell_command` | The command is piped to `sh` stdin (not exposed in `ps`). Falls back to interactive password prompt when unset. |
 | A merge tool (`vimdiff` by default) | `merge` subcommand | Configured via `merge_tool_command`. Any command that accepts `{target}`, `{source}`, `{result}` placeholders works (e.g., `vimdiff`, `nvim -d`, `meld`). |
+| A diff tool (`vimdiff` by default) | `diff` subcommand | Configured via `diff_tool_command`. Any command that accepts `{target}`, `{source}` placeholders works (e.g., `diff -u`, `vimdiff`, `meld`). |
 
 ---
 
@@ -49,12 +50,13 @@ git push
    - [add](#22-add)
    - [pull](#23-pull)
    - [merge](#24-merge)
-   - [forget](#25-forget)
-   - [ignore](#26-ignore)
-   - [paths](#27-paths)
-   - [config](#28-config)
-   - [purge](#29-purge)
-   - [status](#210-status)
+   - [diff](#25-diff)
+   - [forget](#26-forget)
+   - [ignore](#27-ignore)
+   - [paths](#28-paths)
+   - [config](#29-config)
+   - [purge](#210-purge)
+   - [status](#211-status)
 3. [Configuration](#3-configuration)
 4. [Encryption](#4-encryption)
 5. [Conflict detection](#5-conflict-detection)
@@ -197,7 +199,41 @@ The merge tool is configured by the `merge_tool_command` setting (default: `vimd
 
 After the merge tool exits successfully, `result.<file>` is copied back to both the target and the source (and re-encrypted if needed). The sync state is updated to the merge time.
 
-### 2.5 `forget`
+### 2.5 `diff`
+
+Show the differences between a managed target file and its source using a diff tool.
+
+```bash
+dfm diff [PATH...]
+```
+
+- `PATH...` — files or directories to diff. Pass a target path or a source path; the corresponding counter-part is resolved automatically (same as `pull`).
+- Without arguments, `dfm diff` does nothing and exits successfully.
+- `dfm diff` **never modifies any file** — it only reads.
+
+For each path, `dfm diff` reports:
+
+| Situation | Output |
+|---|---|
+| Target and source are synchronized | `{path} is synchronized` |
+| Target file has no source file | `{path} is not managed` |
+| Source file whose target does not exist | `{corresponding_target_file_path} is not pulled` |
+| Path matches an ignore pattern | `{path} is ignored by {regexp}` |
+| Target is a symlink | The target's pointee and the source's pointee |
+| Target and source differ | The diff tool is run |
+
+Modification is detected the same way as in `add` (mtime, then content): only when the files actually differ in content is the diff tool invoked. A content-identical but differently-timestamped file is reported as synchronized.
+
+The diff tool is configured by the `diff_tool_command` setting (default: `vimdiff -M {target} {source}` — `-M` makes both files unmodifiable, read-only). The placeholders are:
+
+| Placeholder | Description |
+|---|---|
+| `{target}` | Working-directory side (plain text). |
+| `{source}` | Cellar side. When the source is encrypted, the *decrypted* plaintext is passed to the tool as a temporary file (substituted for `{source}`); it is never piped to the tool's stdin (an interactive tool like `vimdiff` would read stdin into an extra buffer and refuse to quit), and the `.encrypted` bytes are never shown. |
+
+Like the merge tool, the diff tool is launched directly (fork-exec, no shell). A missing diff tool makes `dfm diff` fail with exit code 1.
+
+### 2.6 `forget`
 
 Remove a file from management (does **not** delete the target file).
 
@@ -230,7 +266,7 @@ dfm forget [PATH...] [--force] [--dry-run]
 | Source symlink file with matching target symlink | Remove source symlink file. |
 | Source symlink file with *mismatched* target symlink | Require `--force`. |
 
-### 2.6 `ignore`
+### 2.7 `ignore`
 
 Add paths or regex patterns to the ignore list. Ignored files are skipped by `add`, `pull`, `merge`, and `forget`.
 
@@ -255,7 +291,7 @@ Ignore file format:
 - Blank lines are ignored.
 - Each line is a regex that must match the *full* relative path (from the root of the target or source directory).
 
-### 2.7 `paths`
+### 2.8 `paths`
 
 Print the resolved paths used by dfm.
 
@@ -265,7 +301,7 @@ dfm paths
 
 Outputs the target directory, source directory, config file, and state file paths.
 
-### 2.8 `config`
+### 2.9 `config`
 
 Read or write config file properties.
 
@@ -283,7 +319,7 @@ dfm config --list
 
 Note: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the config file directly.
 
-### 2.9 `purge`
+### 2.10 `purge`
 
 Remove all program data: config file, source directory, and state directory.
 
@@ -304,7 +340,7 @@ Managed symlinks (created by `add -s` / `pull -s`) are replaced with regular cop
 | `-f`, `--force` | Remove the source directory even if it has un-pulled or un-pushed changes. |
 | `-n`, `--dry-run` | Check without making changes. |
 
-### 2.10 `encrypt` / `decrypt`
+### 2.11 `encrypt` / `decrypt`
 
 Encrypt or decrypt a single file outside of the target/source workflow. See [Encryption](#4-encryption) for details on the format.
 
@@ -317,7 +353,7 @@ dfm decrypt [PATH] [-o OUTPUT]
 |---|---|
 | `-o`, `--output` | Output path. `encrypt` defaults to `<input>.encrypted`; `decrypt` strips the `.encrypted` suffix (an explicit `-o` is required when the input has no suffix). |
 
-### 2.11 `status`
+### 2.12 `status`
 
 Show the current state of managed files, unmanaged files, and ignore patterns.
 
@@ -405,6 +441,7 @@ encrypted_postfix = ".encrypted"
 force_encryption_for = ["\\.ssh"]
 obtain_password_shell_command = ""
 merge_tool_command = "vimdiff {target} {source} {result}"
+diff_tool_command = "vimdiff -M {target} {source}"
 ```
 
 ### Properties
@@ -417,6 +454,7 @@ merge_tool_command = "vimdiff {target} {source} {result}"
 | `force_encryption_for` | Array of regex | File paths matching these regexes are always encrypted on `add`. |
 | `obtain_password_shell_command` | String (shell command) | Command to obtain the encryption password. See [Encryption](#4-encryption). |
 | `merge_tool_command` | String (template) | Merge tool command with `{target}`, `{source}`, `{result}` placeholders. |
+| `diff_tool_command` | String (template) | Diff tool command with `{target}`, `{source}` placeholders. |
 
 The source and target directories are **not** stored in the config file — they come from the state file (`state.toml`).
 
@@ -522,6 +560,7 @@ source_dir/dot_bashrc.symlink              -- symlink pointer file
 - **Config `--set` and arrays**: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the TOML file directly.
 - **Dotfiles outside UTF-8 paths**: Only valid UTF-8 paths are supported.
 - **Merge tool**: The merge command is run directly (no shell), so shell features (`|`, `>`, `$VAR`) in `merge_tool_command` are not processed.
+- **Diff tool**: Same as the merge tool — `diff_tool_command` is run directly (no shell), so shell features are not processed.
 
 ## Never be in scope
 - Windows support.

@@ -451,6 +451,15 @@ fn enclosing_dirs_with_modes(settings: &Settings, inner_name: &Path) -> Vec<(Pat
 
 // Public writer/reader used by add / pull / merge / purge.
 
+/// Print the "needs an encryption password" info line for the given target
+/// file, exactly as `add` does before encrypting. Shared with the `diff`
+/// command so a password prompt (prompting or decrypting) is always preceded
+/// by the same "which file needs a password" info.
+pub fn announce_encryption_password(target_file_path: &Path, target_dir: &Path) {
+    let inner_name = file_path_relative_to(target_file_path, target_dir);
+    let inner_name = inner_name.to_string_lossy();
+    eprintln!("file {:?} needs an encryption password", inner_name);
+}
 /// Encrypt `target_file_path` into a new `*.encrypted` source file at
 /// `source_file_path`, recording the file's permissions and the permissions of
 /// every enclosing managed directory.
@@ -474,7 +483,7 @@ pub fn write_encrypted_file(
     let inner_name = inner_name_p.to_string_lossy().into_owned();
     let dirs = enclosing_dirs_with_modes(settings, &inner_name_p);
 
-    eprintln!("file {:?} needs an encryption password", inner_name);
+    announce_encryption_password(target_file_path, &target_dir_path);
 
     let password = obtain_password(settings)?;
     let content = fs::read(target_file_path).map_err(|e| io_err(target_file_path, e))?;
@@ -521,15 +530,24 @@ fn decrypt_blob_with_retry(
     target_root: &Path,
     target_file_path: &Path,
 ) -> Result<(), DfmError> {
+    let decrypted = decrypt_with_retry(settings, source_data, encrypted_path)?;
+    restore_target(target_root, target_file_path, &decrypted)
+}
+
+/// Decrypt a dfm blob, prompting for the password and retrying once on a wrong
+/// password. Shared by every decrypt path (`read_encrypted_file`, standalone
+/// `decrypt`, and `read_encrypted_bytes`).
+fn decrypt_with_retry(
+    settings: &Settings,
+    source_data: &[u8],
+    encrypted_path: &Path,
+) -> Result<Decrypted, DfmError> {
     let mut already_retried = false;
     loop {
         let password = obtain_password(settings)?;
 
         match decrypt_bytes(source_data, &password) {
-            Ok(decrypted) => {
-                restore_target(target_root, target_file_path, &decrypted)?;
-                return Ok(());
-            }
+            Ok(decrypted) => return Ok(decrypted),
             Err(DecryptError::WrongPassword) if !already_retried => {
                 clear_password_cache();
                 eprintln!("wrong password for {:?}, please try again.", encrypted_path);
@@ -547,6 +565,18 @@ fn decrypt_blob_with_retry(
             }
         }
     }
+}
+
+/// Decrypt an encrypted source file (dfm format) into memory, returning the
+/// plaintext bytes and the recorded file mode. Used by `diff` to compare and
+/// pipe the decrypted content to the diff tool without touching any file.
+pub fn read_encrypted_bytes(
+    settings: &Settings,
+    source_file_path: &Path,
+) -> Result<(Vec<u8>, u32), DfmError> {
+    let source_data = fs::read(source_file_path).map_err(|e| io_err(source_file_path, e))?;
+    let decrypted = decrypt_with_retry(settings, &source_data, source_file_path)?;
+    Ok((decrypted.content, decrypted.file_mode))
 }
 
 /// Reject a directory entry recorded in an encrypted blob whose path could

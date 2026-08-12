@@ -174,6 +174,13 @@ pub enum Command {
         dry_run: bool,
     },
 
+    /// Show diff of managed files using the configured diff tool.
+    Diff {
+        /// Files to diff. If omitted - do nothing.
+        #[arg(value_name = "PATH", num_args = 1..)]
+        paths: Option<Vec<PathBuf>>,
+    },
+
     // must check conflicts
     /// Remove file from management (does not delete target file).
     Forget {
@@ -254,4 +261,3 @@ pub enum Command {
         output: Option<PathBuf>,
     },
 }
-

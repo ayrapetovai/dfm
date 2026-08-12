@@ -1,5 +1,6 @@
 pub(crate) mod add;
 pub(crate) mod config;
+pub(crate) mod diff;
 pub(crate) mod encrypt;
 pub(crate) mod forget;
 pub(crate) mod ignore;
@@ -12,6 +13,7 @@ pub(crate) mod status;
 
 pub(crate) use add::add_command;
 pub(crate) use config::config_command;
+pub(crate) use diff::diff_command;
 pub(crate) use encrypt::{encrypt_command, decrypt_command};
 pub(crate) use forget::forget_command;
 pub(crate) use ignore::ignore_command;
@@ -24,6 +26,7 @@ pub(crate) use status::status_command;
 
 pub(crate) use add::AddArgs;
 pub(crate) use config::ConfigArgs;
+pub(crate) use diff::DiffArgs;
 pub(crate) use encrypt::{EncryptArgs, DecryptArgs};
 pub(crate) use forget::ForgetArgs;
 pub(crate) use ignore::IgnoreArgs;
@@ -386,21 +389,27 @@ pub(crate) fn sync_file_copy(
     Ok(())
 }
 
-/// Resolve the merge command from settings.
-fn resolve_merge_command(settings: &Settings) -> Result<String, DfmError> {
-    if let Some(ref cmd) = settings.merge_tool_command
+/// Resolve a tool command template (merge/diff) from settings, or error when
+/// it is missing or empty.
+pub(crate) fn resolve_tool_command(
+    command_opt: &Option<String>,
+    tool_name: &str,
+) -> Result<String, DfmError> {
+    if let Some(cmd) = command_opt
         && !cmd.is_empty()
     {
         return Ok(cmd.clone());
     }
-    Err(DfmError::Other(
-        "no merge tool configured — set merge_tool_command in config".into()
-    ))
+    Err(DfmError::Other(format!(
+        "no {} tool configured — set the corresponding command in config",
+        tool_name
+    )))
 }
 
 /// RAII guard that removes a directory on drop, so temp dirs like
-/// `.current_merge/` are cleaned up on every exit path (including `?` returns).
-struct DirGuard(PathBuf);
+/// `.current_merge/` / `.current_diff/` are cleaned up on every exit path
+/// (including `?` returns).
+pub(crate) struct DirGuard(PathBuf);
 
 impl Drop for DirGuard {
     fn drop(&mut self) {
@@ -460,7 +469,7 @@ pub(crate) fn run_merge(
     } else {
         fs::copy(source_abs_path, &source_path).map_err(|e| io_copy_err(source_abs_path, &source_path, e))?;
     }
-    let command = resolve_merge_command(settings)?;
+    let command = resolve_tool_command(&settings.merge_tool_command, "merge")?;
 
     // Parse command template: first token is the program, rest are arguments
     // with {target}, {source} and {result} replaced by actual temp file paths.
