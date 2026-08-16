@@ -569,3 +569,13 @@ source_dir/.current_diff/                  -- transient diff-tool scratch dir (0
 - Support of version management system other than git.
 - Git commands embedding into CLI of dfm (dfm git status).
 
+## Repo management
+
+To reclaim space (including deleted files) in a local git repo:
+
+```shell
+git remote prune origin
+git reflog expire --expire=now --all
+git gc --prune=now --aggressive
+```
+
