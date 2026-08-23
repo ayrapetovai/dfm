@@ -373,6 +373,7 @@ By default, status prints a categorized report grouped by state. When one or mor
 Up to date:
   --  .bashrc
   --  .config/git/config
+  LL  .vimrc               (symlink, tracked)
 
 Modified:
   MM  .ssh/config          (both target and source modified)
