@@ -31,10 +31,6 @@ The 'sync' must do nothing with unmanaged files, and must not return with error 
 but no example of managed symlinks (LL). Add the string with example to point 2.10 text field.
 - (open) encrypted files are read fully into RAM (a few × file size).
   Consider streaming encryption (chunked AEAD) for very large secrets.
-- Command 'dfm diff filepath', where filepath does not exists prints "{filepath} is not managed",
-but this info must be displayed is there is a source file for a given path. When the filepath does
-not exists in target directory and corresponding source file does not exist than message "{filepath} does not exists"
-must be displayed.
 - subcommand status --modified shows unused ignore patterns with block header.
 --unpulled also shows unused ignore patterns with block header. And --managed...
 - subcommand status --unused-patterns does not output the block header "Unused ignore patterns:"

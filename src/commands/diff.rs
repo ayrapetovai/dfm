@@ -76,14 +76,18 @@ fn diff_one_path(
     if path_abs.starts_with(source_dir_abs_path) {
         // Provided path is in the source directory — infer the target.
         let source_abs = path_abs;
-        if !path_exists(&source_abs)? {
-            println!("{} is not managed", user_path_str);
-            return Ok(());
-        }
         let source_rel = state_key_for(&source_abs, source_dir_abs_path);
         let (target_rel, target_abs) =
             source_rel_to_target_abs(&source_rel, target_dir_abs_path, settings);
 
+        if !path_exists(&source_abs)? {
+            if !path_exists(&target_abs)? {
+                println!("{} does not exist", user_path_str);
+            } else {
+                println!("{} is not managed", user_path_str);
+            }
+            return Ok(());
+        }
         if let Some(pattern) = check_path_matches_regex_component_wise(
             target_ignore_regex, &PathBuf::from(&target_rel),
         ) {
@@ -122,7 +126,7 @@ fn diff_one_path(
             ).is_some() {
                 println!("{} is not pulled", user_path_str);
             } else {
-                println!("{} is not managed", user_path_str);
+                println!("{} does not exist", user_path_str);
             }
             return Ok(());
         }
