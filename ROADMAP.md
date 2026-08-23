@@ -33,7 +33,6 @@ but no example of managed symlinks (LL). Add the string with example to point 2.
   Consider streaming encryption (chunked AEAD) for very large secrets.
 - subcommand status --modified shows unused ignore patterns with block header.
 --unpulled also shows unused ignore patterns with block header. And --managed...
-- subcommand status --unused-patterns does not output the block header "Unused ignore patterns:"
 - 'dfm add .config/dfm' does not add the dfm's configuration file to source directory.
 - Reproduce: add README.md in .dfm_ignore_source in source directory, if README.md in target directory is managed and removed,
 the 'dfm status' will say that it is not pulled, but must ignore it.

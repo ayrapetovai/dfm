@@ -304,7 +304,10 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   height **and stdout is a terminal** (`IsTerminal` — a pipe/file is never
   paged). `--short` = `<code> <path>`; `--porcelain` = tab-separated, both
   uncolored & never paged. Filters: `-a -c -m -U -M -p -i -l -u` (hidden by
-  default: up-to-date, `LL`, ignored).
+  default: up-to-date, `LL`, ignored). `-u/--unused-patterns` early-returns
+  with the report's stale block (header + `  !P  <pat>` lines); no unused
+  patterns → silent exit 0. In `--porcelain` stale lines are appended only
+  when the filtered entry list is empty.
 
 ## Encryption (crypt.rs)
 
@@ -545,6 +548,14 @@ clean + all 200 shell tests green):
   test_status_basic.sh commented "exit code with conflicts is 1" while
   asserting `-eq 0`; product reality is status ALWAYS exits 0 (no rc contract
   documented anywhere) — now asserts 0 with corrected comments.
+- Bug fix: `status --unused-patterns` printed bare `!P\t<pat>` lines without
+  the "Unused ignore patterns:" header — its early-return branch (modeled on
+  the bare-list `--ignored-patterns` mode) bypassed `format_default`, the only
+  place the header existed. Now emits the report's block shape (header +
+  two-space-indented entries). Also removed the dead `*unused_patterns ||`
+  half of the porcelain append condition (unreachable behind that return).
+  Test: test_status_paths_unused_patterns.sh asserts header + entry for
+  scoped and unscoped flag runs. ROADMAP entry removed.
 
 ### Testing assertions: got-it-right rule
 

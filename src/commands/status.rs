@@ -457,9 +457,11 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         if stale_patterns.is_empty() {
             info!("unused ignore patterns");
         } else {
+            // Same block shape as the report's stale-patterns section
             let mut out = String::new();
+            out.push_str("Unused ignore patterns:\n");
             for p in &stale_patterns {
-                out.push_str(&format!("{}\t{}\n", StatusCode::StalePattern, p));
+                out.push_str(&format!("  {}  {}\n", StatusCode::StalePattern, p));
             }
             return write_stdout(&out);
         }
@@ -497,7 +499,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         for entry in &filtered {
             out.push_str(&format!("{}\t{}\n", entry.code, entry.path));
         }
-        if *unused_patterns || filtered.is_empty() {
+        if filtered.is_empty() {
             // If we have stale patterns, output them too
             for p in &stale_patterns {
                 out.push_str(&format!("{}\t{}\n", StatusCode::StalePattern, p));

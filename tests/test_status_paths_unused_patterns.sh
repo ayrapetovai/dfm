@@ -27,9 +27,14 @@ dfm status 2>/dev/null | grep -qF '!P  /never/matches.*'
 RES=$(dfm status .config 2>/dev/null)
 assert_fail grep -qF "Unused ignore patterns" <<<"$RES"
 
-# Scoped + --unused-patterns still gives the global answer: only the truly
-# unused pattern is listed, and the in-use `.cache` one never appears.
-dfm status --unused-patterns .config 2>/dev/null | grep -qF '/never/matches.*'
+# Scoped + --unused-patterns still gives the global answer, in report block
+# shape (header + indented entries): only the truly unused pattern is listed,
+# and the in-use `.cache` one never appears.
 RES=$(dfm status --unused-patterns .config 2>/dev/null)
+assert_succ grep -qF "Unused ignore patterns" <<<"$RES"
+assert_succ grep -qF '!P  /never/matches.*' <<<"$RES"
 assert_fail grep -qF '\.cache' <<<"$RES"
+
+# The flag without a path scope prints the same block
+dfm status --unused-patterns 2>/dev/null | grep -qF "Unused ignore patterns"
 
