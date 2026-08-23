@@ -41,7 +41,6 @@ the 'dfm status' will say that it is not pulled, but must ignore it.
 the 'dfm diff filename' will say that filename is ignored by the ignore regexp of the directory.
 But must actually show the difference. That means that the program searches files appending there name to the current
 directory path, not to the target directory path.
-- 'dfm forget filepath' does not print error message if filepath does not exists
 - 'dfm ignore ~/path', and path is present in target directory - ignore pattern unused, but must
 must be used against the directory relevant to /, becase the path expands in '/..'?
 - 'dfm ignore dir' creates an ignore expression that matches a subdir of other dir in target dir.

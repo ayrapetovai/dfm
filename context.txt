@@ -18,7 +18,7 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
 cargo test                             # 22 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 200 shell integration tests
+bash tests/launcher.sh -q              # 201 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
@@ -43,7 +43,7 @@ build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
 src/commands/mod.rs  re-exports + shared helpers (below); split_command
 src/commands/{add,pull,merge,diff,forget,init,ignore,purge,config,paths,status,encrypt}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      200 shell tests
+tests/test_*.sh      201 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -214,8 +214,11 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   `state_key_for`) or target-side (via `file_path_relative_to`, `!starts_with(
   target_dir_abs_path)` → not managed); `path_exists` (via `symlink_metadata`,
   `NotFound` only) distinguishes a missing path from permission-denied.
-  Situations: target symlink → print both pointees; source missing → `<path> is
-  not pulled` (computed target abs path); no source → `<path> is not managed`;
+   Situations: target symlink → print both pointees; source missing → `<path> is
+   not pulled` (computed target abs path); no source (existing target, or
+   missing source path whose inferred target exists) → `<path> is not managed`;
+   exists nowhere — given path and counterpart both absent, both branches →
+   `<path> does not exist`;
   ignored (target ignore file only) → `<path> is ignored by <regexp>`; unreadable
   → `skipping unreadable path ...`; `get_sync_time`/`compare_files` → NonModified
   → `<path> is synchronized`, else encrypted content-compare
@@ -233,8 +236,15 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - **`forget [PATH...] [-f]`** — never deletes targets. No paths → all
   (traverse target + orphan state keys; orphan source checked modified → needs
   `--force`). Dispatches per path: `handle_target_symlink` (returns bool: fully
-  handled vs falls through to pointee), `handle_missing_target`,
-  `handle_source_path`, `handle_target_file`. Tasks: `Delete(source)`,
+  handled vs falls through to pointee), `handle_missing_target` (returns bool:
+  resolved to nothing), `handle_source_path`, `handle_target_file`. An
+  explicitly-named path resolving to nothing — canonicalize NotFound, no source
+  variant, and for a lexically-source-side path the inferred target absent too
+  (`source_rel_to_target_rel`) — is collected into `missing_paths` and fails
+  after analysis with `NotFound("<path> does not exist")` (plural form for
+  several), before any task runs: nothing is forgotten, exit 1, `--force` does
+  not suppress it; broken symlinks keep silent handling. Tasks:
+  `Delete(source)`,
   `RemoveState(key)`, 3 phases: (1) best-effort delete sources (NotFound ok,
   other errors collected → fail), (2) remove state, (3) prune empty parents.
   `--force` when source modified or symlink pointer mismatches (`SourceModified`
@@ -380,7 +390,7 @@ warning**, never a command failure:
   command *exits 0*), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **200 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
+- Counts: **201 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components` —
@@ -499,6 +509,22 @@ clean + all 200 shell tests green):
 - **A4**: README §2.5 documents `diff` as files-only (directories are not
   traversed, error remains); file-layout adds `.current_merge/`/`.current_diff/`
   (0700, transient) and the init ignore list mentions them.
+
+### Current session: `diff` "does not exist" + `forget` nonexistent-path error
+
+- **`diff`** (committed by user as c9afba8): a path existing nowhere — target
+  or source branch, counterpart absent too — prints `<path> does not exist`
+  instead of `is not managed`; `is not managed` stays for files that exist but
+  have no source. Tests: `test_diff_not_exists.sh` (new),
+  `test_diff_not_managed.sh` slimmed to unmanaged cases only.
+- **`forget`**: an explicitly-named path resolving to nothing now fails with
+  `NotFound("<path> does not exist")` after the analysis phase — nothing is
+  forgotten, exit 1; replaces the old B2c contract (`tests/
+  test_forget_nonexistent_path.sh` rewritten: it previously asserted
+  silent success). See the forget bullet in Commands above.
+- Note: `handle_missing_target` returns bool now; source-side lexical check via
+  `source_rel_to_target_rel` avoids misreporting when the inferred target
+  exists.
 
 ### Testing assertions: got-it-right rule
 

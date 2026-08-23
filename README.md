@@ -217,6 +217,7 @@ For each path, `dfm diff` reports:
 |---|---|
 | Target and source are synchronized | `{path} is synchronized` |
 | Target file has no source file | `{path} is not managed` |
+| Path exists neither in target nor in source | `{path} does not exist` |
 | Source file whose target does not exist | `{corresponding_target_file_path} is not pulled` |
 | Path matches an ignore pattern | `{path} is ignored by {regexp}` |
 | Target is a symlink | The target's pointee and the source's pointee |
@@ -256,6 +257,7 @@ dfm forget [PATH...] [--force] [--dry-run]
 | File with a corresponding source file | Remove the source file (unless source was modified — then require `--force`). |
 | File with no corresponding source file | Do nothing. |
 | Non-existing file with a source entry | Remove the state entry (unless source was modified — then require `--force`). |
+| Path that exists nowhere (no target file, no source) | Error: `{path} does not exist` (exit code 1, nothing is forgotten). |
 
 #### Source-path behavior
 
@@ -265,6 +267,7 @@ dfm forget [PATH...] [--force] [--dry-run]
 | Source file with a target file | Remove source (unless modified — require `--force`). |
 | Source symlink file with matching target symlink | Remove source symlink file. |
 | Source symlink file with *mismatched* target symlink | Require `--force`. |
+| Source path that does not exist and has no target either | Error: `{path} does not exist` |
 
 ### 2.7 `ignore`
 

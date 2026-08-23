@@ -9,8 +9,8 @@ use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
 use super::{require_force, get_sync_time, read_symlink_pointer,
-            resolve_source_variant, SourceVariant, state_key_for,
-            list_directory_or_error,
+            resolve_source_variant, source_rel_to_target_rel, SourceVariant,
+            state_key_for, list_directory_or_error,
             msg_dry_run, msg_nothing_to_do, report_progress};
 
 /// Typed, per-command arguments for `forget` (built by the dispatcher).
@@ -83,19 +83,20 @@ fn handle_target_symlink(
 
 /// Target path no longer exists on disk. Queue deletion of the source file,
 /// resolved either directly (a relative path mirroring the source layout) or
-/// through the plain/encrypted/symlink variants.
+/// through the plain/encrypted/symlink variants. Returns `false` when nothing
+/// could be resolved — the path exists nowhere.
 fn handle_missing_target(
     settings: &Settings,
     target_dir_abs_path: &Path,
     source_dir_abs_path: &Path,
     target_path: &PathBuf,
     tasks: &mut Vec<ForgetTask>,
-) -> Result<(), DfmError> {
+) -> Result<bool, DfmError> {
     let direct_source = source_dir_abs_path.join(target_path);
     if direct_source.exists() {
         info!("source {:?} will be removed", direct_source);
         tasks.push(ForgetTask::Delete(direct_source));
-        return Ok(());
+        return Ok(true);
     }
 
     let target_abs_path = remove_dots_from_path(&target_dir_abs_path.join(target_path));
@@ -103,12 +104,12 @@ fn handle_missing_target(
         settings, target_dir_abs_path, source_dir_abs_path, &target_abs_path,
     ) else {
         info!("source for {:?} does not exist, skipping...", target_path);
-        return Ok(());
+        return Ok(false);
     };
 
     info!("source {:?} will be removed", source_abs_path);
     tasks.push(ForgetTask::Delete(source_abs_path));
-    Ok(())
+    Ok(true)
 }
 
 /// Target path resolved into the source directory (a source-side path).
@@ -284,6 +285,7 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
 
     let mut tasks: Vec<ForgetTask> = Vec::new();
     let mut error_messages: Vec<String> = vec![];
+    let mut missing_paths: Vec<String> = Vec::new();
 
     debug!("::check state procedure begins");
 
@@ -319,10 +321,32 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
             Err(e) => {
                 if target_path.is_symlink() {
                     debug!("symlink {:?} is broken: {}", target_path, e);
-                } else {
-                    handle_missing_target(
-                        settings, &target_dir_abs_path, &source_dir_abs_path, target_path, &mut tasks,
-                    )?;
+                } else if e.kind() == io::ErrorKind::NotFound {
+                    // An explicitly named path that does not exist: report it
+                    // unless it is a source-side path whose target counterpart
+                    // is present (nothing sensible to forget then).
+                    let lexical_abs = if target_path.is_absolute() {
+                        target_path.clone()
+                    } else {
+                        std::env::current_dir()?.join(target_path)
+                    };
+                    let lexical_abs = remove_dots_from_path(&lexical_abs);
+                    let resolves_to_nothing = if lexical_abs.starts_with(&source_dir_abs_path) {
+                        let source_rel = state_key_for(&lexical_abs, &source_dir_abs_path);
+                        let target_rel_str = source_rel_to_target_rel(
+                            &source_rel, &settings.dot_prefix,
+                            &settings.symlink_postfix, &settings.encrypted_postfix,
+                        );
+                        !target_dir_abs_path.join(&target_rel_str).exists()
+                    } else {
+                        !handle_missing_target(
+                            settings, &target_dir_abs_path, &source_dir_abs_path,
+                            target_path, &mut tasks,
+                        )?
+                    };
+                    if resolves_to_nothing {
+                        missing_paths.push(target_path.to_string_lossy().into_owned());
+                    }
                 }
                 continue;
             }
@@ -354,6 +378,15 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         }
     }
     progress.clear();
+
+    if !missing_paths.is_empty() {
+        if missing_paths.len() == 1 {
+            return Err(DfmError::NotFound(format!("{} does not exist", missing_paths[0])));
+        }
+        return Err(DfmError::NotFound(format!(
+            "paths do not exist: {}", missing_paths.join(", ")
+        )));
+    }
 
     // Build set of state keys already covered by tasks
     let mut processed_keys: HashSet<String> = HashSet::new();
