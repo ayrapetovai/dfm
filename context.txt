@@ -278,7 +278,11 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   `unresolved` for Config/State/Local ignore when the XDG path cannot be
   resolved (no panic with `$HOME` unset).
 - **`status [PATH...] [--short|--porcelain] [filters]`** — Phase 1
-  `state.syncs` → codes; Phase 2 walk target for unmanaged/ignored files (skips
+  `state.syncs` → codes; each entry is checked against BOTH ignore files:
+  target-side (`!!`/`!L`) and source-side `.dfm_ignore_file` (also `!!`/`!L`)
+  so a source-ignored entry is never offered as pullable — removing its
+  target copy yields `!!`, not `!?`; Phase 2 walk target for unmanaged/ignored
+  files (skips
   dfm internal files: state, config, target-ignore, and anything inside the
   source dir; `classify_target_symlink`/`classify_target_file`); fully-ignored
   pruned dirs → one `!! dir/`. **Path scoping** (`resolve_status_paths`): each
@@ -556,6 +560,13 @@ clean + all 200 shell tests green):
   half of the porcelain append condition (unreachable behind that return).
   Test: test_status_paths_unused_patterns.sh asserts header + entry for
   scoped and unscoped flag runs. ROADMAP entry removed.
+- Bug fix: a state entry whose source path matches `.dfm_ignore_file` was
+  reported `!?` (Unpulled) when the target copy was removed — status never
+  loaded the source-side ignore file. Phase 1 now classifies such entries
+  `!!`/`!L` with the matched pattern (mirroring the target-side branch), so
+  source-ignored files are not offered as pullable. New test
+  tests/test_status_source_ignored.sh; ROADMAP entry removed. Note: pull/add
+  themselves are state-driven and consult no ignore files (separate concern).
 
 ### Testing assertions: got-it-right rule
 

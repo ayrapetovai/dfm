@@ -182,6 +182,12 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     let target_ignore_file = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file)?;
 
+    // Source-side ignore patterns (.dfm_ignore_file): a state entry whose
+    // source path matches must not be offered as pullable — the file is
+    // non-syncable content of the source directory itself.
+    let source_ignore_file = calc_source_ignore_file(&source_dir_abs);
+    let source_ignore_regex = load_ignore_regex(&source_ignore_file)?;
+
     // Restrict the report to the requested paths (absolute or relative to the
     // target directory). With no paths, the whole target dir is analyzed.
     let requested_roots = resolve_status_paths(paths.as_ref(), &target_dir_abs, &source_dir_abs, settings)?;
@@ -226,6 +232,18 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         // Check ignore patterns
         if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_rel)) {
+            let code = if is_managed_symlink { StatusCode::IgnoredSymlink } else { StatusCode::Ignored };
+            entries.push(StatusEntry {
+                code,
+                path: target_rel.clone(),
+                matched_pattern: Some(pattern),
+            });
+            continue;
+        }
+
+        // Source-side patterns classify the same way: the entry stays out of
+        // the pullable groups (a removed target copy is not "Unpulled").
+        if let Some(pattern) = check_path_matches_regex_component_wise(&source_ignore_regex, &PathBuf::from(source_rel)) {
             let code = if is_managed_symlink { StatusCode::IgnoredSymlink } else { StatusCode::Ignored };
             entries.push(StatusEntry {
                 code,

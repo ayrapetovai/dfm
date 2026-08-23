@@ -34,14 +34,12 @@ but no example of managed symlinks (LL). Add the string with example to point 2.
 - subcommand status --modified shows unused ignore patterns with block header.
 --unpulled also shows unused ignore patterns with block header. And --managed...
 - 'dfm add .config/dfm' does not add the dfm's configuration file to source directory.
-- Reproduce: add README.md in .dfm_ignore_source in source directory, if README.md in target directory is managed and removed,
-the 'dfm status' will say that it is not pulled, but must ignore it.
 - Do 'cd' to ignored subdir of target directory, and in target directory there is a modified file,
 the 'dfm diff filename' will say that filename is ignored by the ignore regexp of the directory.
 But must actually show the difference. That means that the program searches files appending there name to the current
 directory path, not to the target directory path.
 - 'dfm ignore ~/path', and path is present in target directory - ignore pattern unused, but must
-must be used against the directory relevant to /, becase the path expands in '/..'?
+must be used against the directory relevant to /, because the path expands in '/..'?
 - 'dfm ignore dir' creates an ignore expression that matches a subdir of other dir in target dir.
 But must be matched only to the target's subdir, the relevance of matching is broken.
 
