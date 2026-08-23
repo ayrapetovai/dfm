@@ -28,7 +28,8 @@ dfm status --short | grep -q "^ M source_only.txt$"
 write "base4" "uptodate.txt"
 dfm add uptodate.txt
 # Should not appear in default output
-! dfm status 2>/dev/null | grep -q "uptodate.txt"
+RES=$(dfm status 2>/dev/null)
+assert_fail grep -qF "uptodate.txt" <<<"$RES"
 # Should appear with --all
 dfm status --all 2>/dev/null | grep -qF -- "--  uptodate.txt"
 

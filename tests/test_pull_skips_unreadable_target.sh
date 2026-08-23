@@ -14,7 +14,9 @@ write "aaa-v2" dotfiles/aaa.txt
 write "bbb-v2" dotfiles/bbb.txt
 chmod 000 bbb.txt
 
-dfm pull 2>&1 | grep -q "skipping unreadable path"
+# pull succeeds (exit 0) AND warns on stderr
+dfm pull >/dev/null 2>warn.txt
+assert_succ grep -qF "skipping unreadable path" warn.txt
 
 # the readable target was updated; restore permissions to inspect the
 # unreadable one, which kept its old content

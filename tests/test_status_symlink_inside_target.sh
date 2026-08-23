@@ -7,14 +7,16 @@ assert_source file.txt
 
 ln -s file.txt link-to-file.txt
 
-dfm status | grep -q link-to-file.txt
-assert $? = 0
+RES=$(dfm status)
+assert_succ grep -qF "link-to-file.txt" <<<"$RES"
 
 dfm add link-to-file.txt
 assert_source link-to-file.txt.symlink
 
-dfm status | grep -qv link-to-file.txt
-assert $? = 0
+# managed again → no longer reported as unmanaged
+# (the old `grep -qv` passed whenever ANY line lacked the name)
+RES=$(dfm status)
+assert_fail grep -qF "link-to-file.txt" <<<"$RES"
 
 rm link-to-file.txt file.txt
 

@@ -13,22 +13,10 @@ assert -f "$STATE_FILE"
 echo "not valid toml {{{" >"$STATE_FILE"
 
 # `status` must fail with a clear corrupt-state message
-set +e
-dfm status 2>err.txt
-rc=$?
-set -e
-
-assert_fail test $rc -eq 0
-assert_succ grep -q "state file is corrupt" err.txt
+run_fail dfm status
+assert_succ grep -qF "state file is corrupt" <<<"$FAIL_OUTPUT"
 
 # `add` must also fail (hard error, exit non-zero) rather than silently
 # overwriting the corrupt state
-set +e
-dfm add file.txt 2>err2.txt
-rc=$?
-set -e
-
-assert_fail test $rc -eq 0
-assert_succ grep -q "state file is corrupt" err2.txt
-
-rm -f err.txt err2.txt
+run_fail dfm add file.txt
+assert_succ grep -qF "state file is corrupt" <<<"$FAIL_OUTPUT"

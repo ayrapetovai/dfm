@@ -10,7 +10,9 @@ assert_source "file.txt"
 chmod 000 file.txt
 
 # unreadable target → forget warns and skips, source artifact stays
-dfm forget file.txt 2>&1 | grep -q "skipping unreadable path"
+# forget succeeds (exit 0) AND warns on stderr
+dfm forget file.txt >/dev/null 2>warn.txt
+assert_succ grep -qF "skipping unreadable path" warn.txt
 assert_source "file.txt"
 
 # restore permissions → the file is forgotten normally

@@ -16,8 +16,9 @@ assert_fail test -d "$PWD/dotfiles/dot_local/share/opencode"
 assert -f .local/share/opencode/config.json
 assert_content_eq ".local/share/opencode/config.json" "cfg"
 
-# state entries for the subtree must be cleared
-grep -q "syncs" "$PWD/.local/state/dfm/state.toml" || true
+# state file still exists, entries for the subtree cleared
+# (the old `grep -q syncs ... || true` here was a no-op)
+assert -f "$PWD/.local/state/dfm/state.toml"
 if grep -q 'dot_local/share/opencode' "$PWD/.local/state/dfm/state.toml"; then
     echo "state entry for subtree not cleared"
     exit 1

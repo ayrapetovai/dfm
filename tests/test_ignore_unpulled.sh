@@ -6,7 +6,8 @@ dfm add .the_file
 rm .the_file
 
 dfm ignore .the_file
-! dfm status | grep -q 'the_file'
+RES=$(dfm status)
+assert_fail grep -qF "the_file" <<<"$RES"
 dfm pull
 assert_fail test -f .the_file
 
@@ -17,6 +18,7 @@ rm .sencetive
 
 dfm ignore .sencetive
 dfm pull
-! dfm status | grep -q 'sencetive'
+RES=$(dfm status)
+assert_fail grep -qF "sencetive" <<<"$RES"
 assert_fail test -f .sencetive
 

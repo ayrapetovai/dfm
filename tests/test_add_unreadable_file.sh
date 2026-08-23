@@ -8,12 +8,15 @@ dfm init dotfiles
 write "secret" "locked.txt"
 chmod 000 "locked.txt"
 
-dfm add locked.txt 2>&1 | grep -q "skipping unreadable path"
+# succeeds (exit 0) AND warns on stderr
+dfm add locked.txt >/dev/null 2>warn.txt
+assert_succ grep -qF "skipping unreadable path" warn.txt
 assert_no_source "locked.txt"
 
 # an unreadable file among readable ones must not abort the add
 write "plain" "plain.txt"
-dfm add . 2>&1 | grep -q "skipping unreadable path"
+dfm add . >/dev/null 2>warn.txt
+assert_succ grep -qF "skipping unreadable path" warn.txt
 assert_source "plain.txt"
 assert_no_source "locked.txt"
 

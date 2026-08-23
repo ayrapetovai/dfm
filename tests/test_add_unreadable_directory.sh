@@ -11,7 +11,8 @@ mkdir -p .ssh
 write "key material" .ssh/id_rsa
 chmod 000 .ssh
 
-dfm add .ssh 2>&1 | grep -q "skipping unreadable path"
+dfm add .ssh >/dev/null 2>warn.txt
+assert_succ grep -qF "skipping unreadable path" warn.txt
 assert_no_source "dot_ssh/id_rsa"
 assert_no_source "dot_ssh/id_rsa.encrypted"
 

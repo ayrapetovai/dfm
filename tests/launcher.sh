@@ -65,6 +65,20 @@ function assert_fail() {
 }
 export assert_fail
 
+# Assert that a command exits non-zero and expose its combined stdout+stderr
+# as $FAIL_OUTPUT for output assertions. Replaces the set +e / rc=$? / set -e
+# dance: the assignment's exit status is exempt from errexit (left of &&), so
+# an expected non-zero exit passes through without aborting the test.
+FAIL_OUTPUT=
+function run_fail() {
+    FAIL_OUTPUT="$("$@" </dev/null 2>&1)" && {
+        echo "Assertion failed: expected non-zero exit: $*" >&2
+        return 1
+    }
+    return 0
+}
+export -f run_fail
+
 # Assert that a file exists in the source directory ($PWD/dotfiles/).
 function assert_source() {
     local file="$PWD/dotfiles/$1"

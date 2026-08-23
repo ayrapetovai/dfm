@@ -15,7 +15,8 @@ write "b" "ignored_dir/file.txt"
 dfm ignore -p "ignored_dir/"
 
 # Default: ignored_dir not shown (only changes + unmanaged)
-! dfm status 2>/dev/null | grep -q "ignored_dir"
+RES=$(dfm status 2>/dev/null)
+assert_fail grep -qF "ignored_dir" <<<"$RES"
 
 # --ignored: show only ignored files
 dfm status --ignored 2>/dev/null | grep -q "ignored_dir"

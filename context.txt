@@ -387,7 +387,9 @@ warning**, never a command failure:
   subshell `set -eEu -x` with a fresh `$HOME` (temp dir); prefers the debug
   binary. Tests must never read stdin (`< /dev/null`).
 - Helpers: `assert <expr...>`, `assert_fail <cmd...>` (fails the test if the
-  command *exits 0*), `assert_source <rel>` (file in `$PWD/dotfiles/`),
+  command *exits 0*), **`run_fail <cmd...>`** (asserts non-zero exit, exposes
+  combined stdout+stderr as `$FAIL_OUTPUT` — replaces the set +e/rc/set -e
+  dance), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
 - Counts: **201 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
@@ -525,6 +527,24 @@ clean + all 200 shell tests green):
 - Note: `handle_missing_target` returns bool now; source-side lexical check via
   `source_rel_to_target_rel` avoids misreporting when the inferred target
   exists.
+- Test-harness refactor (same session): added `run_fail` helper; all 8 tests
+  using the set +e/rc dance now use it; converted 26 `! grep` false-pass
+  negative assertions across 10 files to capture + `assert_fail` (they could
+  never fail under errexit). test_ignore_several_directories.sh rewritten:
+  its old check was doubly broken (BRE-literal `|`) and contradicted the
+  designed output — ignored dirs DO show as collapsed `!! dir/` in --all;
+  now asserts that plus no unmanaged dir entries.
+  test_forget_directory.sh: replaced a no-op `grep || true` with
+  `assert -f state.toml`.
+- Harness refactor round 3 (same session): fixed a `grep -qv` inverted-match
+  false-pass in test_status_symlink_inside_target.sh (passed when ANY line
+  lacked the name); 4 unreadable-skip tests now assert exit 0 AND the warning
+  (`>/dev/null 2>warn.txt` + grep) instead of message-only pipes; finished
+  capture-style conversion in status_basic/fold_blocked/paths (merged
+  duplicate-command greps). Third dead assertion found:
+  test_status_basic.sh commented "exit code with conflicts is 1" while
+  asserting `-eq 0`; product reality is status ALWAYS exits 0 (no rc contract
+  documented anywhere) — now asserts 0 with corrected comments.
 
 ### Testing assertions: got-it-right rule
 
@@ -540,8 +560,14 @@ failing command — but **only if that command is not negated with `!`**. POSIX
   `RES=$(dfm status 2>/dev/null); assert_fail grep -qF "pat" <<< "$RES"` —
   `assert_fail` just inverts the command status, so grep exiting 0 (text
   found) fails the test; grep exiting 1 (absent) passes it.
+- **Expected-failure commands** → `run_fail dfm ...` (launcher.sh): asserts
+  non-zero exit and captures combined output into `$FAIL_OUTPUT`; follow with
+  `assert_succ grep -qF "msg" <<<"$FAIL_OUTPUT"`. Replaced all
+  `set +e / rc=$? / set -e / err.txt` blocks (8 tests).
 - Anywhere shell negation is needed use `if cmd | grep -qF ...; then exit 1; fi`
   or `assert_fail`, and position grep as the final (non-negated) pipeline step.
+  The two `! grep` false-passes that violated this
+  (test_traversal_skips_ignored_dirs.sh) were converted to `assert_fail`.
 
 ## Debug strategies (in order)
 

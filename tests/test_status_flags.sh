@@ -27,25 +27,28 @@ dfm add uptodate.txt
 write "i" "unmanaged.txt"
 
 # --- test --modified (any M variant) ---
-dfm status --modified 2>/dev/null | grep -q "both.txt"
-dfm status --modified 2>/dev/null | grep -q "target_only.txt"
-dfm status --modified 2>/dev/null | grep -q "source_mod.txt"
+RES=$(dfm status --modified 2>/dev/null)
+assert_succ grep -q "both.txt" <<<"$RES"
+assert_succ grep -q "target_only.txt" <<<"$RES"
+assert_succ grep -q "source_mod.txt" <<<"$RES"
 # Should NOT show uptodate or unmanaged
-! dfm status --modified 2>/dev/null | grep -q "uptodate.txt"
-! dfm status --modified 2>/dev/null | grep -q "unmanaged.txt"
+assert_fail grep -q "uptodate.txt" <<<"$RES"
+assert_fail grep -q "unmanaged.txt" <<<"$RES"
 
 # --- test --unmanaged ---
-dfm status --unmanaged 2>/dev/null | grep -q "unmanaged.txt"
-! dfm status --unmanaged 2>/dev/null | grep -q "both.txt"
+RES=$(dfm status --unmanaged 2>/dev/null)
+assert_succ grep -q "unmanaged.txt" <<<"$RES"
+assert_fail grep -q "both.txt" <<<"$RES"
 
 # --- test --all ---
 dfm status --all 2>/dev/null | grep -qF -- "--  uptodate.txt"
 
 # --- test --managed ---
 # Shows managed files (both.txt, target_only.txt, source_mod.txt, uptodate.txt)
-dfm status --managed 2>/dev/null | grep -q "both.txt"
-dfm status --managed 2>/dev/null | grep -q "target_only.txt"
-dfm status --managed 2>/dev/null | grep -q "source_mod.txt"
-dfm status --managed 2>/dev/null | grep -q "uptodate.txt"
+RES=$(dfm status --managed 2>/dev/null)
+assert_succ grep -q "both.txt" <<<"$RES"
+assert_succ grep -q "target_only.txt" <<<"$RES"
+assert_succ grep -q "source_mod.txt" <<<"$RES"
+assert_succ grep -q "uptodate.txt" <<<"$RES"
 # Should NOT show unmanaged
-! dfm status --managed 2>/dev/null | grep -q "unmanaged.txt"
+assert_fail grep -q "unmanaged.txt" <<<"$RES"

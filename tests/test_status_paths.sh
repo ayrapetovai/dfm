@@ -26,26 +26,26 @@ dfm status 2>/dev/null | grep -qF "docs/readme.txt"
 
 # --- Relative dir path restricts the report --------------------------------
 RES=$(dfm status .config 2>/dev/null)
-echo "$RES" | grep -qF ".config/a/f.txt"
-echo "$RES" | grep -qF ".config/b/g.txt"
-assert_fail grep -qF "rootfile.txt" <<< "$RES"
-assert_fail grep -qF "docs/readme.txt" <<< "$RES"
+assert_succ grep -qF ".config/a/f.txt" <<<"$RES"
+assert_succ grep -qF ".config/b/g.txt" <<<"$RES"
+assert_fail grep -qF "rootfile.txt" <<<"$RES"
+assert_fail grep -qF "docs/readme.txt" <<<"$RES"
 
 # --- Absolute path works the same ------------------------------------------
 RES=$(dfm status "$PWD/docs" 2>/dev/null)
-echo "$RES" | grep -qF "docs/readme.txt"
-assert_fail grep -qF "rootfile.txt" <<< "$RES"
+assert_succ grep -qF "docs/readme.txt" <<<"$RES"
+assert_fail grep -qF "rootfile.txt" <<<"$RES"
 
 # --- Multiple paths: union ------------------------------------------------
 RES=$(dfm status .config/b docs 2>/dev/null)
-echo "$RES" | grep -qF ".config/b/g.txt"
-echo "$RES" | grep -qF "docs/readme.txt"
-assert_fail grep -qF ".config/a/f.txt" <<< "$RES"
+assert_succ grep -qF ".config/b/g.txt" <<<"$RES"
+assert_succ grep -qF "docs/readme.txt" <<<"$RES"
+assert_fail grep -qF ".config/a/f.txt" <<<"$RES"
 
 # --- Single file path ----------------------------------------------------
 RES=$(dfm status .config/a/f.txt 2>/dev/null)
-echo "$RES" | grep -qF ".config/a/f.txt"
-assert_fail grep -qF ".config/b/g.txt" <<< "$RES"
+assert_succ grep -qF ".config/a/f.txt" <<<"$RES"
+assert_fail grep -qF ".config/b/g.txt" <<<"$RES"
 
 # --- Flags combine with paths --------------------------------------------
 dfm status --porcelain .config 2>/dev/null | grep -qF "M 	.config/a/f.txt"
@@ -61,9 +61,9 @@ assert_fail dfm status no_such_path
 mkdir -p scoped/dir1 scoped/dir3
 write "a" "scoped/dir1/file"
 write "b" "scoped/dir3/file"
-dfm status scoped 2>/dev/null | grep -qF "??  scoped/*"
 RES=$(dfm status scoped 2>/dev/null)
-assert_fail grep -qF "scoped/dir1/file" <<< "$RES"
+assert_succ grep -qF "??  scoped/*" <<<"$RES"
+assert_fail grep -qF "scoped/dir1/file" <<<"$RES"
 rm -rf scoped
 
 # --- No paths behaves as before (regression guard) --------------------------

@@ -9,13 +9,6 @@ dfm add file.txt
 # remove the source directory entirely
 rm -rf "$PWD/dotfiles"
 
-set +e
-dfm status 2>err.txt
-rc=$?
-set -e
-
-assert_fail test $rc -eq 0
-grep -q "source directory does not exist" err.txt
-grep -q "dfm init" err.txt
-
-rm -f err.txt
+run_fail dfm status
+assert_succ grep -qF "source directory does not exist" <<<"$FAIL_OUTPUT"
+assert_succ grep -qF "dfm init" <<<"$FAIL_OUTPUT"

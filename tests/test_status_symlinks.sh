@@ -20,7 +20,8 @@ assert $(( $(dfm status --short --all 2>/dev/null | grep -c "^LL linked.txt$") )
 assert $(( $(dfm status --porcelain --all 2>/dev/null | grep -c $'^LL\tlinked.txt$') )) -eq 1
 
 # LL should NOT appear in default status (just like --)
-! dfm status 2>/dev/null | grep -q "linked.txt"
+RES=$(dfm status 2>/dev/null)
+assert_fail grep -qF "linked.txt" <<<"$RES"
 
 # ?L: unmanaged symlink — symlink to file not in state
 ln -s /nonexistent broken_link.txt
@@ -37,7 +38,8 @@ dfm status --unmanaged 2>/dev/null | grep -qF "?L  broken_link.txt"
 ln -s /nonexistent ignore_this_link.txt
 dfm ignore -p "ignore_this_link.txt"
 # !L visible only with --all or --ignored
-! dfm status 2>/dev/null | grep -q "ignore_this_link.txt"
+RES=$(dfm status 2>/dev/null)
+assert_fail grep -qF "ignore_this_link.txt" <<<"$RES"
 dfm status --all 2>/dev/null | grep -qF "!L  ignore_this_link.txt"
 dfm status --ignored 2>/dev/null | grep -qF "!L  ignore_this_link.txt"
 
@@ -47,5 +49,6 @@ dfm status --short --all 2>/dev/null | grep -q "^!L ignore_this_link.txt$"
 # Source dir files must NOT appear in status
 
 # Verify that internal source directory files (.dfm_root, etc.) are NOT in status
-! dfm status --short --all 2>/dev/null | grep -q "^\?\? \.dfm_root$"
-! dfm status --short --all 2>/dev/null | grep -q "^\?\? \.git$"
+RES=$(dfm status --short --all 2>/dev/null)
+assert_fail grep -q "^\?\? \.dfm_root$" <<<"$RES"
+assert_fail grep -q "^\?\? \.git$" <<<"$RES"

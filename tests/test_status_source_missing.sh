@@ -17,4 +17,5 @@ dfm status --all 2>/dev/null | grep -qF -- "--  still_managed.txt"
 dfm status --all 2>/dev/null | grep -qF -- "??  source_gone.txt"
 
 # must NOT show NM
-! dfm status --all 2>/dev/null | grep -q "NM"
+RES=$(dfm status --all 2>/dev/null)
+assert_fail grep -qF "NM" <<<"$RES"

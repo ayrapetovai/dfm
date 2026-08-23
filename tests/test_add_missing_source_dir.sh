@@ -9,15 +9,9 @@ rm -rf "$PWD/dotfiles"
 
 write "$CONTENT" file.txt
 
-set +e
-dfm add file.txt 2>err.txt
-rc=$?
-set -e
-
-assert_fail test $rc -eq 0
-grep -q "source directory does not exist" err.txt
-grep -q "dfm init" err.txt
+run_fail dfm add file.txt
+assert_succ grep -qF "source directory does not exist" <<<"$FAIL_OUTPUT"
+assert_succ grep -qF "dfm init" <<<"$FAIL_OUTPUT"
 
 # the source directory must not be recreated
 assert_fail test -d "$PWD/dotfiles"
-rm -f err.txt

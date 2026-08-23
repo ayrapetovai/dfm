@@ -5,12 +5,13 @@ dfm init dotfiles
 # Unmanaged file
 write "content" "new.txt"
 
-dfm status | grep -q "Unmanaged files"
-dfm status | grep -q "??  new.txt"
+RES=$(dfm status)
+assert_succ grep -qF "Unmanaged files" <<<"$RES"
+assert_succ grep -qF "??  new.txt" <<<"$RES"
 dfm status --short | grep -q "?? new.txt"
 dfm status --porcelain | grep -q "??	new.txt"
 
-# Exit code for unmanaged is 0 (only MM produces non-zero)
+# Exit code for unmanaged is 0
 dfm status > /dev/null 2>&1
 
 rm new.txt
@@ -35,15 +36,15 @@ write "modified_target" "clean.txt"
 write "modified_source" "$PWD/dotfiles/clean.txt"
 
 dfm status > /dev/null 2>&1
-dfm status 2>/dev/null | grep -q "Changes to merge"
-dfm status 2>/dev/null | grep -q "MM  clean.txt"
+RES=$(dfm status)
+assert_succ grep -qF "Changes to merge" <<<"$RES"
+assert_succ grep -qF "MM  clean.txt" <<<"$RES"
 dfm status --short | grep -q "^MM clean.txt$"
 dfm status --porcelain | grep -q "^MM	clean.txt$"
 
 # --conflicted filter
 dfm status --conflicted 2>/dev/null | grep -q "clean.txt"
 
-# Exit code with conflicts is 1
-dfm_status_exit=0
-dfm status > /dev/null 2>&1 || dfm_status_exit=$?
-[ $dfm_status_exit -eq 0 ]
+# Exit code with conflicts is still 0 (MM surfaces via output/--conflicted,
+# not the exit code — the old check claimed "is 1" but asserted -eq 0)
+dfm status > /dev/null 2>&1
