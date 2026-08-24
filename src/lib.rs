@@ -278,13 +278,10 @@ static COMPONENT_REGEX_CACHE: LazyLock<Mutex<ComponentRegexCache>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The anchored `/`-separated sub-pattern regexes for `pattern`, cached across
-/// calls. Index `i` corresponds to the `i`-th sub-pattern after dropping a
-/// trailing empty segment (see `pattern_matches_path_components`).
+/// calls. Index `i` corresponds to the `i`-th sub-pattern after dropping empty
+/// segments (see `pattern_matches_path_components`).
 fn component_sub_regexes(pattern: &str) -> Arc<Vec<Option<Regex>>> {
-    let mut sub_patterns: Vec<&str> = pattern.split('/').collect();
-    while sub_patterns.last() == Some(&"") {
-        sub_patterns.pop();
-    }
+    let sub_patterns: Vec<&str> = pattern.split('/').filter(|p| !p.is_empty()).collect();
     let anchored = |p: &str| -> String {
         if p.starts_with('^') || p.ends_with('$') {
             p.to_string()
@@ -307,9 +304,10 @@ fn component_sub_regexes(pattern: &str) -> Arc<Vec<Option<Regex>>> {
     compiled
 }
 
-/// Check if a regex pattern matches a relative path when matching is done
-/// component-wise (between `/` separators) with implicit anchoring at each
-/// component boundary.
+/// Check if a regex pattern matches a relative path. Matching is anchored to
+/// the beginning of the path: the pattern must match a **leading** sequence of
+/// the path's components, so relativity to the target/source root is
+/// preserved.
 ///
 /// * `pattern` — the regex pattern (may contain `/` to span multiple components)
 /// * `relative_path` — path relative to target or source directory
@@ -317,40 +315,38 @@ fn component_sub_regexes(pattern: &str) -> Arc<Vec<Option<Regex>>> {
 ///
 /// # Matching rules
 ///
-/// * The pattern is split on `/` into sub-patterns.
-/// * The path is split on `/` into components.
+/// * The pattern is split on `/` into sub-patterns; empty segments are dropped
+///   (a trailing `/` in a pattern or path is therefore insignificant).
+/// * The path is split on `/` into components; a leading `.` component
+///   (`./file.txt`) is skipped.
 /// * Each sub-pattern is tested against a single component.
 /// * If the sub-pattern doesn't already have `^` or `$` anchors, it is
 ///   implicitly anchored at both ends (`^(?:…)$`) so it must match the
 ///   entire component. If it does have anchors, they are respected as-is.
-/// * A single sub-pattern matches when any path component matches.
-/// * Multiple sub-patterns match when adjacent path components match each
-///   sub-pattern in order (sliding window).
+/// * A single sub-pattern without a left glob matches only the **first**
+///   path component (the top-level entry): `abc` ignores `./abc/…` but not
+///   `dir/abc/…`.
+/// * A single sub-pattern with a left glob (`.*` or `^`) matches any component
+///   at any depth.
+/// * Multiple sub-patterns must match the first components of the path in
+///   order (root-anchored sequence, no sliding): `dir/abc` ignores `dir/abc/…`
+///   but not `x/dir/abc/…`.
 ///
 /// # Examples
 ///
 /// | Pattern | Relative path | Matches? |
 /// |---|---|---|
-/// | `.*abc\.c` | `dir/abc.c` | ✅ — component `abc.c` |
-/// | `.*abc\.c` | `dir/the-abc.c` | ✅ — component `the-abc.c` |
-/// | `abc\.c` | `dir/abc.c` | ✅ — exactly component `abc.c` |
-/// | `abc\.c` | `dir/the-abc.c` | ❌ — not exact |
-/// | `.*abc/def.*` | `1abc/define/123` | ✅ — adjacent `1abc`+`define` |
-/// | `.*abc/def.*` | `abc/something/define` | ❌ — not adjacent |
+/// | `abc\.c` | `abc.c/file` | ✅ — first component |
+/// | `abc\.c` | `dir/abc.c` | ❌ — not at the root |
+/// | `.*abc\.c` | `dir/the-abc.c` | ✅ — left glob, any depth |
+/// | `dir/abc` | `dir/abc/file3` | ✅ — leading components |
+/// | `dir/abc` | `x/dir/abc/f` | ❌ — not from the root |
 pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bool {
-    // A trailing '/' in either the pattern or the path (e.g. "dirname/") yields
-    // an empty trailing segment that can never match a real component, making
-    // patterns like "dirname/" dead. Drop trailing empties so "dirname/"
-    // behaves like "dirname".
-    let mut components: Vec<&str> = relative_path.split('/').collect();
-    while components.last() == Some(&"") {
-        components.pop();
-    }
-
-    let mut sub_patterns: Vec<&str> = pattern.split('/').collect();
-    while sub_patterns.last() == Some(&"") {
-        sub_patterns.pop();
-    }
+    // Empty segments can never match a real component; dropping them makes a
+    // trailing or leading '/' in the pattern or the path insignificant and
+    // keeps sub-pattern indices aligned with the cached regexes.
+    let components: Vec<&str> = relative_path.split('/').filter(|c| !c.is_empty()).collect();
+    let sub_patterns: Vec<&str> = pattern.split('/').filter(|p| !p.is_empty()).collect();
 
     if sub_patterns.is_empty() {
         return false;
@@ -358,63 +354,34 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
 
     let sub_res = component_sub_regexes(pattern);
 
+    // Skip a leading "." component ("./file.txt" → "file.txt")
+    let comps: &[&str] = if components.first() == Some(&LEADING_DOT_COMPONENT) {
+        &components[1..]
+    } else {
+        &components[..]
+    };
+
     if sub_patterns.len() == 1 {
-        let sub = sub_patterns[0];
-        // A leading glob (.* or ^) means "match any component at any depth".
-        let has_left_glob = sub.starts_with(".*") || sub.starts_with('^');
         let Some(re) = sub_res[0].as_ref() else { return false };
+        // A leading glob (.* or ^) means "match any component at any depth".
+        let has_left_glob = sub_patterns[0].starts_with(".*") || sub_patterns[0].starts_with('^');
         if has_left_glob {
-            // Wildcard at left — test every component
-            for comp in &components {
-                if re.is_match(comp) {
-                    return true;
-                }
-            }
-            false
+            comps.iter().any(|c| re.is_match(c))
         } else {
-            // No wildcard at left — match any component that is NOT the last
-            // component (i.e., a directory prefix). A root-level path
-            // (single component, possibly prefixed with "./") always matches.
-            // Skip a leading "." component ("./file.txt" → "file.txt")
-            let comps: &[&str] = if components.first() == Some(&LEADING_DOT_COMPONENT) {
-                &components[1..]
-            } else {
-                &components[..]
-            };
-            if comps.len() == 1 {
-                // Root-level: match the single component
-                re.is_match(comps[0])
-            } else {
-                // Match any component except the last (filename) one
-                comps[..comps.len() - 1].iter().any(|c| re.is_match(c))
-            }
+            // Root-relative: only the first (leftmost non-empty) component of
+            // the path is tested, so `abc` never matches `dir/abc/…`.
+            comps.first().is_some_and(|c| re.is_match(c))
         }
     } else {
-        // Multiple sub-patterns: try sliding window of adjacent components
-        if sub_patterns.len() > components.len() {
+        // Root-anchored sequence: sub-pattern i must match component i,
+        // starting at the path root.
+        if sub_patterns.len() > comps.len() || sub_res.iter().any(|r| r.is_none()) {
             return false;
         }
-        if sub_res.iter().any(|r| r.is_none()) {
-            return false;
-        }
-        for window in components.windows(sub_patterns.len()) {
-            let mut all_match = true;
-            for (i, comp) in window.iter().enumerate() {
-                if let Some(ref re) = sub_res[i] {
-                    if !re.is_match(comp) {
-                        all_match = false;
-                        break;
-                    }
-                } else {
-                    all_match = false;
-                    break;
-                }
-            }
-            if all_match {
-                return true;
-            }
-        }
-        false
+        sub_res.iter().enumerate().all(|(i, re)| {
+            re.as_ref()
+                .is_some_and(|re| re.is_match(comps[i]))
+        })
     }
 }
 
@@ -1380,14 +1347,28 @@ fn test_pattern_matches_path_components_single_component() {
     // Single sub-pattern, exact match — root level always matches
     assert!(pattern_matches_path_components(r"abc\.c", "abc.c"));
     assert!(pattern_matches_path_components(r"abc\.c", "./abc.c"));
-    // No left glob — matches a directory component but NOT the last (file) component
-    assert!(!pattern_matches_path_components(r"abc\.c", "dir/abc.c"));
+    // Root-relative: matches the leading component of a nested path...
     assert!(pattern_matches_path_components(r"abc\.c", "abc.c/file"));
-    // Exact pattern does NOT match a different component
+    // ...but never a deeper component with the same name
+    assert!(!pattern_matches_path_components(r"abc\.c", "dir/abc.c/file"));
+    assert!(!pattern_matches_path_components(r"abc\.c", "dir/abc.c"));
+    // Exact pattern does NOT match a different first component
     assert!(!pattern_matches_path_components(r"abc\.c", "the-abc.c"));
     assert!(!pattern_matches_path_components(r"abc\.c", "dir/the-abc.c"));
     // With a left glob it matches at any depth
     assert!(pattern_matches_path_components(r".*abc\.c", "dir/abc.c"));
+}
+
+/// The reported bug: `dfm ignore abc` must ignore only the target's top-level
+/// `abc` directory, not `dir/abc` of another directory.
+#[test]
+fn test_pattern_is_root_relative_not_any_depth() {
+    assert!(pattern_matches_path_components("abc", "abc/file1"));
+    assert!(!pattern_matches_path_components("abc", "dir/file2"));
+    assert!(!pattern_matches_path_components("abc", "dir/abc/file3"));
+    // Multi-part patterns are root-anchored too
+    assert!(pattern_matches_path_components("dir/abc", "dir/abc/file3"));
+    assert!(!pattern_matches_path_components("dir/abc", "x/dir/abc/f"));
 }
 
 #[test]
@@ -1406,11 +1387,12 @@ fn test_pattern_matches_path_components_wildcard() {
 #[test]
 fn test_pattern_matches_path_components_cross_component_match() {
     let pat = r".*abc/def.*";
-    // Adjacent components match
+    // Root-anchored sequence of components
     assert!(pattern_matches_path_components(pat, "1abc/define"));
     assert!(pattern_matches_path_components(pat, "1abc/define/123"));
     assert!(pattern_matches_path_components(pat, "abc/define"));
-    assert!(pattern_matches_path_components(pat, "hola/1abc/define/123"));
+    // Not anchored at the path root — the sequence must lead the path
+    assert!(!pattern_matches_path_components(pat, "hola/1abc/define/123"));
     // Non-adjacent: "abc" and "define" separated by "something"
     assert!(!pattern_matches_path_components(pat, "abc/something/define"));
 }
@@ -1420,7 +1402,8 @@ fn test_pattern_matches_path_components_cross_component_exact() {
     let pat = r"abc/def";
     assert!(pattern_matches_path_components(pat, "abc/def"));
     assert!(pattern_matches_path_components(pat, "abc/def/other"));
-    assert!(pattern_matches_path_components(pat, "dir/abc/def"));
+    // Root-anchored: a nested occurrence does not match
+    assert!(!pattern_matches_path_components(pat, "dir/abc/def"));
     assert!(!pattern_matches_path_components(pat, "abc/defx"));
     assert!(!pattern_matches_path_components(pat, "xabc/def"));
 }
@@ -1447,13 +1430,13 @@ fn test_pattern_matches_path_components_too_many_subpatterns() {
 #[test]
 fn test_pattern_matches_path_components_trailing_slash_pattern() {
     // Trailing '/' must be treated the same as no slash: "dirname/" ignores
-    // the dirname directory and everything inside it.
+    // the top-level dirname directory and everything inside it.
     assert!(pattern_matches_path_components("dirname/", "dirname/a.txt"));
-    assert!(pattern_matches_path_components("dirname/", "a/dirname/b.txt"));
+    assert!(!pattern_matches_path_components("dirname/", "a/dirname/b.txt"));
     assert!(pattern_matches_path_components("dirname/", "dirname"));
     assert!(!pattern_matches_path_components("dirname/", "other.txt"));
     assert!(!pattern_matches_path_components("dirname/", "the-dirname"));
-    assert!(pattern_matches_path_components("a/b/", "x/a/b/f"));
+    assert!(pattern_matches_path_components("a/b/", "a/b/f"));
     assert!(pattern_matches_path_components("a/b/", "/a/b"));
     assert!(pattern_matches_path_components("a/b/", "a/b"));
 }

@@ -34,9 +34,7 @@ the 'dfm diff filename' will say that filename is ignored by the ignore regexp o
 But must actually show the difference. That means that the program searches files appending there name to the current
 directory path, not to the target directory path.
 - 'dfm ignore ~/path', and path is present in target directory - ignore pattern unused, but must
-must be used against the directory relevant to /, because the path expands in '/..'?
-- 'dfm ignore dir' creates an ignore expression that matches a subdir of other dir in target dir.
-But must be matched only to the target's subdir, the relevance of matching is broken.
+must be matched against the directory relevant to /, because the path expands in '/..'?
 
 ## Documents
 
