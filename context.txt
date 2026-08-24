@@ -314,8 +314,12 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   uncolored & never paged. Filters: `-a -c -m -U -M -p -i -l -u` (hidden by
   default: up-to-date, `LL`, ignored). `-u/--unused-patterns` early-returns
   with the report's stale block (header + `  !P  <pat>` lines); no unused
-  patterns → silent exit 0. In `--porcelain` stale lines are appended only
-  when the filtered entry list is empty.
+   patterns → silent exit 0. In `--porcelain` stale lines are appended only
+   when the filtered entry list is empty. Any restrictive filter flag
+   (`-c/-m/-U/-M/-p/-i`) suppresses the stale block in default reports AND the
+   porcelain fallback (`report_stale` = empty slice at the Output stage);
+   `--all` keeps the block (it widens, not restricts); scoped PATHS suppress
+   via empty `stale_patterns` (Phase 3).
 
 ## Encryption (crypt.rs)
 
@@ -617,6 +621,19 @@ target ignore file, which stay internal):
   `LC_ALL=C sort -t$'\t' -k2,2` (whole-line sort broke once a `??` entry and a
   dot-path joined the mix). Verified: build + cargo test 22 + clippy clean +
   all 204 shell tests green.
+
+### Current session: status filter flags no longer leak the stale block
+
+`status --modified/--unpulled/--managed` (and every restrictive filter:
+`-c/-m/-U/-M/-p/-i`) printed the "Unused ignore patterns:" block with their
+own list — format_default rendered `stale_patterns` unconditionally. Fix: the
+Output stage builds `report_stale` (empty when a restrictive filter is active)
+and passes it to both `format_default` and the porcelain empty-list fallback.
+Unfiltered default report, `--all`, scoped runs and `-u` mode unchanged.
+Tests: test_status_paths_unused_patterns.sh extended (--modified/--unpulled/
+--managed show only own lists; --conflicted --porcelain emits nothing, not
+!P lines; unfiltered report still carries the block). Verified: build +
+cargo test 22 + clippy clean + all 204 shell tests green.
 
 ## Debug strategies (in order)
 

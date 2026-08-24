@@ -430,6 +430,8 @@ Codes are two characters: the first represents the **target** side, the second r
 
 Without any filter flag, the default output shows: modified entries and unmanaged entries. Up-to-date (`--`, `LL`) and ignored (`!!`, `!L`) entries are **hidden** (use `--all` to see them).
 
+The "Unused ignore patterns" block is part of the **unfiltered** default report only (and of the dedicated `--unused-patterns` mode). Reports restricted by a filter flag show only their own lists and never include that block; `--all` keeps it.
+
 ---
 
 ## 3 Configuration

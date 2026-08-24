@@ -507,6 +507,18 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // ------------------------------------------------------------------
     let git_info = get_git_info(&source_dir_abs);
 
+    // A restrictive filter asks for one specific list, so the unused-patterns
+    // block belongs only to the unfiltered report (and to the dedicated
+    // --unused-patterns mode). --all only unhides categories — it keeps the
+    // block; scoped PATHS already suppress it via empty `stale_patterns`.
+    let restrictive_filter = *conflicted || *modified || *unmanaged
+        || *managed || *unpulled || *ignored;
+    let report_stale: &[String] = if restrictive_filter {
+        &[]
+    } else {
+        &stale_patterns
+    };
+
     if *porcelain {
         // Tab-separated, stable, never paged
         let mut out = String::new();
@@ -515,7 +527,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         }
         if filtered.is_empty() {
             // If we have stale patterns, output them too
-            for p in &stale_patterns {
+            for p in report_stale {
                 out.push_str(&format!("{}\t{}\n", StatusCode::StalePattern, p));
             }
         }
@@ -528,7 +540,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         write_stdout(&out)
     } else {
         let has_managed = entries.iter().any(|e| e.code.is_managed());
-        let output = format_default(&filtered, &entries, &stale_patterns, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
+        let output = format_default(&filtered, &entries, report_stale, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
         print_paged(&output)?;
         Ok(())
     }

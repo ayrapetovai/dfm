@@ -38,3 +38,34 @@ assert_fail grep -qF '\.cache' <<<"$RES"
 # The flag without a path scope prints the same block
 dfm status --unused-patterns 2>/dev/null | grep -qF "Unused ignore patterns"
 
+# ------------------------------------------------------------------
+# Filter-flag reports show ONLY their own lists: the unused-patterns
+# block appears solely in the unfiltered report (and via --unused-patterns).
+# ------------------------------------------------------------------
+
+# !? fixture: a managed file whose target copy was removed
+write "gone" "gone.txt"
+dfm add gone.txt
+rm gone.txt
+
+RES=$(dfm status --modified 2>/dev/null)
+assert_succ grep -qF "Changes to add" <<<"$RES"
+assert_fail grep -qF "Unused ignore patterns" <<<"$RES"
+
+RES=$(dfm status --unpulled 2>/dev/null)
+assert_succ grep -qF "Unpulled" <<<"$RES"
+assert_fail grep -qF "Unused ignore patterns" <<<"$RES"
+
+RES=$(dfm status --managed 2>/dev/null)
+assert_succ grep -qF ".config/a/f.txt" <<<"$RES"
+assert_fail grep -qF "Unused ignore patterns" <<<"$RES"
+
+# porcelain: a filtered run with an empty list must not fall back to !P lines
+RES=$(dfm status --conflicted --porcelain 2>/dev/null)
+assert_fail grep -qF '!P' <<<"$RES"
+assert "$RES" = ""
+
+# the unfiltered default report still carries the block
+RES=$(dfm status 2>/dev/null)
+assert_succ grep -qF "Unused ignore patterns" <<<"$RES"
+
