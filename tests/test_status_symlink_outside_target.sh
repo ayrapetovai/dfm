@@ -15,6 +15,9 @@
 
 dfm init dotfiles
 
+# this test needs a quiet tree; the unmanaged dfm config is out of scope here
+dfm ignore .config/dfm
+
 # ------------------------------------------------------------------
 # Setup: create a file outside the target directory to be the pointee
 # ------------------------------------------------------------------
@@ -27,19 +30,19 @@ write "pointee_content" "$PWD/../outside/.alien_pointee"
 ln -s "$PWD/../outside/.alien_pointee" ".alien_link"
 
 # Default output
-dfm status 2>/dev/null | grep -qF "?L  .alien_link"
+dfm status 2>/dev/null | assert_succ grep -qF "?L  .alien_link"
 
 # --short
-dfm status --short 2>/dev/null | grep -q "^?L .alien_link$"
+dfm status --short 2>/dev/null | assert_succ grep -q "^?L .alien_link$"
 
 # --porcelain
-dfm status --porcelain 2>/dev/null | grep -q "^\?L	\.alien_link$"
+dfm status --porcelain 2>/dev/null | assert_succ grep -q "^\?L	\.alien_link$"
 
 # --unmanaged includes ?L
-dfm status --unmanaged 2>/dev/null | grep -qF "?L  .alien_link"
+dfm status --unmanaged 2>/dev/null | assert_succ grep -qF "?L  .alien_link"
 
 # This is not in state — default output should mention unmanaged files too
-dfm status 2>/dev/null | grep -qF "Unmanaged files"
+dfm status 2>/dev/null | assert_succ grep -qF "Unmanaged files"
 
 # LL: after dfm add, the symlink is managed via a .symlink pointer file
 dfm add .alien_link
@@ -49,12 +52,12 @@ assert_source "dot_alien_link.symlink"
 assert_content_eq "$PWD/dotfiles/dot_alien_link.symlink" "$PWD/../outside/.alien_pointee"
 
 # Status (default) should show "All up-to-date."
-dfm status 2>/dev/null | grep -q "All up-to-date"
+dfm status 2>/dev/null | assert_succ grep -q "All up-to-date"
 
 # --all should show LL
-dfm status --all 2>/dev/null | grep -qF "LL  .alien_link"
-dfm status --short --all 2>/dev/null | grep -q "^LL .alien_link$"
-dfm status --porcelain --all 2>/dev/null | grep -q "^LL	\.alien_link$"
+dfm status --all 2>/dev/null | assert_succ grep -qF "LL  .alien_link"
+dfm status --short --all 2>/dev/null | assert_succ grep -q "^LL .alien_link$"
+dfm status --porcelain --all 2>/dev/null | assert_succ grep -q "^LL	\.alien_link$"
 
 # ?L again: after dfm forget, symlink is no longer in state
 dfm forget .alien_link
@@ -64,20 +67,20 @@ assert_no_source "dot_alien_link.symlink"
 [ -L ".alien_link" ]
 
 # Status should show ?L again
-dfm status --short 2>/dev/null | grep -q "^?L .alien_link$"
+dfm status --short 2>/dev/null | assert_succ grep -q "^?L .alien_link$"
 
 # Non-dot-prefixed symlink for comparison
 ln -s "$PWD/../outside/.alien_pointee" "plain_link"
 
-dfm status --short 2>/dev/null | grep -q "^?L plain_link$"
-dfm status --porcelain 2>/dev/null | grep -q "^\?L	plain_link$"
-dfm status 2>/dev/null | grep -qF "?L  plain_link"
+dfm status --short 2>/dev/null | assert_succ grep -q "^?L plain_link$"
+dfm status --porcelain 2>/dev/null | assert_succ grep -q "^\?L	plain_link$"
+dfm status 2>/dev/null | assert_succ grep -qF "?L  plain_link"
 
 rm -f plain_link
 
 # Broken symlink pointing outside (canonicalize fails)
 ln -s "$PWD/../outside/does_not_exist" ".broken_link"
-dfm status --short 2>/dev/null | grep -q "^?L .broken_link$"
+dfm status --short 2>/dev/null | assert_succ grep -q "^?L .broken_link$"
 rm -f .broken_link
 
 # Cleanup

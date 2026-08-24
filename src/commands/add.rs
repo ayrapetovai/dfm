@@ -204,8 +204,10 @@ fn handle_target_file(
         return Ok(());
     }
 
-    // Skip internal dfm files (state, config, ignore) — the user should never
-    // manage these via `dfm add`.
+    // Skip internal dfm files (state, target-ignore) — dfm rewrites these
+    // itself during sync runs, so managing them via `dfm add` would create
+    // self-referential conflicts. The config file is ordinary user data and
+    // is managed like any other dotfile.
     if internal_dfm_paths.contains(&target_abs_path) {
         debug!("target {:?} is an internal dfm file, skipping", target_abs_path);
         return Ok(());
@@ -356,11 +358,10 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
     // Compute internal dfm file paths so they can be excluded from traversal.
-    // These files (state, config, target-ignore) are dfm's own files — the user
-    // should never manage them via `add`.
+    // These files (state, target-ignore) are rewritten by dfm during sync
+    // runs — managing them via `add` would create self-referential conflicts.
     let internal_dfm_paths: Vec<PathBuf> = [
         calc_state_file_path(xdg),
-        calc_config_file_path(xdg),
         calc_local_ignore_file(xdg),
     ].into_iter().filter_map(|r| r.ok()).collect();
 

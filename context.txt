@@ -18,7 +18,7 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
 cargo test                             # 22 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 201 shell integration tests
+bash tests/launcher.sh -q              # 204 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
@@ -176,7 +176,9 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   (the merge/diff temp dirs); create state file + default config. Does **NOT**
   look for config inside the source dir (README matches).
 - **`add [PATH...] [-f] [-s] [-e]`** — traverse target (or given paths). Skips
-  internal dfm files, out-of-target paths, source-dir paths. Symlink →
+  dfm runtime files (state file, target ignore) and out-of-target paths,
+  source-dir paths. The dfm config file is NOT skipped: it is managed like any
+  other dotfile (named or traversed; `dfm add .config/dfm` works). Symlink →
   pointer-file (`CreateSymlinkFilePointer`, no pointee fallthrough). Ignored →
   skip unless `--force`; `--force` **also overrides for ignored symlinks**
   (both use `handle_ignore_or_override`, which removes the matching
@@ -283,8 +285,10 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   so a source-ignored entry is never offered as pullable — removing its
   target copy yields `!!`, not `!?`; Phase 2 walk target for unmanaged/ignored
   files (skips
-  dfm internal files: state, config, target-ignore, and anything inside the
-  source dir; `classify_target_symlink`/`classify_target_file`); fully-ignored
+  dfm runtime files: state, target-ignore, and anything inside the
+  source dir; the dfm config file is reported like any dotfile — `??` when
+  unmanaged, state-driven codes when managed;
+  `classify_target_symlink`/`classify_target_file`); fully-ignored
   pruned dirs → one `!! dir/`. **Path scoping** (`resolve_status_paths`): each
   PATH absolute/relative to the target dir, or a source-dir path mapped back to
   its target counterpart (like `pull`); nonexistent → error; no PATHS → whole
@@ -399,7 +403,7 @@ warning**, never a command failure:
   dance), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **201 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
+- Counts: **204 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components` —
@@ -590,6 +594,29 @@ failing command — but **only if that command is not negated with `!`**. POSIX
   or `assert_fail`, and position grep as the final (non-negated) pipeline step.
   The two `! grep` false-passes that violated this
   (test_traversal_skips_ignored_dirs.sh) were converted to `assert_fail`.
+
+### Current session: dfm config file is a manageable dotfile
+
+The dfm config file is no longer treated as an internal file (it is
+user-authored static data, never rewritten mid-run — unlike state.toml and the
+target ignore file, which stay internal):
+
+- add.rs: `internal_dfm_paths` now holds only state + target-ignore; the
+  "is an internal dfm file, skipping" branch never fires for the config.
+  Named (`dfm add .config/dfm`) AND full-traversal adds manage it.
+- status.rs: Phase-2 skip dropped → unmanaged config shows as `??`; managed
+  config gets state-driven codes via Phase 1. All other commands already had
+  no exclusions (pull even had tests: test_manage_own_config.sh).
+- Tests: new `test_add_own_config.sh` (named-dir add, status codes,
+  re-add after `config --set`, forget keeps target) and
+  `test_add_own_config_traversal.sh` (bare `dfm add` picks it up).
+  Quiet-tree tests that need an untouched config now `dfm ignore .config/dfm`
+  up front (test_status_basic.sh, test_missing_config_uses_state.sh,
+  test_status_symlink_outside_target.sh, test_add_symlink_outside_target_dir.sh).
+  test_status_porcelain_sorted.sh sorts porcelain by path field with
+  `LC_ALL=C sort -t$'\t' -k2,2` (whole-line sort broke once a `??` entry and a
+  dot-path joined the mix). Verified: build + cargo test 22 + clippy clean +
+  all 204 shell tests green.
 
 ## Debug strategies (in order)
 

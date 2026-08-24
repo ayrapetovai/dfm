@@ -31,7 +31,6 @@ The 'sync' must do nothing with unmanaged files, and must not return with error 
   Consider streaming encryption (chunked AEAD) for very large secrets.
 - subcommand status --modified shows unused ignore patterns with block header.
 --unpulled also shows unused ignore patterns with block header. And --managed...
-- 'dfm add .config/dfm' does not add the dfm's configuration file to source directory.
 - Do 'cd' to ignored subdir of target directory, and in target directory there is a modified file,
 the 'dfm diff filename' will say that filename is ignored by the ignore regexp of the directory.
 But must actually show the difference. That means that the program searches files appending there name to the current

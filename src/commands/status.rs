@@ -192,9 +192,10 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // target directory). With no paths, the whole target dir is analyzed.
     let requested_roots = resolve_status_paths(paths.as_ref(), &target_dir_abs, &source_dir_abs, settings)?;
 
-    // Paths to dfm's own internal files (skip in unmanaged detection)
+    // Paths to dfm's own internal files (skip in unmanaged detection). The
+    // config file is NOT internal here: it is ordinary user data, managed and
+    // reported like any other dotfile.
     let state_file_path = calc_state_file_path(xdg).ok();
-    let config_file_path = calc_config_file_path(xdg).ok();
 
     // ------------------------------------------------------------------
     // Phase 1 — Process every state entry (managed files)
@@ -346,14 +347,9 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             }
         }
 
-        // Skip known dfm internal files (state, config, ignore)
+        // Skip known dfm internal files (state, ignore)
         if let Some(ref sfp) = state_file_path
             && *target_abs == *sfp
-        {
-            continue;
-        }
-        if let Some(ref cfp) = config_file_path
-            && *target_abs == *cfp
         {
             continue;
         }

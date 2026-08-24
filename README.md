@@ -462,6 +462,14 @@ diff_tool_command = "vimdiff -M {target} {source}"
 
 The source and target directories are **not** stored in the config file — they come from the state file (`state.toml`).
 
+### Managing the config file itself
+
+The dfm config file is ordinary user data: it can be managed like any other
+dotfile with `add`, `pull`, `status`, `merge`, `diff`, and `forget` (e.g.
+`dfm add ~/.config/dfm`). The state file (`state.toml`) and the target ignore
+file are rewritten by dfm during sync runs, so they remain internal and cannot
+be managed.
+
 ---
 
 ## 4 Encryption

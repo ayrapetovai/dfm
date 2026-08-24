@@ -6,6 +6,9 @@
 
 dfm init dotfiles
 
+# the unmanaged dfm config file is out of scope here ("No files managed" below)
+dfm ignore .config/dfm
+
 # Create a target outside the target directory ($PWD = target dir); use a
 # unique name since $PWD/.. is the shared /tmp parent of the temp HOME.
 OUTSIDE_DIR="$PWD/../dfm_outside_$(uuid)"
@@ -23,7 +26,7 @@ assert_no_source "link.symlink"
 # state file must not contain the escaping key and all later commands work
 RES=$(dfm status 2>&1)
 assert_fail grep -q "escapes the source directory" <<<"$RES"
-dfm status 2>/dev/null | grep -q "No files managed"
+dfm status 2>/dev/null | assert_succ grep -q "No files managed"
 
 # sanity: a symlink *inside* the target dir is still managed normally
 ln -s "$OUTSIDE_DIR/target.txt" "$PWD/in_link"
@@ -32,4 +35,3 @@ assert_source "in_link.symlink"
 
 # cleanup
 rm -rf "$OUTSIDE_DIR"
-
