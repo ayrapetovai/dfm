@@ -18,7 +18,7 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
 cargo test                             # 23 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 206 shell integration tests
+bash tests/launcher.sh -q              # 207 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
@@ -43,7 +43,7 @@ build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
 src/commands/mod.rs  re-exports + shared helpers (below); split_command
 src/commands/{add,pull,merge,diff,forget,init,ignore,purge,config,paths,status,encrypt}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      206 shell tests
+tests/test_*.sh      207 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -145,10 +145,20 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - `source_rel_to_target_abs(source_rel, target_dir_abs, settings) →
   (target_rel, target_abs)` — shared source−-rel→target mapping (join + remove
   dots) used by pull, merge, status, purge.
-- `cli_path_to_abs(path, target_dir_abs)` — resolve a user PATH argument:
-  absolute → `remove_dots_from_path`, relative → join the **target dir**
-  (never CWD). Used by add/pull/merge/diff/forget/ignore/status at their
-  argument entry; `init` keeps CWD semantics (no target exists yet).
+- `cli_path_to_abs(path) -> Result<PathBuf>` — resolve a user PATH argument:
+  absolute → `remove_dots_from_path`, relative → join the **current working
+  directory** (normal shell semantics), then lexical normalization. Used by
+  diff + add's symlink branch + forget's lexical fallback; `init` resolves
+  its own arguments.
+- `cli_path_in_scope(arg, target_dir_abs, source_dir_abs) -> Result<PathBuf>`
+  — `cli_path_to_abs` + scope check: resolved path must start with target OR
+  source dir, else `InvalidInput("path … resolves to …, which is outside the
+  target directory …")`. Used by status (`resolve_status_paths`),
+  add, pull, merge, forget, ignore at their argument entry. Rationale: an
+  escaping path (leading `..` past the managed root, or absolute elsewhere)
+  used to silently escape the tree — status printed mangled `?? ./../../<abs>`
+  entries via `file_path_relative_to`'s fallback; add gave raw I/O errors;
+  diff said "not managed". diff stays permissive on purpose.
 - `resolve_dry_run(cmd_flag, global_flag)`; `require_force(force, msg)`;
   `prune_ignore_file(path, should_ignore, dry_run)` (keeps blank lines + full
   kept-line text, returns removed, writes only when something removed and
@@ -416,7 +426,7 @@ warning**, never a command failure:
   dance), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **206 shell tests**, **23 Rust unit tests** (15 in src/lib.rs
+- Counts: **207 shell tests**, **23 Rust unit tests** (15 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
    `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`,
@@ -655,16 +665,10 @@ all 206 shell tests green):
   reported "is ignored by abc" instead of diffing `~/file.txt`). New shared
   helper `cli_path_to_abs(path, target_dir_abs)` in commands/mod.rs
   (`cli_path_to_abs` = absolute → remove_dots, relative → join target).
-  Applied at every command's argument entry: add.rs, pull.rs, merge.rs,
-  diff.rs, forget.rs (entry + lexical-NotFound fallback), ignore.rs;
-  status.rs `resolve_status_paths` refactored onto the same helper. add.rs
-  symlink branch uses it too (`env::current_dir` import dropped). `init`
-  keeps CWD semantics by design (no target exists yet). Side detection
-  (`starts_with(source_dir)`) unchanged — source-side relative paths like
-  `dotfiles/dot_x` now work from any cwd. Test:
-  tests/test_relative_paths_anchored_at_target.sh (status/diff/add/forget/
-  pull from inside an ignored subdir; note `write` helper needs 2 args and
-  redirects inside `(cd … && cmd >out)` land in the subshell cwd).
+- **[SUPERSEDED — see "PATH args may not escape" below]** Relative PATH
+  anchoring was first moved target→`cli_path_to_abs(path, target)`, then the
+  user ruled for shell semantics; final state is CWD-anchoring + scope check.
+  Historical test name: tests/test_relative_paths_anchored_at_target.sh.
 - **Ignore records store the lexical target-relative path** (was:
   `regex::escape(absolute)`). Root cause of a latent breakage: the old loose
   matcher made absolute records match anywhere; the committed root-anchored
@@ -680,6 +684,27 @@ all 206 shell tests green):
   `!!  abc/  (abc)`; folding shows unmanaged subtree as `??  dir/*`.
   test_ignore_dirname_slash.sh asserts record `^dirname$` (trailing slash
   insignificant, storage is relative+escaped now).
+
+### Current session: PATH args may not escape the managed tree
+
+User transcript diagnosed (reproduced in /tmp with HOME = experiment dir):
+from `<target>/dir`, `status ../file.txt` resolved `..` from the TARGET
+anchor → landed above the tree; user ruled that relative args must follow
+shell semantics. Fix (two parts): 1) `cli_path_in_scope` (mod.rs) — after
+anchoring, the resolved path must start with target or source dir, else
+InvalidInput; wired into status/add/pull/merge/forget/ignore argument entry.
+diff stays permissive ("not managed"). 2) Anchoring switched target→CWD in
+`cli_path_to_abs` (now baseless, returns Result; current_dir failure is an
+error). So from `<tree>/dir`, `../file.txt` = the file next to dir inside
+the tree ✓, while escapes past the root are still rejected uniformly.
+Tests: test_paths_may_not_escape_target.sh (six commands × escaping arg +
+absolute /etc/hostname + source-side via `../dotfiles/file.txt` from sub);
+test_relative_paths_cwd_anchored.sh (renamed from …_anchored_at_target:
+bare name from ignored subdir is cwd-relative now and errors "does not
+exist" — accepted tradeoff; `../name` reaches parent's managed files).
+Gotcha: under `set -e`, `RES=$(… dfm …)` inherits nonzero rc → guard with
+`|| true`. Verified: build + cargo test 23 + clippy clean + all shell
+tests green.
 
 ## Debug strategies (in order)
 

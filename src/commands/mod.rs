@@ -89,14 +89,38 @@ pub(crate) fn source_rel_to_target_abs(
 }
 
 /// Resolve a user-provided CLI path argument to an absolute path. Relative
-/// paths are anchored at the **target directory**, never at the current
-/// working directory, so a command behaves identically no matter where it is
-/// invoked from. Absolute paths are normalized lexically as-is.
-pub(crate) fn cli_path_to_abs(path: &Path, target_dir_abs: &Path) -> PathBuf {
-    if path.is_absolute() {
-        remove_dots_from_path(path)
+/// paths are anchored at the **current working directory**, following normal
+/// shell semantics; the result is normalized lexically. Absolute paths are
+/// normalized as-is.
+pub(crate) fn cli_path_to_abs(path: &Path) -> Result<PathBuf, DfmError> {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        remove_dots_from_path(&target_dir_abs.join(path))
+        std::env::current_dir()?.join(path)
+    };
+    Ok(remove_dots_from_path(&abs))
+}
+
+/// `cli_path_to_abs` plus a scope check: the resolved path must lie under the
+/// target or the source directory. Without this, a leading `..` (or an
+/// absolute path elsewhere on the system) silently climbs out of the managed
+/// tree and commands either misbehave (`status` prints mangled relative
+/// entries) or produce confusing errors.
+pub(crate) fn cli_path_in_scope(
+    arg: &Path,
+    target_dir_abs: &Path,
+    source_dir_abs: &Path,
+) -> Result<PathBuf, DfmError> {
+    let abs = cli_path_to_abs(arg)?;
+    if abs.starts_with(target_dir_abs) || abs.starts_with(source_dir_abs) {
+        Ok(abs)
+    } else {
+        Err(DfmError::InvalidInput(format!(
+            "path {:?} resolves to {}, which is outside the target directory {}",
+            arg,
+            abs.display(),
+            target_dir_abs.display()
+        )))
     }
 }
 

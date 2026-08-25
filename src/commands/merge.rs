@@ -3,7 +3,7 @@ use log::{debug, info, warn};
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{run_merge, msg_dry_run, state_key_for, source_rel_to_target_abs, cli_path_to_abs};
+use super::{run_merge, msg_dry_run, state_key_for, source_rel_to_target_abs, cli_path_in_scope};
 
 /// Typed, per-command arguments for `merge` (built by the dispatcher).
 pub struct MergeArgs {
@@ -54,7 +54,7 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
 
     if let Some(paths) = paths {
         for path in paths {
-            let target_abs = cli_path_to_abs(path, &target_dir_abs_path);
+            let target_abs = cli_path_in_scope(path, &target_dir_abs_path, &source_dir_abs_path)?;
 
             if target_abs.starts_with(&source_dir_abs_path) {
                 // Provided path is in the source directory — infer target

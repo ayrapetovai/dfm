@@ -4,8 +4,9 @@ dfm init dotfiles
 OUTSIDE_FILE="$(mktemp --tmpdir=/tmp ignore_outside_XXXX.txt)"
 echo "content" > "$OUTSIDE_FILE"
 
-# ignoring a path outside management succeeds but does nothing
-dfm ignore "$OUTSIDE_FILE"
+# ignoring a path outside management is rejected
+run_fail dfm ignore "$OUTSIDE_FILE"
+assert_succ grep -qF "outside the target directory" <<<"$FAIL_OUTPUT"
 
 # outside file should remain untouched
 assert -f "$OUTSIDE_FILE"

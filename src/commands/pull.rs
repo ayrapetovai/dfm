@@ -11,7 +11,7 @@ use super::{sync_file_copy, require_force, read_symlink_pointer,
             update_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
             prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling,
-            source_rel_to_target_abs, cli_path_to_abs};
+            source_rel_to_target_abs, cli_path_in_scope};
 use microxdg::Xdg;
 
 /// Typed, per-command arguments for `pull` (built by the dispatcher).
@@ -391,9 +391,11 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
     // Relative CLI paths are anchored at the target directory, not at the
-    // current working directory.
+    // current working directory, and may not resolve out of the managed tree.
     let paths = match paths {
-        Some(p) => p.iter().map(|p| cli_path_to_abs(p, &target_dir_abs_path)).collect(),
+        Some(p) => p.iter()
+            .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
+            .collect::<Result<Vec<_>, _>>()?,
         None => vec![source_dir_abs_path.clone()]
     };
 

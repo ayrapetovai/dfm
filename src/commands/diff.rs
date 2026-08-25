@@ -66,9 +66,7 @@ fn diff_one_path(
 ) -> Result<(), DfmError> {
     let user_path_str = user_path.to_string_lossy();
 
-    // Relative paths are anchored at the target directory, not at the
-    // current working directory.
-    let path_abs = cli_path_to_abs(user_path, target_dir_abs_path);
+    let path_abs = cli_path_to_abs(user_path)?;
 
     if path_abs.starts_with(source_dir_abs_path) {
         // Provided path is in the source directory — infer the target.

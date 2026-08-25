@@ -12,7 +12,8 @@ use microxdg::Xdg;
 use super::{sync_file_copy, require_force, symlink_pointer_matches,
             update_sync_state, remove_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
-            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling, cli_path_to_abs};
+            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling, cli_path_to_abs,
+            cli_path_in_scope};
 
 /// Typed, pre-resolved arguments for the `add` command (built by the
 /// dispatcher from the matching clap subcommand).
@@ -71,9 +72,9 @@ fn handle_target_symlink(
         return Ok(());
     }
 
-    // A relative path is anchored at the target directory (the dispatcher
-    // already maps CLI paths, so this is normally already absolute).
-    let target_symlink_abs_path_raw = cli_path_to_abs(target_path, target_dir_abs_path);
+    // The dispatcher already maps CLI paths to absolute, but this function is
+    // also reachable with a relative path; anchor it at the current directory.
+    let target_symlink_abs_path_raw = cli_path_to_abs(target_path)?;
     // canonicalize() would resolve the symlink itself, so canonicalize only its
     // parent directory and re-append the (still-symlink) name.
     let mut target_symlink_abs_path = {
@@ -360,9 +361,11 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
     ].into_iter().filter_map(|r| r.ok()).collect();
 
     // Relative CLI paths are anchored at the target directory, not at the
-    // current working directory.
+    // current working directory, and may not resolve out of the managed tree.
     let paths = match paths {
-        Some(p) => p.iter().map(|p| cli_path_to_abs(p, &target_dir_abs_path)).collect(),
+        Some(p) => p.iter()
+            .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
+            .collect::<Result<Vec<_>, _>>()?,
         None => vec![target_dir_abs_path.clone()]
     };
 

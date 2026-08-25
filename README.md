@@ -88,7 +88,7 @@ The dot prefix and other postfixes are configurable (see [Configuration](#3-conf
 
 ## 2 Commands
 
-Except for `init` (which runs before any target directory exists), all `PATH` arguments are resolved relative to the **target directory** — never relative to the current working directory — so a command behaves identically no matter where it is invoked from. Absolute paths are used as-is.
+Relative `PATH` arguments follow normal shell semantics: they are anchored at the **current working directory** and normalized lexically (`dir/../file` becomes `file`). A `PATH` may not resolve outside the managed tree: if it lands under neither the target nor the source directory (a `..` climbing past the managed root, or an absolute path elsewhere), the command rejects it with an error. The read-only `diff` is the exception — it accepts any existing path and reports it as *not managed*.
 
 ### 2.1 `init`
 

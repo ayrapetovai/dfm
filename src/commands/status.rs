@@ -12,7 +12,7 @@ use regex::RegexSet;
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{list_directory, report_progress, split_command, state_key_for, source_rel_to_target_abs, cli_path_to_abs};
+use super::{list_directory, report_progress, split_command, state_key_for, source_rel_to_target_abs, cli_path_in_scope};
 
 /// Typed, per-command arguments for `status` (built by the dispatcher).
 pub struct StatusArgs {
@@ -130,7 +130,7 @@ fn resolve_status_paths(
         Some(paths) => {
             let mut roots = Vec::with_capacity(paths.len());
             for p in paths {
-                let abs = cli_path_to_abs(p, target_dir_abs);
+                let abs = cli_path_in_scope(p, target_dir_abs, source_dir_abs)?;
                 if !abs.exists() {
                     return Err(DfmError::other(format!(
                         "path does not exist: {}",

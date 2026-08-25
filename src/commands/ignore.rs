@@ -23,7 +23,7 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
 
 use dfm::*;
 use crate::DfmError;
-use super::{msg_dry_run, msg_nothing_to_do, prune_ignore_file, cli_path_to_abs};
+use super::{msg_dry_run, msg_nothing_to_do, prune_ignore_file, cli_path_in_scope};
 use microxdg::Xdg;
 
 /// Typed, per-command arguments for `ignore` (built by the dispatcher).
@@ -56,7 +56,9 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
     // Relative CLI paths are anchored at the target directory, not at the
     // current working directory.
     let traversed_paths: Vec<PathBuf> = match paths {
-        Some(p) => p.iter().map(|p| cli_path_to_abs(p, &target_dir_abs_path)).collect(),
+        Some(p) => p.iter()
+            .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
+            .collect::<Result<Vec<_>, _>>()?,
         None => empty_paths.clone(),
     };
 
