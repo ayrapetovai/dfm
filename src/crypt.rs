@@ -1,11 +1,13 @@
 use crate::DfmError;
 use log::debug;
 use std::fs;
-use std::io::Write;
+use std::io::{BufWriter, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
+
+use chacha20poly1305::XChaCha20Poly1305;
 
 use crate::{Settings, file_path_relative_to, io_err};
 
@@ -99,24 +101,38 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
     Ok(password)
 }
 
-// Encrypted blob format.
+// Encrypted blob format (v3, streaming).
 //
 // Every `*.encrypted` file is a self-describing container: the password is
 // stretched with Argon2id (memory-hard KDF), then the payload is authenticated-
-// encrypted with XChaCha20-Poly1305. Layout (all integers little-endian):
+// encrypted with XChaCha20-Poly1305 in fixed-size chunks, so encryption and
+// decryption never hold more than one chunk of plaintext/ciphertext in RAM
+// regardless of file size. Layout (all integers little-endian):
 //
 //   magic            b"DFMENC\0"     8 bytes
-//   version          u8              1 byte
-//   header_len       u32             4 bytes
-//   header           [header_len]    variable (v1) / fixed 52 bytes (v2)
-//   ciphertext+tag   rest            16-byte Poly1305 tag appended
+//   version          u8              1 byte (3)
+//   header_len       u32             4 bytes (fixed 64 for v3)
+//   header           64 bytes
+//   chunk*           sequence of sealed chunks until end of file
 //
 // header:
-//   m_cost         u32  Argon2id memory cost in KiB
-//   t_cost         u32  Argon2id time cost
-//   p_cost         u32  Argon2id parallelism
-//   salt           16 bytes
-//   nonce          24 bytes (XChaCha20 nonce)
+//   m_cost           u32  Argon2id memory cost in KiB
+//   t_cost           u32  Argon2id time cost
+//   p_cost           u32  Argon2id parallelism
+//   salt             16 bytes
+//   base_nonce       24 bytes
+//   chunk_size       u32  plaintext bytes per chunk (bounded on read)
+//   plaintext_len    u64  total plaintext length (metadata + content)
+//
+// chunk i:
+//   ct_i             chunk_size bytes of ciphertext (last chunk shorter)
+//   tag_i            16-byte Poly1305 tag over ct_i
+//
+// Per-chunk nonce: base_nonce with its last 8 bytes replaced by a 7-byte
+// big-endian chunk counter followed by a final-chunk flag byte. The per-chunk
+// AAD is header || u64(i) || flag. This binds every chunk to its position:
+// reordered, duplicated, replayed-as-final or truncated chunks fail
+// authentication instead of silently decrypting.
 //
 // plaintext (encrypted):
 //   metadata_len   u32  length of the metadata section that follows
@@ -131,14 +147,13 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 //
 // Filenames, modes and directory structure are encrypted together with the
 // content, so nothing about the payload is visible without the password.
-//
-// The header is the AEAD "additional data": a tampered header fails
-// authentication, and a wrong password produces a tag mismatch that dfm uses
-// to detect/retry. The KDF parameters travel in the header, so archives keep
-// decrypting even when the code defaults change later.
+// The header is part of every chunk's AAD: a tampered header fails
+// authentication, and a wrong password produces a tag mismatch on the first
+// chunk that dfm uses to detect/retry. The KDF parameters travel in the
+// header, so archives keep decrypting even when the code defaults change.
 
 const MAGIC: &[u8; 7] = b"DFMENC\x00";
-const FORMAT_VERSION: u8 = 2;
+const FORMAT_VERSION: u8 = 3;
 
 // Argon2id cost parameters. Release builds use 64 MiB / 3 iterations / 4
 // lanes so each password guess costs ~64 MiB of memory and measurable CPU.
@@ -162,6 +177,21 @@ const KDF_P_COST: u32 = 4;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 const KEY_LEN: usize = 32;
+const TAG_LEN: usize = 16;
+
+// Streaming chunk size: the amount of plaintext sealed per AEAD record. Peak
+// memory during encrypt/decrypt is O(chunk_size) + Argon2, not O(file).
+const CHUNK_SIZE: u32 = 64 * 1024;
+
+// Bounds accepted when reading `chunk_size` from an encrypted header. A
+// crafted file must not force a huge allocation nor a pathological number of
+// tiny records.
+const MIN_CHUNK_SIZE: u32 = 256;
+const MAX_CHUNK_SIZE: u32 = 8 * 1024 * 1024;
+
+// The per-chunk nonce carries a 7-byte (56-bit) counter; refuse to encrypt
+// beyond it. With 64 KiB chunks this is a 4 EiB ceiling — unreachable.
+const MAX_STREAM_CHUNKS: u64 = 1 << 56;
 
 // Upper bounds accepted when reading KDF cost parameters from an encrypted
 // blob's header. A crafted file committed to a shared repo must not be able
@@ -171,8 +201,20 @@ const MAX_KDF_M_COST_KIB: u32 = 16 * 1024 * 1024; // 16 GiB
 const MAX_KDF_T_COST: u32 = 10;
 const MAX_KDF_P_COST: u32 = 1024;
 
-const HEADER_FIXED: usize = 12 + SALT_LEN + NONCE_LEN;
+// header: m(4) t(4) p(4) salt(16) base_nonce(24) chunk_size(4) plaintext_len(8)
+const HEADER_FIXED: usize = 12 + SALT_LEN + NONCE_LEN + 4 + 8;
 
+/// Metadata recovered from the first plaintext chunk; everything except the
+/// file bytes (which stream through separately).
+struct PlainMeta {
+    file_mode: u32,
+    #[allow(dead_code)] // round-trips through the blob; surfaced in tests
+    inner_name: String,
+    dirs: Vec<(PathBuf, u32)>,
+}
+
+/// Full in-memory decryption result — only the test wrapper materializes it.
+#[cfg(test)]
 struct Decrypted {
     content: Vec<u8>,
     file_mode: u32,
@@ -205,6 +247,15 @@ fn read_u32_le(data: &[u8], at: usize) -> Result<u32, DfmError> {
         .get(at..at + 4)
         .ok_or_else(|| DfmError::InvalidData("encrypted header is truncated".into()))?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+}
+
+fn read_u64_le(data: &[u8], at: usize) -> Result<u64, DfmError> {
+    let slice = data
+        .get(at..at + 8)
+        .ok_or_else(|| DfmError::InvalidData("encrypted header is truncated".into()))?;
+    let mut b = [0u8; 8];
+    b.copy_from_slice(slice);
+    Ok(u64::from_le_bytes(b))
 }
 
 fn put_u16(buf: &mut Vec<u8>, v: u16) {
@@ -254,39 +305,8 @@ fn derive_key(
     Ok(key)
 }
 
-/// Build a self-contained encrypted blob for `content`.
-///
-/// The public header holds only what the decryptor needs before the key
-/// exists (KDF params, salt, nonce). Filename, file mode and directory
-/// metadata are serialized into the plaintext and encrypted together with the
-/// content, so nothing about the payload is visible without the password.
-pub fn encrypt_bytes(
-    password: &str,
-    content: &[u8],
-    file_mode: u32,
-    inner_name: &str,
-    dirs: &[(PathBuf, u32)],
-) -> Result<Vec<u8>, DfmError> {
-    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-    use rand::RngCore;
-
-    let mut salt = [0u8; SALT_LEN];
-    let mut nonce = [0u8; NONCE_LEN];
-    rand::rng().fill_bytes(&mut salt);
-    rand::rng().fill_bytes(&mut nonce);
-
-    let key = derive_key(password, &salt, KDF_M_COST_KIB, KDF_T_COST, KDF_P_COST)?;
-
-    let mut header: Vec<u8> = Vec::new();
-    put_u32(&mut header, KDF_M_COST_KIB);
-    put_u32(&mut header, KDF_T_COST);
-    put_u32(&mut header, KDF_P_COST);
-    header.extend_from_slice(&salt);
-    header.extend_from_slice(&nonce);
-
-    // Metadata goes into the encrypted plaintext, prefixed by its length so
-    // the decryptor knows where metadata ends and file content begins.
+/// Serialize the metadata section (including its leading length prefix).
+fn serialize_metadata(inner_name: &str, file_mode: u32, dirs: &[(PathBuf, u32)]) -> Vec<u8> {
     let mut metadata: Vec<u8> = Vec::new();
     push_string(&mut metadata, inner_name);
     put_u32(&mut metadata, file_mode);
@@ -295,103 +315,223 @@ pub fn encrypt_bytes(
         push_string(&mut metadata, &dir.to_string_lossy());
         put_u32(&mut metadata, *mode);
     }
-
-    let mut plaintext = Vec::with_capacity(4 + metadata.len() + content.len());
-    put_u32(&mut plaintext, metadata.len() as u32);
-    plaintext.extend_from_slice(&metadata);
-    plaintext.extend_from_slice(content);
-
-    let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(DfmError::other)?;
-    let blob = cipher
-        .encrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: &plaintext,
-                aad: &header,
-            },
-        )
-        .map_err(|_| DfmError::other("encryption failed".to_string()))?;
-
-    let mut out = Vec::with_capacity(12 + header.len() + blob.len());
-    out.extend_from_slice(MAGIC);
-    out.push(FORMAT_VERSION);
-    put_u32(&mut out, header.len() as u32);
-    out.extend_from_slice(&header);
-    out.extend_from_slice(&blob);
-    Ok(out)
+    let mut prefix: Vec<u8> = Vec::with_capacity(4 + metadata.len());
+    put_u32(&mut prefix, metadata.len() as u32);
+    prefix.extend_from_slice(&metadata);
+    prefix
 }
 
-/// Parse + decrypt an encrypted blob produced by `encrypt_bytes`.
-fn decrypt_bytes(data: &[u8], password: &str) -> Result<Decrypted, DecryptError> {
-    if data.len() < 12 {
-        return Err(DecryptError::Invalid(DfmError::InvalidData(
-            "encrypted file is too short".into(),
+/// Per-chunk nonce: base_nonce with its last 8 bytes replaced by the 7-byte
+/// big-endian chunk counter and a final-chunk flag byte.
+fn stream_nonce(base_nonce: &[u8; NONCE_LEN], index: u64, last: bool) -> [u8; NONCE_LEN] {
+    debug_assert!(index < MAX_STREAM_CHUNKS);
+    let ctr = index.to_be_bytes();
+    let mut nonce = *base_nonce;
+    nonce[16..NONCE_LEN - 1].copy_from_slice(&ctr[1..]);
+    nonce[NONCE_LEN - 1] = u8::from(last);
+    nonce
+}
+
+/// Per-chunk additional authenticated data: header, chunk position, final flag.
+fn chunk_aad(header: &[u8], index: u64, last: bool) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(header.len() + 9);
+    aad.extend_from_slice(header);
+    aad.extend_from_slice(&index.to_le_bytes());
+    aad.push(u8::from(last));
+    aad
+}
+
+/// Encrypt `input` (exactly `content_len` bytes) into a v3 container written
+/// to `out`. The metadata prefix is prepended to the plaintext stream, so it
+/// is authenticated together with the content. Peak memory is one chunk.
+///
+/// The caller must guarantee that `input` really yields `content_len` bytes;
+/// a shorter stream is a hard error (the header's declared length is part of
+/// every chunk's authentication data).
+fn encrypt_stream(
+    password: &str,
+    input: &mut impl Read,
+    content_len: u64,
+    metadata_prefix: &[u8],
+    out: &mut impl Write,
+) -> Result<(), DfmError> {
+    use chacha20poly1305::aead::AeadInPlace;
+    use chacha20poly1305::aead::KeyInit;
+    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+    use rand::RngCore;
+
+    if metadata_prefix.len() > CHUNK_SIZE as usize {
+        return Err(DfmError::InvalidData(format!(
+            "encrypted metadata of {} bytes does not fit into one {}-byte chunk",
+            metadata_prefix.len(),
+            CHUNK_SIZE
         )));
     }
-    if &data[..7] != MAGIC {
+    let plaintext_len = metadata_prefix.len() as u64 + content_len;
+
+    let mut salt = [0u8; SALT_LEN];
+    let mut base_nonce = [0u8; NONCE_LEN];
+    rand::rng().fill_bytes(&mut salt);
+    rand::rng().fill_bytes(&mut base_nonce);
+
+    let key = derive_key(password, &salt, KDF_M_COST_KIB, KDF_T_COST, KDF_P_COST)?;
+
+    let mut header: Vec<u8> = Vec::with_capacity(HEADER_FIXED);
+    put_u32(&mut header, KDF_M_COST_KIB);
+    put_u32(&mut header, KDF_T_COST);
+    put_u32(&mut header, KDF_P_COST);
+    header.extend_from_slice(&salt);
+    header.extend_from_slice(&base_nonce);
+    put_u32(&mut header, CHUNK_SIZE);
+    header.extend_from_slice(&plaintext_len.to_le_bytes());
+
+    out.write_all(MAGIC)?;
+    out.write_all(&[FORMAT_VERSION])?;
+    out.write_all(&(header.len() as u32).to_le_bytes())?;
+    out.write_all(&header)?;
+
+    let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(DfmError::other)?;
+
+    let mut buf = vec![0u8; CHUNK_SIZE as usize];
+    let mut consumed = 0u64;
+    let mut index = 0u64;
+    loop {
+        // Fill exactly `want` bytes: the declared total length decides where
+        // the final (flagged) chunk is, not a short read.
+        let want = std::cmp::min(buf.len() as u64, plaintext_len - consumed) as usize;
+        let mut off = 0usize;
+        if index == 0 {
+            buf[..metadata_prefix.len()].copy_from_slice(metadata_prefix);
+            off = metadata_prefix.len();
+        }
+        while off < want {
+            let r = input.read(&mut buf[off..want]).map_err(|e| io_err(Path::new("<input>"), e))?;
+            if r == 0 {
+                return Err(DfmError::InvalidData(
+                    "input ended before its declared length".into(),
+                ));
+            }
+            off += r;
+        }
+        consumed += want as u64;
+        let last = consumed == plaintext_len;
+
+        let nonce = stream_nonce(&base_nonce, index, last);
+        let aad = chunk_aad(&header, index, last);
+        let tag = cipher
+            .encrypt_in_place_detached(XNonce::from_slice(&nonce), &aad, &mut buf[..want])
+            .map_err(|_| DfmError::other("encryption failed".to_string()))?;
+
+        out.write_all(&buf[..want])?;
+        out.write_all(tag.as_slice())?;
+
+        if last {
+            break;
+        }
+        index += 1;
+        if index >= MAX_STREAM_CHUNKS {
+            return Err(DfmError::InvalidData("stream is too long to encrypt".into()));
+        }
+    }
+    Ok(())
+}
+
+/// In-memory convenience wrapper over [`encrypt_stream`] (used by tests and
+/// tooling); real file paths go through the streaming callers directly.
+pub fn encrypt_bytes(
+    password: &str,
+    content: &[u8],
+    file_mode: u32,
+    inner_name: &str,
+    dirs: &[(PathBuf, u32)],
+) -> Result<Vec<u8>, DfmError> {
+    let prefix = serialize_metadata(inner_name, file_mode, dirs);
+    let mut blob = Vec::with_capacity(12 + HEADER_FIXED + prefix.len() + content.len());
+    encrypt_stream(password, &mut std::io::Cursor::new(content), content.len() as u64, &prefix, &mut blob)?;
+    Ok(blob)
+}
+
+/// Parsed, validated container header. The raw bytes are kept because every
+/// chunk authenticates them as AAD.
+struct ContainerHeader {
+    raw: Vec<u8>,
+    m_cost: u32,
+    t_cost: u32,
+    p_cost: u32,
+    salt: [u8; SALT_LEN],
+    base_nonce: [u8; NONCE_LEN],
+    chunk_size: usize,
+    plaintext_len: u64,
+}
+
+fn truncated() -> DfmError {
+    DfmError::InvalidData("encrypted file is truncated".into())
+}
+
+fn read_container_header<R: Read>(reader: &mut R) -> Result<ContainerHeader, DecryptError> {
+    let mut preamble = [0u8; 12];
+    reader.read_exact(&mut preamble).map_err(|_| truncated())?;
+    if &preamble[..7] != MAGIC {
         return Err(DecryptError::Invalid(DfmError::InvalidData(
             "not a dfm encrypted file (bad magic)".into(),
         )));
     }
-    let version = data[7];
+    let version = preamble[7];
     if version != FORMAT_VERSION {
         return Err(DecryptError::Invalid(DfmError::InvalidData(format!(
             "unsupported encrypted format version {}",
             version
         ))));
     }
-    let header_len = read_u32_le(data, 8)? as usize;
-    if 12 + header_len > data.len() {
-        return Err(DecryptError::Invalid(DfmError::InvalidData(
-            "encrypted header is truncated".into(),
-        )));
+    let header_len = read_u32_le(&preamble, 8)? as usize;
+    if header_len != HEADER_FIXED {
+        return Err(DecryptError::Invalid(DfmError::InvalidData(format!(
+            "unsupported encrypted header length {}",
+            header_len
+        ))));
     }
-    let header = &data[12..12 + header_len];
+    let mut raw = vec![0u8; HEADER_FIXED];
+    reader.read_exact(&mut raw).map_err(|_| truncated())?;
 
-    if header.len() < HEADER_FIXED {
-        return Err(DecryptError::Invalid(DfmError::InvalidData(
-            "encrypted header is truncated".into(),
-        )));
-    }
-    let m_cost = read_u32_le(header, 0)?;
-    let t_cost = read_u32_le(header, 4)?;
-    let p_cost = read_u32_le(header, 8)?;
+    let m_cost = read_u32_le(&raw, 0)?;
+    let t_cost = read_u32_le(&raw, 4)?;
+    let p_cost = read_u32_le(&raw, 8)?;
     if m_cost > MAX_KDF_M_COST_KIB || t_cost > MAX_KDF_T_COST || p_cost > MAX_KDF_P_COST {
         return Err(DecryptError::Invalid(DfmError::InvalidData(format!(
             "unreasonable KDF parameters in encrypted header: m_cost={}, t_cost={}, p_cost={}",
             m_cost, t_cost, p_cost
         ))));
     }
-    let salt: [u8; SALT_LEN] = header[12..12 + SALT_LEN].try_into().unwrap();
-    let nonce: [u8; NONCE_LEN] = header[12 + SALT_LEN..12 + SALT_LEN + NONCE_LEN]
-        .try_into()
-        .unwrap();
+    let chunk_size = read_u32_le(&raw, 52)?;
+    if !(MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&chunk_size) {
+        return Err(DecryptError::Invalid(DfmError::InvalidData(format!(
+            "unreasonable chunk size in encrypted header: {}",
+            chunk_size
+        ))));
+    }
+    Ok(ContainerHeader {
+        salt: raw[12..12 + SALT_LEN].try_into().unwrap(),
+        base_nonce: raw[12 + SALT_LEN..12 + SALT_LEN + NONCE_LEN]
+            .try_into()
+            .unwrap(),
+        plaintext_len: read_u64_le(&raw, 56)?,
+        chunk_size: chunk_size as usize,
+        m_cost,
+        t_cost,
+        p_cost,
+        raw,
+    })
+}
 
-    let key = derive_key(password, &salt, m_cost, t_cost, p_cost)?;
-    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-    let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(DfmError::other)?;
-    let decrypted = match cipher.decrypt(
-        XNonce::from_slice(&nonce),
-        Payload {
-            msg: &data[12 + header_len..],
-            aad: header,
-        },
-    ) {
-        Ok(c) => c,
-        Err(_) => return Err(DecryptError::WrongPassword),
-    };
-
-    // The plaintext is: u32 metadata_len, then metadata, then the file bytes.
-    let metadata_len = read_u32_le(&decrypted, 0)? as usize;
-    if 4 + metadata_len > decrypted.len() {
+/// Parse the metadata section at the start of the first plaintext chunk.
+fn parse_metadata(first_chunk: &[u8]) -> Result<(PlainMeta, usize), DecryptError> {
+    let metadata_len = read_u32_le(first_chunk, 0)? as usize;
+    if 4 + metadata_len > first_chunk.len() {
         return Err(DecryptError::Invalid(DfmError::InvalidData(
             "encrypted metadata is truncated".into(),
         )));
     }
-    let metadata = &decrypted[4..4 + metadata_len];
-    let content = decrypted[4 + metadata_len..].to_vec();
-
+    let metadata = &first_chunk[4..4 + metadata_len];
     let mut pos = 0;
     let inner_name = take_string(metadata, &mut pos)?;
     let file_mode = read_u32_le(metadata, pos)?;
@@ -405,11 +545,149 @@ fn decrypt_bytes(data: &[u8], password: &str) -> Result<Decrypted, DecryptError>
         pos += 4;
         dirs.push((PathBuf::from(name), mode));
     }
+    Ok((
+        PlainMeta {
+            file_mode,
+            inner_name,
+            dirs,
+        },
+        4 + metadata_len,
+    ))
+}
+
+/// Streaming decryptor positioned after the first (metadata-carrying) chunk.
+/// `stream_rest` pushes the remaining plaintext into any `Write` sink.
+struct DecryptSession<R: Read> {
+    reader: R,
+    cipher: XChaCha20Poly1305,
+    header: ContainerHeader,
+    /// Plaintext of the first chunk after the metadata section.
+    leftover: Vec<u8>,
+    next_index: u64,
+    /// Plaintext bytes still expected after the first chunk.
+    remaining: u64,
+}
+
+impl<R: Read> DecryptSession<R> {
+    /// Parse the container, derive the key and decrypt+verify the FIRST chunk.
+    /// An authentication failure here is reported as [`DecryptError::WrongPassword`]
+    /// — with an intact header that is overwhelmingly the likeliest cause, and
+    /// it lets callers re-prompt before any output byte is written.
+    fn open(mut reader: R, password: &str) -> Result<(Self, PlainMeta), DecryptError> {
+        use chacha20poly1305::aead::AeadInPlace;
+        use chacha20poly1305::aead::KeyInit;
+        use chacha20poly1305::{XNonce, Tag};
+
+        let header = read_container_header(&mut reader)?;
+        let key = derive_key(
+            password,
+            &header.salt,
+            header.m_cost,
+            header.t_cost,
+            header.p_cost,
+        )?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|e| DecryptError::Invalid(DfmError::other(e.to_string())))?;
+
+        let first_pt = std::cmp::min(header.chunk_size as u64, header.plaintext_len) as usize;
+        let mut buf = vec![0u8; first_pt + TAG_LEN];
+        reader.read_exact(&mut buf).map_err(|_| truncated())?;
+        let last0 = header.plaintext_len == first_pt as u64;
+        let nonce = stream_nonce(&header.base_nonce, 0, last0);
+        let aad = chunk_aad(&header.raw, 0, last0);
+        let mut tag_bytes = [0u8; TAG_LEN];
+        tag_bytes.copy_from_slice(&buf[first_pt..]);
+        cipher
+            .decrypt_in_place_detached(
+                XNonce::from_slice(&nonce),
+                &aad,
+                &mut buf[..first_pt],
+                Tag::from_slice(&tag_bytes),
+            )
+            .map_err(|_| DecryptError::WrongPassword)?;
+
+        let (meta, meta_end) = parse_metadata(&buf[..first_pt])?;
+        let leftover = buf[meta_end..first_pt].to_vec();
+
+        Ok((
+            DecryptSession {
+                reader,
+                cipher,
+                leftover,
+                next_index: 1,
+                remaining: header.plaintext_len - first_pt as u64,
+                header,
+            },
+            meta,
+        ))
+    }
+
+    /// Write all remaining plaintext (starting with the first chunk's
+    /// non-metadata tail) to `out`, verifying every chunk. Authentication
+    /// failures after the first chunk mean corruption, not a wrong password.
+    fn stream_rest(mut self, out: &mut dyn Write) -> Result<(), DfmError> {
+        use chacha20poly1305::aead::AeadInPlace;
+        use chacha20poly1305::{XNonce, Tag};
+
+        out.write_all(&std::mem::take(&mut self.leftover))
+            .map_err(|e| io_err(Path::new("<output>"), e))?;
+
+        let chunk_size = self.header.chunk_size;
+        let mut buf = vec![0u8; chunk_size + TAG_LEN];
+        while self.remaining > 0 {
+            let want = std::cmp::min(chunk_size as u64, self.remaining) as usize;
+            self.reader
+                .read_exact(&mut buf[..want + TAG_LEN])
+                .map_err(|_| truncated())?;
+            let last = self.remaining == want as u64;
+            let nonce = stream_nonce(&self.header.base_nonce, self.next_index, last);
+            let aad = chunk_aad(&self.header.raw, self.next_index, last);
+            let mut tag_bytes = [0u8; TAG_LEN];
+            tag_bytes.copy_from_slice(&buf[want..want + TAG_LEN]);
+            self.cipher
+                .decrypt_in_place_detached(
+                    XNonce::from_slice(&nonce),
+                    &aad,
+                    &mut buf[..want],
+                    Tag::from_slice(&tag_bytes),
+                )
+                .map_err(|_| {
+                    DfmError::InvalidData(
+                        "encrypted file is corrupted (authentication failed)".into(),
+                    )
+                })?;
+            out.write_all(&buf[..want])
+                .map_err(|e| io_err(Path::new("<output>"), e))?;
+            self.remaining -= want as u64;
+            self.next_index += 1;
+            if !last && self.next_index >= MAX_STREAM_CHUNKS {
+                return Err(DfmError::InvalidData("encrypted stream is too long".into()));
+            }
+        }
+
+        // The declared total length was authenticated; anything after the
+        // final chunk is tampering.
+        let mut probe = [0u8; 1];
+        if self.reader.read(&mut probe)? > 0 {
+            return Err(DfmError::InvalidData(
+                "trailing bytes after the final encrypted chunk".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// In-memory convenience wrapper over the streaming session (used by tests).
+#[cfg(test)]
+fn decrypt_bytes(data: &[u8], password: &str) -> Result<Decrypted, DecryptError> {
+    let (session, meta) = DecryptSession::open(std::io::Cursor::new(data), password)?;
+    let mut content = Vec::new();
+    session.stream_rest(&mut content).map_err(DecryptError::from)?;
     Ok(Decrypted {
         content,
-        file_mode,
-        inner_name,
-        dirs,
+        file_mode: meta.file_mode,
+        inner_name: meta.inner_name,
+        dirs: meta.dirs,
     })
 }
 
@@ -460,7 +738,9 @@ pub fn announce_encryption_password(inner_name: &str) {
 }
 /// Encrypt `target_file_path` into a new `*.encrypted` source file at
 /// `source_file_path`, recording the file's permissions and the permissions of
-/// every enclosing managed directory.
+/// every enclosing managed directory. The plaintext streams from disk; only
+/// one chunk is held in memory. The output is written to a temporary sibling
+/// and renamed into place, so an interrupted run leaves no partial source.
 pub fn write_encrypted_file(
     settings: &Settings,
     target_file_path: &Path,
@@ -472,9 +752,8 @@ pub fn write_encrypted_file(
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
 
-    let target_file_permissions = fs::metadata(target_file_path)
-        .map_err(|e| io_err(target_file_path, e))?
-        .permissions();
+    let target_metadata = fs::metadata(target_file_path).map_err(|e| io_err(target_file_path, e))?;
+    let target_file_permissions = target_metadata.permissions();
 
     let target_dir_path = PathBuf::from(&settings.target_dir);
     let inner_name_p = file_path_relative_to(target_file_path, &target_dir_path);
@@ -484,20 +763,42 @@ pub fn write_encrypted_file(
     announce_encryption_password(&inner_name);
 
     let password = obtain_password(settings)?;
-    let content = fs::read(target_file_path).map_err(|e| io_err(target_file_path, e))?;
-    let blob = encrypt_bytes(
+    let prefix = serialize_metadata(&inner_name, target_file_permissions.mode(), &dirs);
+    encrypt_to_new_file(
         &password,
-        &content,
-        target_file_permissions.mode(),
-        &inner_name,
-        &dirs,
-    )?;
+        || fs::File::open(target_file_path).map_err(|e| io_err(target_file_path, e)),
+        target_metadata.len(),
+        &prefix,
+        source_file_path,
+    )
+}
 
-    let mut out =
-        std::fs::File::create(source_file_path).map_err(|e| io_err(source_file_path, e))?;
-    out.write_all(&blob)
-        .map_err(|e| io_err(source_file_path, e))?;
-    Ok(())
+/// Stream-encrypt into `dest`, writing through a `.part` sibling and renaming
+/// on success so a failure never leaves a truncated output file behind.
+fn encrypt_to_new_file(
+    password: &str,
+    open_input: impl Fn() -> Result<std::fs::File, DfmError>,
+    content_len: u64,
+    metadata_prefix: &[u8],
+    dest: &Path,
+) -> Result<(), DfmError> {
+    let part = PathBuf::from(format!("{}.part", dest.display()));
+    let result = (|| -> Result<(), DfmError> {
+        let mut input = open_input()?;
+        let mut out =
+            BufWriter::new(fs::File::create(&part).map_err(|e| io_err(&part, e))?);
+        encrypt_stream(password, &mut input, content_len, metadata_prefix, &mut out)
+    })();
+    match result {
+        Ok(()) => {
+            fs::rename(&part, dest).map_err(|e| io_err(dest, e))?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&part);
+            Err(e)
+        }
+    }
 }
 
 /// Decrypt an encrypted source file (dfm format) and write the plaintext to
@@ -513,44 +814,40 @@ pub fn read_encrypted_file(
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
 
-    let source_data = fs::read(source_file_path).map_err(|e| io_err(source_file_path, e))?;
-
     let target_root = PathBuf::from(&settings.target_dir);
-    decrypt_blob_with_retry(settings, &source_data, source_file_path, &target_root, target_file_path)
+    let (session, meta) = open_with_retry(settings, source_file_path, || {
+        fs::File::open(source_file_path).map_err(|e| io_err(source_file_path, e))
+    })?;
+    restore_streamed(
+        &target_root,
+        target_file_path,
+        &meta,
+        |out| session.stream_rest(out),
+    )
 }
 
-/// Decrypt `source_data` (a dfm blob) into `target_file_path`, prompting for
-/// the password and retrying once on a wrong password.
-fn decrypt_blob_with_retry(
+/// Prompt for the password (retrying once on a wrong password) and open the
+/// encrypted file at `encrypted_path`. The first chunk is decrypted and
+/// verified before any output file is touched, so a wrong password never
+/// leaves partial output behind. `reopen` must yield a fresh reader on every
+/// call (the retry restarts from the beginning of the stream).
+fn open_with_retry<R: Read, F>(
     settings: &Settings,
-    source_data: &[u8],
     encrypted_path: &Path,
-    target_root: &Path,
-    target_file_path: &Path,
-) -> Result<(), DfmError> {
-    let decrypted = decrypt_with_retry(settings, source_data, encrypted_path)?;
-    restore_target(target_root, target_file_path, &decrypted)
-}
-
-/// Decrypt a dfm blob, prompting for the password and retrying once on a wrong
-/// password. Shared by every decrypt path (`read_encrypted_file`, standalone
-/// `decrypt`, and `read_encrypted_bytes`).
-fn decrypt_with_retry(
-    settings: &Settings,
-    source_data: &[u8],
-    encrypted_path: &Path,
-) -> Result<Decrypted, DfmError> {
+    reopen: F,
+) -> Result<(DecryptSession<R>, PlainMeta), DfmError>
+where
+    F: Fn() -> Result<R, DfmError>,
+{
     let mut already_retried = false;
     loop {
         let password = obtain_password(settings)?;
-
-        match decrypt_bytes(source_data, &password) {
-            Ok(decrypted) => return Ok(decrypted),
+        match DecryptSession::open(reopen()?, &password) {
+            Ok(opened) => return Ok(opened),
             Err(DecryptError::WrongPassword) if !already_retried => {
                 clear_password_cache();
                 eprintln!("wrong password for {:?}, please try again.", encrypted_path);
                 already_retried = true;
-                continue;
             }
             Err(DecryptError::WrongPassword) => {
                 return Err(DfmError::other(format!(
@@ -565,6 +862,65 @@ fn decrypt_with_retry(
     }
 }
 
+/// Write the decrypted content to the target while it streams through `sink`,
+/// restoring directory and file permissions that were recorded at encrypt
+/// time. A streaming failure removes the partially written target file.
+///
+/// Directory permissions are restored relative to the caller-supplied target
+/// root. For the internal add/pull/merge/purge path this is
+/// `settings.target_dir` (where the directories actually live); the standalone
+/// `dfm decrypt` passes the output file's parent so dirs resolve relative to it.
+fn restore_streamed(
+    target_root: &Path,
+    target_file_path: &Path,
+    meta: &PlainMeta,
+    sink: impl FnOnce(&mut dyn Write) -> Result<(), DfmError>,
+) -> Result<(), DfmError> {
+    apply_dir_modes(target_root, target_file_path, &meta.dirs)?;
+
+    if let Some(parent) = target_file_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
+    }
+    let mut out = BufWriter::new(fs::File::create(target_file_path).map_err(|e| io_err(target_file_path, e))?);
+    match sink(&mut out) {
+        Ok(()) => {}
+        Err(e) => {
+            let _ = fs::remove_file(target_file_path);
+            return Err(e);
+        }
+    }
+    out.flush().map_err(|e| io_err(target_file_path, e))?;
+    drop(out);
+    fs::set_permissions(
+        target_file_path,
+        fs::Permissions::from_mode(meta.file_mode),
+    )
+    .map_err(|e| io_err(target_file_path, e))?;
+    Ok(())
+}
+
+/// Recreate enclosing directories with their recorded permissions (e.g. a
+/// 0700 SSH directory that `create_dir_all` would otherwise reset).
+fn apply_dir_modes(
+    target_root: &Path,
+    target_file_path: &Path,
+    dirs: &[(PathBuf, u32)],
+) -> Result<(), DfmError> {
+    for (dir_rel, mode) in dirs {
+        if !dir_rel_is_safe(dir_rel) {
+            return Err(DfmError::InvalidData(format!(
+                "encrypted file {:?} contains unsafe directory path {:?}",
+                target_file_path, dir_rel
+            )));
+        }
+        let dir_abs = target_root.join(dir_rel);
+        fs::create_dir_all(&dir_abs).map_err(|e| io_err(&dir_abs, e))?;
+        fs::set_permissions(&dir_abs, fs::Permissions::from_mode(*mode))
+            .map_err(|e| io_err(&dir_abs, e))?;
+    }
+    Ok(())
+}
+
 /// Decrypt an encrypted source file (dfm format) into memory, returning the
 /// plaintext bytes and the recorded file mode. Used by `diff` to compare and
 /// pipe the decrypted content to the diff tool without touching any file.
@@ -572,9 +928,12 @@ pub fn read_encrypted_bytes(
     settings: &Settings,
     source_file_path: &Path,
 ) -> Result<(Vec<u8>, u32), DfmError> {
-    let source_data = fs::read(source_file_path).map_err(|e| io_err(source_file_path, e))?;
-    let decrypted = decrypt_with_retry(settings, &source_data, source_file_path)?;
-    Ok((decrypted.content, decrypted.file_mode))
+    let (session, meta) = open_with_retry(settings, source_file_path, || {
+        fs::File::open(source_file_path).map_err(|e| io_err(source_file_path, e))
+    })?;
+    let mut content = Vec::new();
+    session.stream_rest(&mut content)?;
+    Ok((content, meta.file_mode))
 }
 
 /// Reject a directory entry recorded in an encrypted blob whose path could
@@ -596,45 +955,6 @@ fn dir_rel_is_safe(dir_rel: &Path) -> bool {
     saw_normal
 }
 
-/// Write the decrypted content to the target, restoring directory and file
-/// permissions that were recorded at encrypt time.
-///
-/// Directory permissions are restored relative to the caller-supplied target
-/// root. For the internal add/pull/merge/purge path this is
-/// `settings.target_dir` (where the directories actually live); the standalone
-/// `dfm decrypt` passes the output file's parent so dirs resolve relative to it.
-fn restore_target(
-    target_root: &Path,
-    target_file_path: &Path,
-    decrypted: &Decrypted,
-) -> Result<(), DfmError> {
-    // Recreate enclosing directories with their recorded permissions (e.g. a
-    // 0700 SSH directory that `create_dir_all` would otherwise reset).
-    for (dir_rel, mode) in &decrypted.dirs {
-        if !dir_rel_is_safe(dir_rel) {
-            return Err(DfmError::InvalidData(format!(
-                "encrypted file {:?} contains unsafe directory path {:?}",
-                target_file_path, dir_rel
-            )));
-        }
-        let dir_abs = target_root.join(dir_rel);
-        fs::create_dir_all(&dir_abs).map_err(|e| io_err(&dir_abs, e))?;
-        fs::set_permissions(&dir_abs, fs::Permissions::from_mode(*mode))
-            .map_err(|e| io_err(&dir_abs, e))?;
-    }
-
-    if let Some(parent) = target_file_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
-    }
-    fs::write(target_file_path, &decrypted.content).map_err(|e| io_err(target_file_path, e))?;
-    fs::set_permissions(
-        target_file_path,
-        fs::Permissions::from_mode(decrypted.file_mode),
-    )
-    .map_err(|e| io_err(target_file_path, e))?;
-    Ok(())
-}
-
 // Standalone `dfm encrypt` / `dfm decrypt` commands.
 
 /// Encrypt `input_path` into `output_path` (a standalone file, not bound to a
@@ -642,14 +962,11 @@ fn restore_target(
 /// directory-permission metadata is emitted.
 pub fn encrypt_file_standalone(
     settings: &Settings,
-    input_path: &PathBuf,
-    output_path: &PathBuf,
+    input_path: &Path,
+    output_path: &Path,
 ) -> Result<(), DfmError> {
-    let file_mode = fs::metadata(input_path)
-        .map_err(|e| io_err(input_path, e))?
-        .permissions()
-        .mode();
-    let content = fs::read(input_path).map_err(|e| io_err(input_path, e))?;
+    let metadata = fs::metadata(input_path).map_err(|e| io_err(input_path, e))?;
+    let file_mode = metadata.permissions().mode();
     let inner_name = input_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -657,14 +974,18 @@ pub fn encrypt_file_standalone(
 
     eprintln!("file {:?} needs an encryption password", input_path);
     let password = obtain_password(settings)?;
-    let blob = encrypt_bytes(&password, &content, file_mode, &inner_name, &[])?;
 
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
-    let mut out = std::fs::File::create(output_path).map_err(|e| io_err(output_path, e))?;
-    out.write_all(&blob).map_err(|e| io_err(output_path, e))?;
-    Ok(())
+    let prefix = serialize_metadata(&inner_name, file_mode, &[]);
+    encrypt_to_new_file(
+        &password,
+        || fs::File::open(input_path).map_err(|e| io_err(input_path, e)),
+        metadata.len(),
+        &prefix,
+        output_path,
+    )
 }
 
 /// Decrypt an encrypted standalone file `input_path` into `output_path`.
@@ -675,14 +996,24 @@ pub fn decrypt_file_standalone(
     input_path: &Path,
     output_path: &Path,
 ) -> Result<(), DfmError> {
-    let source_data = fs::read(input_path).map_err(|e| io_err(input_path, e))?;
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
+    }
 
     let target_root = output_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
 
-    decrypt_blob_with_retry(settings, &source_data, input_path, &target_root, output_path)
+    let (session, meta) = open_with_retry(settings, input_path, || {
+        fs::File::open(input_path).map_err(|e| io_err(input_path, e))
+    })?;
+    restore_streamed(
+        &target_root,
+        output_path,
+        &meta,
+        |out| session.stream_rest(out),
+    )
 }
 
 fn default_read_password() -> Result<String, DfmError> {
@@ -805,6 +1136,97 @@ mod tests {
         v1[7] = 1;
         assert!(matches!(
             decrypt_bytes(&v1, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
+    }
+
+    // ---- streaming (chunked) format tests --------------------------------
+
+    /// Deterministic pseudo-random content of `len` bytes.
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn multi_chunk_roundtrip() {
+        let content = pattern(3 * CHUNK_SIZE as usize + 12345);
+        let blob = encrypt_bytes("pw", &content, 0o600, "big/file.bin", &[]).unwrap();
+        let dec = decrypt_bytes(&blob, "pw").unwrap();
+        assert_eq!(dec.content, content);
+    }
+
+    #[test]
+    fn exact_chunk_multiple_roundtrip() {
+        for len in [
+            1,
+            CHUNK_SIZE as usize - 1,
+            CHUNK_SIZE as usize,
+            CHUNK_SIZE as usize + 1,
+            2 * CHUNK_SIZE as usize,
+        ] {
+            let content = pattern(len);
+            let blob = encrypt_bytes("pw", &content, 0o644, "f", &[]).unwrap();
+            assert_eq!(decrypt_bytes(&blob, "pw").unwrap().content, content);
+        }
+    }
+
+    #[test]
+    fn truncated_stream_rejected() {
+        let content = pattern(2 * CHUNK_SIZE as usize + 100);
+        let mut blob = encrypt_bytes("pw", &content, 0o644, "f", &[]).unwrap();
+        blob.truncate(blob.len() - 10);
+        assert!(matches!(
+            decrypt_bytes(&blob, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn trailing_junk_rejected() {
+        let mut blob = encrypt_bytes("pw", b"data", 0o644, "f", &[]).unwrap();
+        blob.extend_from_slice(b"xyz");
+        assert!(matches!(
+            decrypt_bytes(&blob, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn swapped_chunks_rejected() {
+        // Three full chunks plus a short final one: swapping two MIDDLE
+        // records must fail authentication in stream_rest (a swap involving
+        // chunk 0 surfaces as WrongPassword instead — see open()).
+        let content = pattern(3 * CHUNK_SIZE as usize + 100);
+        let mut blob = encrypt_bytes("pw", &content, 0o644, "f", &[]).unwrap();
+
+        // Records start after magic+version+header_len+header; every
+        // non-final record is chunk_size ciphertext + 16-byte tag.
+        let body = 12 + HEADER_FIXED;
+        let rec = CHUNK_SIZE as usize + TAG_LEN;
+        let (a, b) = blob.split_at_mut(body + 2 * rec);
+        a[body + rec..body + 2 * rec].swap_with_slice(&mut b[..rec]);
+
+        assert!(matches!(
+            decrypt_bytes(&blob, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn absurd_chunk_size_rejected() {
+        let blob = encrypt_bytes("pw", b"data", 0o644, "a", &[]).unwrap();
+        // chunk_size lives at header offset 52 → absolute offset 12 + 52.
+        let mut tampered = blob.clone();
+        tampered[64..68].copy_from_slice(&(MAX_CHUNK_SIZE + 1).to_le_bytes());
+        assert!(matches!(
+            decrypt_bytes(&tampered, "pw"),
+            Err(DecryptError::Invalid(_))
+        ));
+
+        let mut tiny = blob.clone();
+        tiny[64..68].copy_from_slice(&(MIN_CHUNK_SIZE - 1).to_le_bytes());
+        assert!(matches!(
+            decrypt_bytes(&tiny, "pw"),
             Err(DecryptError::Invalid(_))
         ));
     }

@@ -484,8 +484,11 @@ Each encrypted file (suffix `.encrypted`) is a self-contained, self-describing c
 
 - The password is stretched with **Argon2id** (memory-hard KDF), making brute-force attacks against weak passwords expensive.
 - The payload is authenticated-encrypted with **XChaCha20-Poly1305** (AEAD): ciphertext tampering and wrong passwords are detected.
+- The plaintext is sealed in **64 KiB chunks** (stream construction): each chunk carries its own Poly1305 tag, its nonce binds it to its position in the stream, and the declared total length is authenticated — so reordered, duplicated, truncated or spliced chunks fail authentication. Encryption and decryption hold at most one chunk in RAM regardless of file size.
 - The **filename, file permissions, and directory structure are encrypted together with the content** — nothing about the payload is visible without the password.
 - The KDF cost parameters travel inside the archive, so files decrypt correctly even if the default costs change in a future version.
+
+Encrypted files use format version 3; older (v1/v2) archives are rejected with an "unsupported encrypted format version" error and must be re-created.
 
 `dfm` performs encryption/decryption transparently during `add` and `pull` (and `merge` / `purge` for encrypted sources).
 
@@ -519,7 +522,7 @@ There is no external tool requirement — `dfm decrypt` (or a future re-encrypti
 
 ### Memory use
 
-Encryption and decryption currently hold the whole file, the encrypted block, and the decrypted plaintext in RAM (roughly a few times the file size). For typical dotfiles this is negligible; there is no hard size cap, but very large secrets (e.g. multi-GB) are better stored with a purpose-built tool. Streaming encryption is a possible future improvement (see ROADMAP).
+Encryption and decryption are streaming: at most one 64 KiB plaintext chunk, its ciphertext, and the fixed-size header are held in RAM regardless of file size. There is no hard size cap.
 
 ---
 

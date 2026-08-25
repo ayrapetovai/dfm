@@ -360,8 +360,8 @@ process-global `Mutex<Option<String>>`. `obtain_password`: if
 `obtain_password_shell_command` is set, pipe it to `sh` **stdin** (not `-c`,
 invisible in `ps`) and read stdout (`trim_end_matches(['\r','\n'])` so manual
 decrypt works); else masked `rpassword` prompt. All notices go to **stderr**.
-Files are fully buffered (a few × file size) — no streaming; see README §4
-"Memory use".
+Streaming: peak RAM O(64 KiB chunk) regardless of file size (see README §4
+"Memory use").
 
 ## Traversal (list_directory, lib.rs)
 
@@ -426,7 +426,7 @@ warning**, never a command failure:
   dance), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **208 shell tests**, **23 Rust unit tests** (15 in src/lib.rs
+- Counts: **208 shell tests**, **29 Rust unit tests** (15 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
    `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`,
@@ -732,6 +732,29 @@ empty); pruned-dir `!! dir/` entries now surface in scoped reports too.
 Tests: test_status_paths.sh extended (named ignored file in default +
 porcelain, scoped parent dir reveals ignored_here/, --modified priority).
 Counts still 208.
+
+### Current session: streaming encryption (format v3)
+
+User request: encrypted files were read fully into RAM (~3× file size);
+switch to chunked AEAD, no backward compat, only existing crates, changes
+only in crypt.rs. New v3 container: header 64 B adds chunk_size u32 +
+plaintext_len u64; payload = records of ct(≤64 KiB)+tag16; per-chunk nonce
+= base_nonce with last 8 B := 7-B BE counter + final-flag byte; per-chunk
+AAD = header || idx || flag → reorder/dup/truncate/splice all fail auth.
+encrypt_stream/DecryptSession{open,stream_rest} cores; public API
+signatures unchanged (write/read_encrypted_file, read_encrypted_bytes,
+standalone encrypt/decrypt). Peak RAM O(chunk) for file paths (diff still
+collects, ~1×). WrongPassword = first-chunk auth failure only (retry before
+any output); later failures = "corrupted", partial target removed. Encrypt
+writes via `<dest>.part` + rename. encrypt_bytes/decrypt_bytes kept as
+in-memory wrappers (tests). Old `decrypt_blob_with_retry`/`restore_target`
+removed; restore split into apply_dir_modes + restore_streamed.
+Gotchas: Tag::from_slice borrows — copy tag to [u8;16] first;
+split_at_mut swap needs swap_with_slice; clippy &PathBuf→&Path on
+encrypt_file_standalone params. Tests: +6 unit (multi-chunk roundtrip,
+exact multiples, truncation, trailing junk, middle-chunk swap, chunk-size
+bounds) = 29. Verified 5 MiB standalone roundtrip in /tmp sandbox; shell
+suite 208 green; clippy clean.
 
 ## Debug strategies (in order)
 
