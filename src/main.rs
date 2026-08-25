@@ -60,6 +60,8 @@ fn main_logic() -> Result<(), dfm::DfmError> {
     let config_from_file = match &path_to_config_file {
         Some(p) => match read_config(p) {
             Ok(config) => Some(config),
+            // A missing config is normal on the first run — defaults apply.
+            Err(DfmError::NotFound(_)) => None,
             Err(e) => {
                 // A corrupt/unreadable config must not silently change
                 // behavior: fall back to defaults but tell the user.

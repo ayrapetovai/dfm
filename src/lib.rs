@@ -592,6 +592,13 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, DfmError> {
 
     let config_file_content = match fs::read_to_string(path_to_config_file) {
         Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            // Expected on the first run, before `dfm init` has created it.
+            return Err(DfmError::NotFound(format!(
+                "config file does not exist: {}",
+                path_to_config_file.display()
+            )));
+        }
         Err(e) => {
             return Err(io_err(path_to_config_file, e));
         }

@@ -18,7 +18,7 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
 cargo test                             # 23 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 207 shell integration tests
+bash tests/launcher.sh -q              # 208 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
@@ -43,7 +43,7 @@ build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
 src/commands/mod.rs  re-exports + shared helpers (below); split_command
 src/commands/{add,pull,merge,diff,forget,init,ignore,purge,config,paths,status,encrypt}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      207 shell tests
+tests/test_*.sh      208 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -426,7 +426,7 @@ warning**, never a command failure:
   dance), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **207 shell tests**, **23 Rust unit tests** (15 in src/lib.rs
+- Counts: **208 shell tests**, **23 Rust unit tests** (15 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
    `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`,
@@ -705,6 +705,18 @@ exist" — accepted tradeoff; `../name` reaches parent's managed files).
 Gotcha: under `set -e`, `RES=$(… dfm …)` inherits nonzero rc → guard with
 `|| true`. Verified: build + cargo test 23 + clippy clean + all shell
 tests green.
+
+### Current session: first-run config warning suppressed
+
+User report: virgin system, `dfm init dotfiles` printed "config file …
+could not be read … continuing with default settings". Cause: read_config
+mapped a missing file to a generic I/O error; main.rs warned on ANY config
+read error. Fix mirrors the state-file convention: read_config returns
+DfmError::NotFound for a missing file ("config file does not exist: …"),
+main.rs treats NotFound as silent defaults and still warns on corrupt/
+unreadable configs. Applies to every command pre-init, not just init.
+Test: tests/test_first_run_no_config_warning.sh (init silent, paths silent
+after rm -rf XDG_CONFIG_HOME/dfm, garbage TOML still warns). Counts 208.
 
 ## Debug strategies (in order)
 

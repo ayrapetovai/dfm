@@ -24,24 +24,21 @@ there files/directories. The wolkdir-conflict-searching code must be shared betw
 The 'sync' must do nothing with unmanaged files, and must not return with error handing them. 'sync' must not 'add' unmanaged files.
 'sync' must not 'pull' unpulled files.
 - Add progress bar to action phase of command (now it works only in wallkdir phase).
+- Command 'dfm status filepath' must print "filepath is up-to-date." instead of "All up-to-date.".
 
 ## Fix bugs
 
 - (open) encrypted files are read fully into RAM (a few × file size).
   Consider streaming encryption (chunked AEAD) for very large secrets.
-- 'dfm ignore ~/path', and path is present in target directory - ignore pattern unused, but must
+- 'dfm ignore ~/path', and path is present in target directory - ignore pattern unused, but
 must be matched against the directory relevant to /, because the path expands in '/..'?
-- The first launch:
-❱ dfm init dotfiles
-prints error:
-config file "/home/artem/experements/dfm-exp/.config/dfm/config.toml" could not be read (I/O error: /home/artem/experements/dfm-exp/.config/dfm/config.toml: No such file or directory (os error 2)); continuing with default settings
-but must not.
-- Subcommand 'status filepath' where filepath exists in target and is ignored, prints "No files managed", but must print the "Ignored" block.
+- Subcommand 'dfm status filepath' where filepath exists in target and is ignored, prints "No files managed", but must print the "Ignored" block.
 
 ## Documents
 
 - Switch license to GPL.
 - In README.md describe what is 'pull' and 'add' commands, that they work only locally.
+- Shrink README.md and context.txt
 
 ## Considerations
 - what if source file belongs to the user other than puller?
