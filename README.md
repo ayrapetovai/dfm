@@ -88,6 +88,8 @@ The dot prefix and other postfixes are configurable (see [Configuration](#3-conf
 
 ## 2 Commands
 
+Except for `init` (which runs before any target directory exists), all `PATH` arguments are resolved relative to the **target directory** — never relative to the current working directory — so a command behaves identically no matter where it is invoked from. Absolute paths are used as-is.
+
 ### 2.1 `init`
 
 Set up the source directory, config file, and state file.

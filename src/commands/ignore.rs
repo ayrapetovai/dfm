@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -24,7 +23,7 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
 
 use dfm::*;
 use crate::DfmError;
-use super::{msg_dry_run, msg_nothing_to_do, prune_ignore_file};
+use super::{msg_dry_run, msg_nothing_to_do, prune_ignore_file, cli_path_to_abs};
 use microxdg::Xdg;
 
 /// Typed, per-command arguments for `ignore` (built by the dispatcher).
@@ -54,30 +53,27 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
     let empty_paths: &Vec<PathBuf> = &Vec::new();
-    let traversed_paths = match paths {
-        Some(p) => p,
-        None => empty_paths,
+    // Relative CLI paths are anchored at the target directory, not at the
+    // current working directory.
+    let traversed_paths: Vec<PathBuf> = match paths {
+        Some(p) => p.iter().map(|p| cli_path_to_abs(p, &target_dir_abs_path)).collect(),
+        None => empty_paths.clone(),
     };
 
     debug!("traversing result is {:?}", traversed_paths);
 
-    let mut target_ignore_paths = vec![];
+    let mut target_ignore_paths: Vec<PathBuf> = vec![];
     let mut source_ignore_lines = vec![];
 
-    for path in traversed_paths {
+    for path in &traversed_paths {
         debug!("check path {:?}", path);
         let (abs_path, canonicalize_failed) = match fs::canonicalize(path) {
             Ok(p) => (p, false),
             Err(_) => {
                 // File doesn't exist on disk (e.g., unpulled managed file).
-                // Build a conceptual absolute path so starts_with checks work.
-                let p = PathBuf::from(path);
-                let abs = if p.is_relative() {
-                    env::current_dir()?.join(&p)
-                } else {
-                    p
-                };
-                (abs, true)
+                // The CLI path was already resolved to an absolute path, so
+                // starts_with checks work as-is.
+                (path.clone(), true)
             }
         };
 
@@ -115,13 +111,18 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
         }
 
         if abs_path.starts_with(&target_dir_abs_path) {
-            let rel_path = file_path_relative_to(&abs_path, &target_dir_abs_path);
+            // Store the lexical target-relative form of the given path —
+            // without resolving symlinks, so ignoring a symlink records the
+            // link itself, not its pointee.
+            let rel_path = file_path_relative_to(path, &target_dir_abs_path);
             if check_path_matches_regex_component_wise(&target_ignore_regex, &rel_path).is_some() {
                 info!("target path {:?} is ignored already", path);
                 continue;
             } else {
                 debug!("adding path {:?} to target ignore file {:?}", path, local_ignore_file_path);
-                target_ignore_paths.push(path);
+                // Ignore records are matched against paths relative to the
+                // target directory root.
+                target_ignore_paths.push(rel_path);
                 continue;
             }
         }

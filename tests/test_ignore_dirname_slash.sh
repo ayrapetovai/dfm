@@ -9,8 +9,9 @@ write "top" top.txt
 
 dfm ignore dirname/
 
-# the trailing-slash form is stored verbatim in the ignore file
-grep -q '^dirname/$' "$XDG_STATE_HOME/dfm/ignore_file"
+# the directory is stored as an escaped target-relative record
+# (the trailing slash is insignificant and not kept)
+assert_succ grep -q '^dirname$' "$XDG_STATE_HOME/dfm/ignore_file"
 
 # files under dirname are ignored (not added)
 dfm add dirname/a.txt

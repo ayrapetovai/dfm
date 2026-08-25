@@ -17,8 +17,8 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 ```bash
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
-cargo test                             # 22 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 204 shell integration tests
+cargo test                             # 23 unit tests (lib.rs + crypt.rs)
+bash tests/launcher.sh -q              # 206 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
@@ -43,7 +43,7 @@ build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
 src/commands/mod.rs  re-exports + shared helpers (below); split_command
 src/commands/{add,pull,merge,diff,forget,init,ignore,purge,config,paths,status,encrypt}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      201 shell tests
+tests/test_*.sh      206 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -97,18 +97,21 @@ tests/test_*.sh      201 shell tests
 ## Ignore matching (lib.rs)
 
 One regex per line; `#` comments (`\#` escapes); blank lines skipped
-(`load_ignore_regex` → `RegexSet`). **Component-wise** matching
+(`load_ignore_regex` → `RegexSet`). **Root-anchored component matching**
 (`check_path_matches_regex_component_wise` / `pattern_matches_path_components`)
-is used for all ignore checks. Pattern split on `/`, each sub-pattern anchored
-`^(?:…)$` unless it has its own `^`/`$`. Single sub-pattern with a left-glob
-(`.*`/`^`) tests every component at any depth; **without** a left-glob it only
-matches *directory* components (root always matches) — so `abc\.c` ignores
-`dir/` but not `dir/abc.c`. Multi-part patterns match adjacent components
-(sliding window). Trailing-empty segments (from a trailing `/` in pattern or
-path) are dropped → `dirname/` ≡ `dirname`. `check_path_matches_regex_substring`
-(older full-path substring) is used only for `force_encryption_for`; all ignore
-file checks use the component-wise variant. `dir_ignore_pattern`/`is_dir_ignored`
-probe a dir as `R + "/x"` (sentinel) to test whether its subtree is fully ignored.
+is used for all ignore checks. Pattern split on `/`, empty segments dropped
+(each side); each sub-pattern anchored `^(?:…)$` unless it has its own
+`^`/`$`; path split on `/`, leading `.` component skipped. Single sub-pattern
+with a left-glob (`.*`/`^`) tests every component at any depth; **without** a
+left-glob it matches only the **first** path component (`abc` ignores
+`abc/…`, never `dir/abc/…`). Multi-part patterns match the first components
+in order (root-anchored sequence, no sliding): `dir/abc` matches `dir/abc/…`
+but not `x/dir/abc/…`. Records stored by `dfm ignore PATH` are the escaped
+target-relative paths, so they anchor at the target root by construction.
+Trailing-empty segments are dropped → `dirname/` ≡ `dirname`.
+`check_path_matches_regex_substring` (full-path substring) is used only for
+`force_encryption_for`. `dir_ignore_pattern`/`is_dir_ignored` probe a dir as
+`R + "/x"` (sentinel) to test whether its subtree is fully ignored.
 
 ## Conflict detection (lib.rs)
 
@@ -142,6 +145,10 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
 - `source_rel_to_target_abs(source_rel, target_dir_abs, settings) →
   (target_rel, target_abs)` — shared source−-rel→target mapping (join + remove
   dots) used by pull, merge, status, purge.
+- `cli_path_to_abs(path, target_dir_abs)` — resolve a user PATH argument:
+  absolute → `remove_dots_from_path`, relative → join the **target dir**
+  (never CWD). Used by add/pull/merge/diff/forget/ignore/status at their
+  argument entry; `init` keeps CWD semantics (no target exists yet).
 - `resolve_dry_run(cmd_flag, global_flag)`; `require_force(force, msg)`;
   `prune_ignore_file(path, should_ignore, dry_run)` (keeps blank lines + full
   kept-line text, returns removed, writes only when something removed and
@@ -254,8 +261,10 @@ Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
   source dir also deletes the target symlink. Note: main.rs dispatches `forget`
   through `with_state_even_if_error` (persist state even when the command fails),
   because the state entry is cleaned up before source deletion runs.
-- **`ignore [PATH...] [-p PAT...] [-r REC...]`** — writes `regex::escape(rel)` of
-  target paths to the target ignore, but a **source-side** path is stored in
+- **`ignore [PATH...] [-p PAT...] [-r REC...]`** — writes `regex::escape(rel)`
+  (lexical target-relative form, symlink NOT resolved so a link records
+  itself) of target paths to the target ignore, but a **source-side** path is
+  stored in stored in
   the *source* ignore as its target-rel form: `^...$` with `dot_prefix` stripped
   (source `dot_my.log` → target `.my.log` → `^my\.log$`); already-ignored
   source entries are migrated (`migrate_ignore_line`). `-p` raw patterns
@@ -407,10 +416,11 @@ warning**, never a command failure:
   dance), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **204 shell tests**, **22 Rust unit tests** (14 in src/lib.rs
+- Counts: **206 shell tests**, **23 Rust unit tests** (15 in src/lib.rs
   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
-  `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components` —
+   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`,
+   `test_pattern_is_root_relative_not_any_depth` —
   and 8 in src/crypt.rs: round-trip, wrong-password, tampered header,
   **absurd_kdf_params_rejected**, tampered ciphertext, metadata-not-visible,
   **dir_rel_is_safe_rejects_escaping_paths**, etc.).
@@ -634,6 +644,42 @@ Tests: test_status_paths_unused_patterns.sh extended (--modified/--unpulled/
 --managed show only own lists; --conflicted --porcelain emits nothing, not
 !P lines; unfiltered report still carries the block). Verified: build +
 cargo test 22 + clippy clean + all 204 shell tests green.
+
+### Current session: PATH args anchor at the target dir + ignore records are target-relative
+
+Two related fixes, verified together (build + cargo test 23 + clippy clean +
+all 206 shell tests green):
+
+- **Relative CLI paths resolve against the target directory** (bug: from an
+  ignored subdir `dfm diff file.txt` CWD-joined to `<subdir>/file.txt` and
+  reported "is ignored by abc" instead of diffing `~/file.txt`). New shared
+  helper `cli_path_to_abs(path, target_dir_abs)` in commands/mod.rs
+  (`cli_path_to_abs` = absolute → remove_dots, relative → join target).
+  Applied at every command's argument entry: add.rs, pull.rs, merge.rs,
+  diff.rs, forget.rs (entry + lexical-NotFound fallback), ignore.rs;
+  status.rs `resolve_status_paths` refactored onto the same helper. add.rs
+  symlink branch uses it too (`env::current_dir` import dropped). `init`
+  keeps CWD semantics by design (no target exists yet). Side detection
+  (`starts_with(source_dir)`) unchanged — source-side relative paths like
+  `dotfiles/dot_x` now work from any cwd. Test:
+  tests/test_relative_paths_anchored_at_target.sh (status/diff/add/forget/
+  pull from inside an ignored subdir; note `write` helper needs 2 args and
+  redirects inside `(cd … && cmd >out)` land in the subshell cwd).
+- **Ignore records store the lexical target-relative path** (was:
+  `regex::escape(absolute)`). Root cause of a latent breakage: the old loose
+  matcher made absolute records match anywhere; the committed root-anchored
+  matcher (aa10d70) can never match an absolute record → every stored path
+  pattern went dead ("Unused ignore patterns", nothing pruned). ignore.rs
+  now pushes `file_path_relative_to(path, target)` — **lexical**, not
+  canonicalized, so ignoring a symlink records the link itself, not its
+  pointee (test_add_symlink_ignored.sh caught that regression). Raw `-p`
+  patterns unchanged; source-side records unchanged.
+- test_ignore_relative_matching.sh rewritten for real output shape: `!!`
+  lines render only with `--all`/`--ignored` (default view hides them,
+  status.rs filter), ignored-dir entry carries the matched-pattern suffix
+  `!!  abc/  (abc)`; folding shows unmanaged subtree as `??  dir/*`.
+  test_ignore_dirname_slash.sh asserts record `^dirname$` (trailing slash
+  insignificant, storage is relative+escaped now).
 
 ## Debug strategies (in order)
 

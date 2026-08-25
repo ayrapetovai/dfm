@@ -10,7 +10,7 @@ use microxdg::Xdg;
 use super::{
     resolve_tool_command, split_command, DirGuard, create_private_temp_dir,
     state_key_for, source_rel_to_target_abs, resolve_source_variant,
-    read_symlink_pointer, get_sync_time, SourceVariant,
+    read_symlink_pointer, get_sync_time, SourceVariant, cli_path_to_abs,
 };
 
 /// Typed, per-command arguments for `diff` (built by the dispatcher).
@@ -66,12 +66,9 @@ fn diff_one_path(
 ) -> Result<(), DfmError> {
     let user_path_str = user_path.to_string_lossy();
 
-    let path_abs = if user_path.is_absolute() {
-        user_path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(user_path)
-    };
-    let path_abs = remove_dots_from_path(&path_abs);
+    // Relative paths are anchored at the target directory, not at the
+    // current working directory.
+    let path_abs = cli_path_to_abs(user_path, target_dir_abs_path);
 
     if path_abs.starts_with(source_dir_abs_path) {
         // Provided path is in the source directory — infer the target.

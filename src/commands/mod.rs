@@ -88,6 +88,18 @@ pub(crate) fn source_rel_to_target_abs(
     (target_rel.clone(), remove_dots_from_path(&target_dir_abs.join(&target_rel)))
 }
 
+/// Resolve a user-provided CLI path argument to an absolute path. Relative
+/// paths are anchored at the **target directory**, never at the current
+/// working directory, so a command behaves identically no matter where it is
+/// invoked from. Absolute paths are normalized lexically as-is.
+pub(crate) fn cli_path_to_abs(path: &Path, target_dir_abs: &Path) -> PathBuf {
+    if path.is_absolute() {
+        remove_dots_from_path(path)
+    } else {
+        remove_dots_from_path(&target_dir_abs.join(path))
+    }
+}
+
 /// Get the sync time for a file, computing the state key from its absolute path.
 pub(crate) fn get_sync_time<'a>(
     state: &'a StateObject,

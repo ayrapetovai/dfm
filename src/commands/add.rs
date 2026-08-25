@@ -1,4 +1,4 @@
-use std::{env, fs};
+use std::fs;
 use std::fs::File;
 use std::io::Write;
 use crate::DfmError;
@@ -12,7 +12,7 @@ use microxdg::Xdg;
 use super::{sync_file_copy, require_force, symlink_pointer_matches,
             update_sync_state, remove_sync_state, get_sync_time,
             list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
-            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling};
+            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling, cli_path_to_abs};
 
 /// Typed, pre-resolved arguments for the `add` command (built by the
 /// dispatcher from the matching clap subcommand).
@@ -71,15 +71,9 @@ fn handle_target_symlink(
         return Ok(());
     }
 
-    // `target_path` is absolute when it came from a traversal rooted at
-    // `target_dir_abs`, but may be relative when the user named it explicitly
-    // (e.g. `dfm add .bashrc`). Join with the current dir only in that case;
-    // an absolute path must not be prefixed.
-    let target_symlink_abs_path_raw = if target_path.is_absolute() {
-        target_path.clone()
-    } else {
-        env::current_dir()?.join(target_path)
-    };
+    // A relative path is anchored at the target directory (the dispatcher
+    // already maps CLI paths, so this is normally already absolute).
+    let target_symlink_abs_path_raw = cli_path_to_abs(target_path, target_dir_abs_path);
     // canonicalize() would resolve the symlink itself, so canonicalize only its
     // parent directory and re-append the (still-symlink) name.
     let mut target_symlink_abs_path = {
@@ -365,8 +359,10 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         calc_local_ignore_file(xdg),
     ].into_iter().filter_map(|r| r.ok()).collect();
 
+    // Relative CLI paths are anchored at the target directory, not at the
+    // current working directory.
     let paths = match paths {
-        Some(p) => p.clone(),
+        Some(p) => p.iter().map(|p| cli_path_to_abs(p, &target_dir_abs_path)).collect(),
         None => vec![target_dir_abs_path.clone()]
     };
 

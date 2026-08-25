@@ -29,12 +29,14 @@ The 'sync' must do nothing with unmanaged files, and must not return with error 
 
 - (open) encrypted files are read fully into RAM (a few × file size).
   Consider streaming encryption (chunked AEAD) for very large secrets.
-- Do 'cd' to ignored subdir of target directory, and in target directory there is a modified file,
-the 'dfm diff filename' will say that filename is ignored by the ignore regexp of the directory.
-But must actually show the difference. That means that the program searches files appending there name to the current
-directory path, not to the target directory path.
 - 'dfm ignore ~/path', and path is present in target directory - ignore pattern unused, but must
 must be matched against the directory relevant to /, because the path expands in '/..'?
+- The first launch:
+❱ dfm init dotfiles
+prints error:
+config file "/home/artem/experements/dfm-exp/.config/dfm/config.toml" could not be read (I/O error: /home/artem/experements/dfm-exp/.config/dfm/config.toml: No such file or directory (os error 2)); continuing with default settings
+but must not.
+- Subcommand 'status filepath' where filepath exists in target and is ignored, prints "No files managed", but must print the "Ignored" block.
 
 ## Documents
 

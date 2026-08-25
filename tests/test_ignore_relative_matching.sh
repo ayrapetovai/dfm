@@ -15,18 +15,15 @@ write "f3" "dir/abc/file3"
 dfm ignore abc
 
 # The top-level abc/ is ignored: pruned from the walk, shown as one entry
+# (--all unhides the !! category, which the default report hides)
 RES=$(dfm status --all 2>/dev/null)
-assert_succ grep -qF "!!  abc/" <<<"$RES"
+assert_succ grep -qF "  !!  abc/  (abc)" <<<"$RES"
 
-# The nested dir/abc/ is NOT ignored — its file is visible as unmanaged,
-# and the directory itself never appears as an ignored entry
-RES=$(dfm status --short 2>/dev/null)
-assert_succ grep -qF "?? dir/abc/file3" <<<"$RES"
-assert_fail grep -qF "!! dir/abc" <<<"$RES"
-# dir/ is not ignored and hase several objects, so it is folded
-RES=$(dfm status 2>/dev/null)
-assert_succ grep -qF "dir/*" <<<"$RES"
-assert_fail grep -qF "dir/file2" <<<"$RES"
+# The nested dir/abc/ is NOT ignored: no ignored entry under dir/, and the
+# unmanaged files under dir/ are still reported (folded to dir/*)
+assert_fail grep -qF "!!" <<<"$(grep 'dir' <<<$RES)"
+assert_succ grep -qF "??  dir/*" <<<"$RES"
+assert_fail grep -qF "??  dir/file2" <<<"$RES"
 
 # add manages dir/file2 and dir/abc/file3, but skips ./abc
 dfm add
