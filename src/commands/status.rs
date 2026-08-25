@@ -356,15 +356,20 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         // Compute the relative path for the display
         let rel_str = state_key_for(target_abs, &target_dir_abs);
 
+        // An explicitly requested scope unhides the Ignored category: naming
+        // a path means "tell me about this scope", so the flood-prevention
+        // reason for hiding ignored entries does not apply.
+        let show_ignored = *all || *ignored || paths.is_some();
+
         if target_abs.is_symlink() {
             classify_target_symlink(
                 settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
-                target_abs, &rel_str, &state_keys, *all, *ignored, &mut entries,
+                target_abs, &rel_str, &state_keys, *all, show_ignored, &mut entries,
             );
         } else {
             classify_target_file(
                 settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
-                target_abs, &rel_str, &state_keys, *all, *ignored, &mut entries,
+                target_abs, &rel_str, &state_keys, show_ignored, &mut entries,
             );
         }
     }
@@ -486,6 +491,12 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // this the line order could change between runs.
     entries.sort_by_key(|a| (a.path.clone(), a.code.to_string()));
 
+    // An explicitly requested scope unhides the Ignored category: naming a
+    // path means "tell me about this scope", so the flood-prevention reason
+    // for hiding ignored entries does not apply. --all/--ignored keep their
+    // meaning for the unscoped report; other flags keep priority.
+    let explicit_paths = paths.is_some();
+
     let filtered: Vec<&StatusEntry> = entries.iter().filter(|e| {
         if *conflicted && e.code != StatusCode::BothModified { return false; }
         if *modified && !e.code.is_modified() { return false; }
@@ -493,7 +504,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         if *managed && !e.code.is_managed() { return false; }
         if *unpulled && e.code != StatusCode::Unpulled { return false; }
         if *ignored && !e.code.is_ignored() { return false; }
-        if !*all && !*ignored && e.code.is_ignored() { return false; }
+        if !*all && !*ignored && !explicit_paths && e.code.is_ignored() { return false; }
         if !*all && !*managed && e.code.is_up_to_date() { return false; }
         true
     }).collect();
@@ -558,7 +569,7 @@ fn classify_target_symlink(
     rel_str: &str,
     state_keys: &HashSet<String>,
     all: bool,
-    ignored: bool,
+    show_ignored: bool,
     entries: &mut Vec<StatusEntry>,
 ) {
     // Managed via a source symlink pointer file in state.
@@ -609,7 +620,7 @@ fn classify_target_symlink(
     }
 
     if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(rel_str)) {
-        if all || ignored {
+        if show_ignored {
             entries.push(StatusEntry {
                 code: StatusCode::IgnoredSymlink,
                 path: rel_str.to_string(),
@@ -637,8 +648,7 @@ fn classify_target_file(
     target_abs: &Path,
     rel_str: &str,
     state_keys: &HashSet<String>,
-    all: bool,
-    ignored: bool,
+    show_ignored: bool,
     entries: &mut Vec<StatusEntry>,
 ) {
     // Already in state (plain, encrypted, or symlink variant) — covered by Phase 1.
@@ -659,7 +669,7 @@ fn classify_target_file(
     }
 
     if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(rel_str)) {
-        if all || ignored {
+        if show_ignored {
             entries.push(StatusEntry {
                 code: StatusCode::Ignored,
                 path: rel_str.to_string(),

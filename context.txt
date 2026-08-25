@@ -718,6 +718,21 @@ unreadable configs. Applies to every command pre-init, not just init.
 Test: tests/test_first_run_no_config_warning.sh (init silent, paths silent
 after rm -rf XDG_CONFIG_HOME/dfm, garbage TOML still warns). Counts 208.
 
+### Current session: scoped status shows the Ignored block
+
+User report: `status <ignored-file>` printed "No files managed." — wrong,
+the file exists and is merely ignored. Two gates hid the entry:
+1) classifiers classify_target_file/_symlink created Ignored entries only
+when all||ignored; 2) the post-filter dropped them otherwise. Fix: one
+visibility flag `show_ignored = all || ignored || paths.is_some()` threaded
+into both classifiers (replaces their all||ignored gate; file classifier no
+longer takes `all`), plus `explicit_paths` in the filter chain. Full-tree
+status unchanged; other flags keep priority (--modified <ignored> stays
+empty); pruned-dir `!! dir/` entries now surface in scoped reports too.
+Tests: test_status_paths.sh extended (named ignored file in default +
+porcelain, scoped parent dir reveals ignored_here/, --modified priority).
+Counts still 208.
+
 ## Debug strategies (in order)
 
 1. Run the failing test alone: `bash tests/launcher.sh test_x.sh` (already

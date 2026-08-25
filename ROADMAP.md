@@ -32,7 +32,6 @@ The 'sync' must do nothing with unmanaged files, and must not return with error 
   Consider streaming encryption (chunked AEAD) for very large secrets.
 - 'dfm ignore ~/path', and path is present in target directory - ignore pattern unused, but
 must be matched against the directory relevant to /, because the path expands in '/..'?
-- Subcommand 'dfm status filepath' where filepath exists in target and is ignored, prints "No files managed", but must print the "Ignored" block.
 
 ## Documents
 

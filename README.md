@@ -430,7 +430,7 @@ Codes are two characters: the first represents the **target** side, the second r
 | `-l`, `--ignored-patterns` | List active ignore patterns (no file entries). |
 | `-u`, `--unused-patterns` | List ignore patterns that match no files. |
 
-Without any filter flag, the default output shows: modified entries and unmanaged entries. Up-to-date (`--`, `LL`) and ignored (`!!`, `!L`) entries are **hidden** (use `--all` to see them).
+Without any filter flag, the default output shows: modified entries and unmanaged entries. Up-to-date (`--`, `LL`) and ignored (`!!`, `!L`) entries are **hidden** (use `--all` to see them). Exception: when the report is restricted to explicit `PATH` arguments, ignored entries inside that scope are shown even without a flag — naming a path asks "what is this file's state?", and *ignored* is the answer for those.
 
 The "Unused ignore patterns" block is part of the **unfiltered** default report only (and of the dedicated `--unused-patterns` mode). Reports restricted by a filter flag show only their own lists and never include that block; `--all` keeps it.
 

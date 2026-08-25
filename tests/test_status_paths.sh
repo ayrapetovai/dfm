@@ -54,6 +54,19 @@ dfm status --short .config 2>/dev/null | grep -qF "?? .config/b/g.txt"
 # --- Ignored entries are shown with --ignored within the scope -------------
 dfm status --ignored .config 2>/dev/null | grep -qF "ignored_here"
 
+# --- An explicitly named ignored path is reported, flags or not ------------
+RES=$(dfm status .config/ignored_here/i.txt 2>/dev/null)
+assert_succ grep -qF "!!" <<<"$RES"
+assert_succ grep -qF "!!  .config/ignored_here/i.txt" <<<"$RES"
+dfm status --porcelain .config/ignored_here/i.txt 2>/dev/null | grep -qF $'!!\t.config/ignored_here/i.txt'
+# ...and the ignored directory itself, reached through a scoped parent
+RES=$(dfm status .config 2>/dev/null)
+assert_succ grep -qF ".config/ignored_here/" <<<"$RES"
+
+# other flags keep priority: --modified hides ignored entries even when scoped
+RES=$(dfm status --modified .config/ignored_here/i.txt 2>/dev/null)
+assert_fail grep -qF "i.txt" <<<"$RES"
+
 # --- Nonexistent path is an error ------------------------------------------
 assert_fail dfm status no_such_path
 
