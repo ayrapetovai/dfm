@@ -2,7 +2,7 @@
 
 ## Implement features
 
-- Add the following records to the ignore_file at `dfm init`
+- Add the following records to the ignore_file at `dfm init` if ignore_file was not exist:
 ```text
 \.cache
 \.cargo
@@ -10,28 +10,32 @@
 \.state
 \.local
 ```
-Calculate each path to ignore: if XDG_* path is a subpath of the target directory, then add it to ignore_file.
-- 'status' subcommand must take filter flag --encrypted (-e) to show encrypted files only.
-- For synchronized files (managed, not ignored) 'status' command must show that file is encrypted, by (encrypted).
+Calculate each of these paths: if the corresponding XDG_* ENV's path is a subpath of the target directory, then add it to ignore_file.
+- 'status' subcommand must take filter flag --encrypted (-e) to show encrypted files only. If no additional filters specified then
+all blocks (--modified, --ignored etc) must be printed.
+- For synchronized files (managed, not ignored) 'status' command must show where that file is encrypted, by word (encrypted) at the same line to the right.
+This also must work for grouped files, where only the directory is printed with '*' sign.
 - Automatically add files with encryption if they are located in directory path with 700 (or stricter) permissions of any of
 the path component.
 - subcommand 'status' must support combinations of short or long flags.
 - add flag --editable (-e) for subcommand 'diff', with this flag the diff subcommand must allow to modify target file and source files.
-- Exit with error if dfm is launched with root privileges (not necessary under root itself).
+- Exit with error if dfm is launched with root privileges but not by the root user itself.
 - Add 'sync' subcommand, that do 'add .' and 'pull .', does not work if conflicts detected, unless --force. But
 even with --force the 'sync' must not modify conflicting files. If paths are provided 'sync' must 'add-pull' only on
 there files/directories. The wolkdir-conflict-searching code must be shared between 'add', 'pull' and 'sync'.
 The 'sync' must do nothing with unmanaged files, and must not return with error handing them. 'sync' must not 'add' unmanaged files.
 'sync' must not 'pull' unpulled files.
-- Add progress bar to action phase of command (now it works only in wallkdir phase).
+- Add progress bar to action phase of commands (now it works only in wallkdir phase).
 - Command 'dfm status filepath' must print "filepath is up-to-date." instead of "All up-to-date.".
-- Add flag --encrypted (-e) for subcommand 'status', when givent dfm must print a block of filenames relative to target path, like other commands
+- Add flag --encrypted (-e) for subcommand 'status', when given the dfm must print a block of filenames relative to target path (like other commands)
 that are encrypted in source directory.
+- make a new flag for 'dfm diff --all' (-a) that will call a difference for all modified files and print them to stdout. For that create a separate variable in settings and configuration file,
+use 'diff -u --color=always {source} {target}' if TargetModified, and 'diff -u --color-always {target} {source}' if SourceModified by default. All output must be pass to the pager as subcommand 'status' does it, the commands must be passed to shell to be executed. (I will pipe them to diff-so-fancy)
 
 ## Documents
 
 - Switch license to GPL.
-- In README.md describe what is 'pull' and 'add' commands, that they work only locally.
+- For README.md add to the general description that dfm works only locally.
 - Shrink README.md and context.txt
 
 ## Considerations
