@@ -19,7 +19,6 @@ This also must work for grouped files, where only the directory is printed with 
 the path component.
 - subcommand 'status' must support combinations of short or long flags.
 - add flag --editable (-e) for subcommand 'diff', with this flag the diff subcommand must allow to modify target file and source files.
-- Exit with error if dfm is launched with root privileges but not by the root user itself.
 - Add 'sync' subcommand, that do 'add .' and 'pull .', does not work if conflicts detected, unless --force. But
 even with --force the 'sync' must not modify conflicting files. If paths are provided 'sync' must 'add-pull' only on
 there files/directories. The wolkdir-conflict-searching code must be shared between 'add', 'pull' and 'sync'.

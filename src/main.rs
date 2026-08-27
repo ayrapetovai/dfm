@@ -7,12 +7,13 @@ use std::path::PathBuf;
 
 use dfm::*;
 
-use dfm::cli::{Args, Command};
 use commands::*;
+use dfm::cli::{Args, Command};
 
 fn main_logic() -> Result<(), dfm::DfmError> {
-    let args = Args::parse();
+    check_root_privileges()?;
 
+    let args = Args::parse();
     let xdg = microxdg::Xdg::new()?;
 
     if let Err(e) = stderrlog::new()
@@ -216,7 +217,7 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         }
         Command::Decrypt { path, output } => {
             decrypt_command(&settings, DecryptArgs { path, output })
-        },
+        }
         Command::Merge { paths, dry_run } => with_state(
             state_opt,
             state_read_error.as_ref(),
@@ -240,13 +241,8 @@ fn main_logic() -> Result<(), dfm::DfmError> {
             }
             let state =
                 state_opt.ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
-            diff_command(
-                &settings,
-                &xdg,
-                DiffArgs { paths },
-                &state,
-            )
-        },
+            diff_command(&settings, &xdg, DiffArgs { paths }, &state)
+        }
         Command::Status {
             all,
             short,

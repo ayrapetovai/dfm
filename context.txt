@@ -17,8 +17,8 @@ Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
 ```bash
 cargo build                            # debug
 cargo build --release                  # panic=abort, opt-level z, lto fat
-cargo test                             # 23 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 208 shell integration tests
+cargo test                             # 30 unit tests (lib.rs + crypt.rs)
+bash tests/launcher.sh -q              # 209 shell integration tests
 bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
 cargo aur                              # target/cargo-aur tarball + PKGBUILD
 ```
@@ -43,7 +43,7 @@ build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
 src/commands/mod.rs  re-exports + shared helpers (below); split_command
 src/commands/{add,pull,merge,diff,forget,init,ignore,purge,config,paths,status,encrypt}.rs
 tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      208 shell tests
+tests/test_*.sh      209 shell tests
 ```
 
 ## Key types (lib.rs)
@@ -426,12 +426,13 @@ warning**, never a command failure:
   dance), `assert_source <rel>` (file in `$PWD/dotfiles/`),
   `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
   `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **208 shell tests**, **29 Rust unit tests** (15 in src/lib.rs
-  — `test_file_path_relative_to`, `test_remove_dots_from_path`,
-  `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
-   `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`,
-   `test_pattern_is_root_relative_not_any_depth` —
-  and 8 in src/crypt.rs: round-trip, wrong-password, tampered header,
+- Counts: **209 shell tests**, **30 Rust unit tests** (16 in src/lib.rs
+   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
+   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
+    `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`,
+    `test_pattern_is_root_relative_not_any_depth`,
+    `test_refuse_root_access_matrix` —
+   and 8 in src/crypt.rs: round-trip, wrong-password, tampered header,
   **absurd_kdf_params_rejected**, tampered ciphertext, metadata-not-visible,
   **dir_rel_is_safe_rejects_escaping_paths**, etc.).
   No `sealed_test` dependency.
@@ -755,6 +756,35 @@ encrypt_file_standalone params. Tests: +6 unit (multi-chunk roundtrip,
 exact multiples, truncation, trailing junk, middle-chunk swap, chunk-size
 bounds) = 29. Verified 5 MiB standalone roundtrip in /tmp sandbox; shell
 suite 208 green; clippy clean.
+
+### Current session: root-privilege guard
+
+Refuse to run when dfm holds root privileges it did not get as the root user
+itself: `check_root_privileges()` (lib.rs, called first in main_logic right
+after Args::parse, before Xdg/config/state) reads real+effective uid via two
+hand-rolled externs — `#[link(name="c")] unsafe extern { getuid, geteuid }`
+(edition 2024 requires `unsafe extern`); no new Cargo/runtime dependency,
+symbols come from the already-linked libc.so.6. Decision
+`should_refuse_root_access(ruid, euid, sudo_user)`: refuse iff euid 0 AND
+(ruid != 0 OR SUDO_USER non-empty). Genuine root (0,0,None) allowed; euid!=0
+never refused even with stray exported SUDO_USER. Escape hatch: environment
+`DFM_ALLOW_ROOT` any non-empty value bypasses the check early. Error =
+DfmError::InvalidInput naming the elevation path (sudo w/ SUDO_USER vs
+setuid-style ruid mismatch), exit 1 via existing main path. `--help`/`--version`
+still work under sudo (clap exits before the guard). Unit test
+`test_refuse_root_access_matrix` (6 combos). Shell test
+test_root_privileges_check.sh: self-skips the root-only scenarios when
+`id -u` != 0 (refusal needs euid 0, can't fake in the harness); as root it
+checks sudo-style refusal + DFM_ALLOW_ROOT bypass + genuine-root init works.
+Verified refusal end-to-end locally via `unshare -r` (user namespace gives
+euid 0 to a non-root user without privileges): fake `SUDO_USER=alice` was
+refused, `DFM_ALLOW_ROOT=1` bypassed, genuine root ran. Counts now 209
+shell, 30 unit. README Limitations gained a Root privileges bullet.
+Gotchas: `dfm config list` is not valid syntax (needs `--get/--set/--list`
+flags) — use a real command like `init`/`status` in shell tests; run_fail
+must take `env K=V "$BIN"` form (positions from "$@" are not interpreted as
+env assignments); merged tool-output interleaving can mask stderr ordering —
+redirect stderr to a file when verifying.
 
 ## Debug strategies (in order)
 

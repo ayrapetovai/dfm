@@ -578,6 +578,7 @@ source_dir/.current_diff/                  -- transient diff-tool scratch dir (0
 
 ## Limitations
 
+- **Root privileges**: `dfm` refuses to run with root privileges it did not get as the root user itself (e.g. `sudo dfm` or a setuid-style elevation of a non-root user). A genuine root session (uid 0 launched by the root user itself) still works. Set `DFM_ALLOW_ROOT=1` to bypass the check.
 - **Config `--set` and arrays**: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the TOML file directly.
 - **Dotfiles outside UTF-8 paths**: Only valid UTF-8 paths are supported.
 - **Merge tool**: The merge command is run directly (no shell), so shell features (`|`, `>`, `$VAR`) in `merge_tool_command` are not processed.

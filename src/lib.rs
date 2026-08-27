@@ -2,20 +2,20 @@ pub mod cli;
 pub mod crypt;
 
 use std::collections::HashMap;
-use std::{fs, io};
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read};
-use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
+use std::{fs, io};
 
 use log::{debug, trace, warn};
 use microxdg::Xdg;
 use regex::{Regex, RegexSet};
-use std::sync::{Arc, LazyLock, Mutex};
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
 use toml::{Table, Value};
 use walkdir::{DirEntry, WalkDir};
@@ -72,7 +72,10 @@ impl DfmError {
 /// message. `std::io::Error`'s `Display` does not include the offending path,
 /// so every user-facing file error is annotated here with the path.
 pub fn io_err(path: &Path, e: io::Error) -> DfmError {
-    DfmError::Io(io::Error::new(e.kind(), format!("{}: {}", path.display(), e)))
+    DfmError::Io(io::Error::new(
+        e.kind(),
+        format!("{}: {}", path.display(), e),
+    ))
 }
 
 /// Same as `io_err` but associates two paths (a copy/source+destination pair).
@@ -105,6 +108,69 @@ pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> Result<(), DfmErr
     Ok(())
 }
 
+// Root-privilege guard. dfm is a per-user tool: running it with root privileges
+// obtained on behalf of a non-root user (via `sudo` or a setuid-style
+// elevation) would copy the wrong user's dotfiles with the wrong ownership.
+// Genuine root sessions (uid 0 launched by the root user itself) keep working.
+
+// `getuid`/`geteuid` come from the already-linked `libc.so.6`; binding them
+// here adds no new runtime dependency.
+#[link(name = "c")]
+unsafe extern "C" {
+    fn getuid() -> u32;
+    fn geteuid() -> u32;
+}
+
+/// Real and effective UID of the current process. Both are always-available
+/// syscalls that cannot fail.
+fn current_process_uids() -> (u32, u32) {
+    unsafe { (getuid(), geteuid()) }
+}
+
+/// True when the process must refuse to operate: effective UID is root, but
+/// the process was not launched by the root user itself (the real UID differs,
+/// or root was reached through `sudo`).
+fn should_refuse_root_access(real_uid: u32, effective_uid: u32, sudo_user: Option<&str>) -> bool {
+    if effective_uid != 0 {
+        return false;
+    }
+    let launched_by_root_itself = real_uid == 0 && sudo_user.is_none();
+    !launched_by_root_itself
+}
+
+/// First-thing root-privilege check, wired into `main`. Refuses to run when
+/// dfm has root privileges it got on behalf of a non-root user. The env var
+/// `DFM_ALLOW_ROOT` (any non-empty value) explicitly lifts the refusal.
+pub fn check_root_privileges() -> Result<(), DfmError> {
+    if !envmnt::get_or("DFM_ALLOW_ROOT", "").is_empty() {
+        return Ok(());
+    }
+    let (real_uid, effective_uid) = current_process_uids();
+    let sudo_user = envmnt::get_or("SUDO_USER", "");
+    let sudo_user = if sudo_user.is_empty() {
+        None
+    } else {
+        Some(sudo_user)
+    };
+    if !should_refuse_root_access(real_uid, effective_uid, sudo_user.as_deref()) {
+        return Ok(());
+    }
+    let reason = match sudo_user {
+        Some(user) => format!(
+            "dfm is running with root privileges via sudo on behalf of user {:?}",
+            user
+        ),
+        None => format!(
+            "dfm is running with root privileges (effective uid 0) on behalf of a non-root user (real uid {})",
+            real_uid
+        ),
+    };
+    Err(DfmError::InvalidInput(format!(
+        "{}; run dfm as your own user, not as root (set DFM_ALLOW_ROOT=1 to override)",
+        reason
+    )))
+}
+
 impl From<regex::Error> for DfmError {
     fn from(e: regex::Error) -> Self {
         DfmError::Other(e.to_string())
@@ -130,7 +196,7 @@ static STATE_FILE_NAME_IN_XDG_STATE: &str = "state.toml";
 static CONFIG_FILE_NAME_IN_HOME: &str = ".dfm.toml";
 static CONFIG_FILE_NAME_IN_XDG_CONFIG: &str = "config.toml";
 
-static IGNORE_FILE_NAME_IN_XDG_STATE : &str = "ignore_file";
+static IGNORE_FILE_NAME_IN_XDG_STATE: &str = "ignore_file";
 static IGNORE_FILE_NAME_IN_SOURCE_DIR: &str = ".dfm_ignore_file";
 
 /// Sentinel child name appended to a directory rel path to probe whether the
@@ -140,15 +206,16 @@ pub const IGNORE_DIR_PROBE_CHILD: &str = "x";
 pub const LEADING_DOT_COMPONENT: &str = ".";
 
 // file name must be relative to target directory
-static BY_DEFAULT_FORCE_ENCRYPTION_FILES: LazyLock<Vec<Regex>> = LazyLock::new(|| vec![Regex::from_str("\\.ssh").unwrap()]);
+static BY_DEFAULT_FORCE_ENCRYPTION_FILES: LazyLock<Vec<Regex>> =
+    LazyLock::new(|| vec![Regex::from_str("\\.ssh").unwrap()]);
 
 impl StateObject {
     pub fn new(target_directory: PathBuf, source_directory: PathBuf) -> Self {
-       StateObject {
-           source_directory,
-           target_directory,
-           syncs: HashMap::new()
-       }
+        StateObject {
+            source_directory,
+            target_directory,
+            syncs: HashMap::new(),
+        }
     }
 }
 
@@ -165,15 +232,20 @@ pub struct SyncTime {
 
 impl std::ops::Deref for SyncTime {
     type Target = SystemTime;
-    fn deref(&self) -> &SystemTime { &self.mtime }
+    fn deref(&self) -> &SystemTime {
+        &self.mtime
+    }
 }
 
 mod sync_time_ser {
-    use serde::{de::Error as DeError, ser::Error as SerError, Deserialize, Deserializer, Serializer};
+    use serde::{
+        Deserialize, Deserializer, Serializer, de::Error as DeError, ser::Error as SerError,
+    };
     use std::time::SystemTime;
 
     pub fn serialize<S: Serializer>(t: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
-        let dur = t.duration_since(SystemTime::UNIX_EPOCH)
+        let dur = t
+            .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| S::Error::custom("timestamp is before UNIX epoch"))?;
         let line = format!("{};{}", dur.as_secs(), dur.subsec_nanos());
         s.serialize_str(&line)
@@ -181,7 +253,8 @@ mod sync_time_ser {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<SystemTime, D::Error> {
         let line = <String as Deserialize>::deserialize(d)?;
-        let (secs, nanos) = line.split_once(';')
+        let (secs, nanos) = line
+            .split_once(';')
             .ok_or_else(|| D::Error::custom("expected \"<secs>;<nanos>\""))?;
         let secs: u64 = secs.parse().map_err(D::Error::custom)?;
         let nanos: u32 = nanos.parse().map_err(D::Error::custom)?;
@@ -191,12 +264,18 @@ mod sync_time_ser {
 }
 
 pub fn calc_local_ignore_file(xdg: &Xdg) -> Result<PathBuf, DfmError> {
-    let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
+    let state_file_name = format!(
+        "{}/{}",
+        STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE
+    );
     Ok(xdg.state_file(&state_file_name)?)
 }
 
 pub fn open_or_create_target_ignore_file(xdg: &Xdg) -> Result<File, DfmError> {
-    let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE);
+    let state_file_name = format!(
+        "{}/{}",
+        STATE_DIRECTORY_NAME_IN_XDG_STATE, IGNORE_FILE_NAME_IN_XDG_STATE
+    );
     let p = xdg.state_file(&state_file_name)?;
     open_or_create_file(&p)
 }
@@ -213,7 +292,7 @@ pub fn calc_source_ignore_file(source_dir_abs_path: &Path) -> PathBuf {
     source_dir_abs_path.join(IGNORE_FILE_NAME_IN_SOURCE_DIR)
 }
 
-pub fn load_ignore_regex(ignore_file_path : &Path) -> Result<RegexSet, DfmError> {
+pub fn load_ignore_regex(ignore_file_path: &Path) -> Result<RegexSet, DfmError> {
     if !ignore_file_path.exists() {
         return Ok(RegexSet::empty());
     }
@@ -244,7 +323,7 @@ pub fn load_ignore_regex(ignore_file_path : &Path) -> Result<RegexSet, DfmError>
     } else {
         match RegexSet::new(patterns) {
             Ok(r) => Ok(r),
-            Err(e) => Err(DfmError::other(e))
+            Err(e) => Err(DfmError::other(e)),
         }
     }
 }
@@ -290,7 +369,9 @@ fn component_sub_regexes(pattern: &str) -> Arc<Vec<Option<Regex>>> {
         }
     };
 
-    let mut cache = COMPONENT_REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = COMPONENT_REGEX_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Some(compiled) = cache.get(pattern) {
         return compiled.clone();
     }
@@ -362,7 +443,9 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
     };
 
     if sub_patterns.len() == 1 {
-        let Some(re) = sub_res[0].as_ref() else { return false };
+        let Some(re) = sub_res[0].as_ref() else {
+            return false;
+        };
         // A leading glob (.* or ^) means "match any component at any depth".
         let has_left_glob = sub_patterns[0].starts_with(".*") || sub_patterns[0].starts_with('^');
         if has_left_glob {
@@ -378,10 +461,10 @@ pub fn pattern_matches_path_components(pattern: &str, relative_path: &str) -> bo
         if sub_patterns.len() > comps.len() || sub_res.iter().any(|r| r.is_none()) {
             return false;
         }
-        sub_res.iter().enumerate().all(|(i, re)| {
-            re.as_ref()
-                .is_some_and(|re| re.is_match(comps[i]))
-        })
+        sub_res
+            .iter()
+            .enumerate()
+            .all(|(i, re)| re.as_ref().is_some_and(|re| re.is_match(comps[i])))
     }
 }
 
@@ -411,7 +494,10 @@ pub fn calc_state_directory_path(xdg: &Xdg) -> Result<PathBuf, DfmError> {
 }
 
 pub fn calc_state_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError> {
-    let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, STATE_FILE_NAME_IN_XDG_STATE);
+    let state_file_name = format!(
+        "{}/{}",
+        STATE_DIRECTORY_NAME_IN_XDG_STATE, STATE_FILE_NAME_IN_XDG_STATE
+    );
     Ok(xdg.state_file(&state_file_name)?)
 }
 
@@ -438,11 +524,12 @@ pub fn read_state(path_to_state_file: &PathBuf) -> Result<StateObject, DfmError>
                 path_to_state_file.display(),
                 e
             )));
-        },
-        Ok(s) => s
+        }
+        Ok(s) => s,
     };
 
-    state.syncs = state.syncs
+    state.syncs = state
+        .syncs
         .into_iter()
         .map(|(key, sync)| {
             validate_state_key(&key)?;
@@ -462,9 +549,7 @@ fn validate_state_key(key: &str) -> Result<(), DfmError> {
     for component in path.components() {
         match component {
             Component::Normal(_) | Component::CurDir => {}
-            Component::ParentDir
-            | Component::RootDir
-            | Component::Prefix(_) => {
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err(DfmError::InvalidData(format!(
                     "state key {:?} contains path component that escapes the source directory",
                     key
@@ -545,25 +630,35 @@ pub fn get_home_path() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-pub fn calc_config_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError>{
+pub fn calc_config_file_path(xdg: &Xdg) -> Result<PathBuf, DfmError> {
     let home_path = match get_home_path() {
         Some(p) => p,
-        None => return Err(DfmError::Unsupported("Environment variable $HOME is not set".into()))
+        None => {
+            return Err(DfmError::Unsupported(
+                "Environment variable $HOME is not set".into(),
+            ));
+        }
     };
     let config_in_home = home_path.join(CONFIG_FILE_NAME_IN_HOME);
 
     let path_to_config_file = match xdg.config() {
         Ok(path_to_config_dir) => {
-            let state_file_name = format!("{}/{}", STATE_DIRECTORY_NAME_IN_XDG_STATE, CONFIG_FILE_NAME_IN_XDG_CONFIG);
+            let state_file_name = format!(
+                "{}/{}",
+                STATE_DIRECTORY_NAME_IN_XDG_STATE, CONFIG_FILE_NAME_IN_XDG_CONFIG
+            );
             let config_path = path_to_config_dir.join(&state_file_name);
             if config_path.exists() || !config_in_home.exists() {
-                trace!("config file path is taken from XDG variable {:?}", config_path);
+                trace!(
+                    "config file path is taken from XDG variable {:?}",
+                    config_path
+                );
                 config_path
             } else {
                 trace!("config file was not found {:?}", config_path);
                 config_in_home
             }
-        },
+        }
         Err(e) => {
             trace!("xdg config path is absent: {}", e);
             config_in_home
@@ -610,11 +705,15 @@ pub fn read_config(path_to_config_file: &PathBuf) -> Result<Config, DfmError> {
             path_to_config_file.display(),
             e
         ))),
-        Ok(c) => Ok(c)
+        Ok(c) => Ok(c),
     }
 }
 
-pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_object: Option<&StateObject>) -> Settings {
+pub fn merge_settings(
+    default: &Settings,
+    custom_opt: &Option<Config>,
+    state_object: Option<&StateObject>,
+) -> Settings {
     // The source/target dirs are recorded in the state file (by `dfm init`) and
     // must be honored even when the config file is absent — otherwise removing
     // just the config (e.g. `rm -rf ~/.config/dfm`) breaks every
@@ -632,9 +731,18 @@ pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_obj
             Settings {
                 source_dir,
                 target_dir,
-                dot_prefix: custom.dot_prefix.clone().unwrap_or_else(|| default.dot_prefix.clone()),
-                symlink_postfix: custom.symlink_postfix.clone().unwrap_or_else(|| default.symlink_postfix.clone()),
-                encrypted_postfix: custom.encrypted_postfix.clone().unwrap_or_else(|| default.encrypted_postfix.clone()),
+                dot_prefix: custom
+                    .dot_prefix
+                    .clone()
+                    .unwrap_or_else(|| default.dot_prefix.clone()),
+                symlink_postfix: custom
+                    .symlink_postfix
+                    .clone()
+                    .unwrap_or_else(|| default.symlink_postfix.clone()),
+                encrypted_postfix: custom
+                    .encrypted_postfix
+                    .clone()
+                    .unwrap_or_else(|| default.encrypted_postfix.clone()),
                 // `force_encryption_for` is a plain Vec, not an Option: an
                 // explicitly empty list in config still means "use defaults".
                 force_encryption_for: if custom.force_encryption_for.is_empty() {
@@ -642,11 +750,17 @@ pub fn merge_settings(default: &Settings, custom_opt: &Option<Config>, state_obj
                 } else {
                     custom.force_encryption_for.clone()
                 },
-                obtain_password_shell_command: custom.obtain_password_shell_command.clone()
+                obtain_password_shell_command: custom
+                    .obtain_password_shell_command
+                    .clone()
                     .or_else(|| default.obtain_password_shell_command.clone()),
-                merge_tool_command: custom.merge_tool_command.clone()
+                merge_tool_command: custom
+                    .merge_tool_command
+                    .clone()
                     .or_else(|| default.merge_tool_command.clone()),
-                diff_tool_command: custom.diff_tool_command.clone()
+                diff_tool_command: custom
+                    .diff_tool_command
+                    .clone()
                     .or_else(|| default.diff_tool_command.clone()),
             }
         }
@@ -664,7 +778,8 @@ pub fn file_path_relative_to(file_abs_path: &Path, relative_to_abs_path: &Path) 
     for target_file_parent in file_abs_path.ancestors() {
         if relative_to_abs_path.eq(target_file_parent) {
             path_components.reverse();
-            target_file_rel_to_target_dir_path_opt = Some(PathBuf::from_iter(path_components.iter().cloned()));
+            target_file_rel_to_target_dir_path_opt =
+                Some(PathBuf::from_iter(path_components.iter().cloned()));
             break;
         }
         if let Some(filename) = target_file_parent.file_name() {
@@ -673,9 +788,14 @@ pub fn file_path_relative_to(file_abs_path: &Path, relative_to_abs_path: &Path) 
     }
 
     if let Some(ret) = target_file_rel_to_target_dir_path_opt {
-        if ret.as_os_str().is_empty() { PathBuf::from(".") } else { ret }
+        if ret.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            ret
+        }
     } else {
-        let mut target_file_rel_to_target_dir_path_with_backs = file_abs_path.to_string_lossy().into_owned();
+        let mut target_file_rel_to_target_dir_path_with_backs =
+            file_abs_path.to_string_lossy().into_owned();
         for _ in 0..path_components.len() {
             target_file_rel_to_target_dir_path_with_backs.insert_str(0, "/..")
         }
@@ -684,10 +804,20 @@ pub fn file_path_relative_to(file_abs_path: &Path, relative_to_abs_path: &Path) 
     }
 }
 
-pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &Path, source_dir_abs_path: &Path, target_abs_path: &Path, add_postfix_opt: Option<&str>) -> PathBuf {
-    let target_file_rel_to_target_dir_path = file_path_relative_to(target_abs_path, target_dir_abs_path);
+pub fn filepath_in_source_dir(
+    dot_prefix: &str,
+    target_dir_abs_path: &Path,
+    source_dir_abs_path: &Path,
+    target_abs_path: &Path,
+    add_postfix_opt: Option<&str>,
+) -> PathBuf {
+    let target_file_rel_to_target_dir_path =
+        file_path_relative_to(target_abs_path, target_dir_abs_path);
 
-    trace!("target file path relative to target directory {:?}", target_file_rel_to_target_dir_path);
+    trace!(
+        "target file path relative to target directory {:?}",
+        target_file_rel_to_target_dir_path
+    );
 
     // Encode the path into the source namespace by rewriting every leading-dot
     // component to `dot_prefix`: `.bashrc` -> `dot_bashrc`, and each dot
@@ -725,7 +855,10 @@ pub fn filepath_in_source_dir(dot_prefix: &str, target_dir_abs_path: &Path, sour
         source_file_rel_to_source_dir_path = PathBuf::from(s);
     }
 
-    trace!("source file path relative to source directory {:?}", source_file_rel_to_source_dir_path);
+    trace!(
+        "source file path relative to source directory {:?}",
+        source_file_rel_to_source_dir_path
+    );
     let ret = source_dir_abs_path.join(&source_file_rel_to_source_dir_path);
     remove_dots_from_path(&ret)
 }
@@ -832,27 +965,42 @@ pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf),
     Ok((target_dir_abs_path, source_dir_abs_path))
 }
 
-pub fn calc_working_dir_paths_unchecked(settings: &Settings) -> Result<(PathBuf, PathBuf), DfmError> {
+pub fn calc_working_dir_paths_unchecked(
+    settings: &Settings,
+) -> Result<(PathBuf, PathBuf), DfmError> {
     if settings.source_dir.trim().is_empty() {
         return Err(DfmError::NotFound(
-            "source directory is not set (state file missing or not initialized); run `dfm init`".into(),
+            "source directory is not set (state file missing or not initialized); run `dfm init`"
+                .into(),
         ));
     }
 
-    trace!("using target directory from settings (original) {:?}", settings.target_dir);
+    trace!(
+        "using target directory from settings (original) {:?}",
+        settings.target_dir
+    );
 
     let target_dir_path_expanded = envmnt::expand(&settings.target_dir, None);
-    trace!("using target directory from settings (expanded) {}", target_dir_path_expanded);
+    trace!(
+        "using target directory from settings (expanded) {}",
+        target_dir_path_expanded
+    );
 
     let target_dir_abs_path = match PathBuf::from_str(target_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
-        Err(e) => return Err(DfmError::other(e))
+        Err(e) => return Err(DfmError::other(e)),
     };
 
-    trace!("using source directory from settings (original) {:?}", settings.source_dir);
+    trace!(
+        "using source directory from settings (original) {:?}",
+        settings.source_dir
+    );
 
     let source_dir_path_expanded = envmnt::expand(&settings.source_dir, None);
-    trace!("using source directory from settings (expanded) {}", source_dir_path_expanded);
+    trace!(
+        "using source directory from settings (expanded) {}",
+        source_dir_path_expanded
+    );
 
     let source_dir_abs_path = match PathBuf::from_str(source_dir_path_expanded.as_str()) {
         Ok(p) => remove_dots_from_path(&p),
@@ -877,7 +1025,10 @@ pub struct ProgressLine {
 
 impl ProgressLine {
     pub fn new() -> ProgressLine {
-        ProgressLine { last_len: 0, active: false }
+        ProgressLine {
+            last_len: 0,
+            active: false,
+        }
     }
 
     /// Replace the current progress line with `text`, overwriting in place.
@@ -1007,7 +1158,9 @@ pub fn list_directory(
                     Err(_) => return true,
                 },
             };
-            let Some(rel_str) = rel.to_str() else { return true };
+            let Some(rel_str) = rel.to_str() else {
+                return true;
+            };
 
             match filter {
                 None => true,
@@ -1037,15 +1190,15 @@ pub fn list_directory(
                 Err(ref e) => match e.io_error() {
                     Some(err) if err.kind() == io::ErrorKind::NotFound => {
                         traversed_paths.push(path.into());
-                    },
+                    }
                     Some(err) if err.kind() == io::ErrorKind::PermissionDenied => {
                         // Unreadable objects (strict permissions/ownership) are
                         // skipped with a warning instead of aborting the command.
                         warn_unreadable(e.path().unwrap_or(path), err);
-                    },
+                    }
                     _ => {
                         error_messages.push(format!("error: {}", e));
-                    },
+                    }
                 },
                 // we don't manage directories in source directory
                 _ => {}
@@ -1072,7 +1225,11 @@ pub enum CompareByTimestamp {
     NeverSynchronized,
 }
 
-pub fn compare_files_by_timestamps(target_abs_path: &Path, source_abs_path: &Path, sync_time_opt: Option<&SystemTime>) -> Result<CompareByTimestamp, DfmError> {
+pub fn compare_files_by_timestamps(
+    target_abs_path: &Path,
+    source_abs_path: &Path,
+    sync_time_opt: Option<&SystemTime>,
+) -> Result<CompareByTimestamp, DfmError> {
     let target_file_meta = match target_abs_path.metadata() {
         Ok(m) => m,
         Err(e) => return Err(io_err(target_abs_path, e)),
@@ -1086,25 +1243,35 @@ pub fn compare_files_by_timestamps(target_abs_path: &Path, source_abs_path: &Pat
     let source_file_synced = match sync_time_opt {
         Some(t) => *t,
         None => {
-            debug!("synchronization time is not available for target {:?}\n\tand source {:?}",
-                target_abs_path, source_abs_path);
+            debug!(
+                "synchronization time is not available for target {:?}\n\tand source {:?}",
+                target_abs_path, source_abs_path
+            );
             return Ok(CompareByTimestamp::NeverSynchronized);
         }
     };
-    let target_file_modified = target_file_meta.modified().map_err(|e| io_err(target_abs_path, e))?;
-    let source_file_modified = source_file_meta.modified().map_err(|e| io_err(source_abs_path, e))?;
+    let target_file_modified = target_file_meta
+        .modified()
+        .map_err(|e| io_err(target_abs_path, e))?;
+    let source_file_modified = source_file_meta
+        .modified()
+        .map_err(|e| io_err(source_abs_path, e))?;
 
-    debug!("current state:\n target: mtime={:?}\n source: sync={:?},\n         mtime={:?}",
-             target_file_modified, source_file_synced, source_file_modified);
+    debug!(
+        "current state:\n target: mtime={:?}\n source: sync={:?},\n         mtime={:?}",
+        target_file_modified, source_file_synced, source_file_modified
+    );
 
-    let both_not_modified = target_file_modified == source_file_synced &&
-        source_file_synced == source_file_modified;
-    let only_source_modified = target_file_modified == source_file_synced &&
-        source_file_synced < source_file_modified || target_file_modified < source_file_modified;
-    let only_target_modified = target_file_modified > source_file_synced &&
-        source_file_synced == source_file_modified || target_file_modified > source_file_modified;
-    let both_modified = target_file_modified > source_file_synced &&
-        source_file_synced < source_file_modified;
+    let both_not_modified =
+        target_file_modified == source_file_synced && source_file_synced == source_file_modified;
+    let only_source_modified = target_file_modified == source_file_synced
+        && source_file_synced < source_file_modified
+        || target_file_modified < source_file_modified;
+    let only_target_modified = target_file_modified > source_file_synced
+        && source_file_synced == source_file_modified
+        || target_file_modified > source_file_modified;
+    let both_modified =
+        target_file_modified > source_file_synced && source_file_synced < source_file_modified;
 
     // TODO if source file does not required to be changed still
     //  need to check its permissions, and copy them if needed.
@@ -1127,7 +1294,9 @@ pub fn compare_files_by_timestamps(target_abs_path: &Path, source_abs_path: &Pat
         return Ok(CompareByTimestamp::TargetModified);
     }
 
-    Err(DfmError::other("the timestamps of the files under comparison are in inconsistent state"))
+    Err(DfmError::other(
+        "the timestamps of the files under comparison are in inconsistent state",
+    ))
 }
 
 /// SHA-256 of the file contents, hex-encoded.
@@ -1181,38 +1350,71 @@ pub fn compare_files(
     source_abs_path: &Path,
     sync_time_opt: Option<&SyncTime>,
 ) -> Result<CompareByTimestamp, DfmError> {
-    if source_abs_path.as_os_str().to_string_lossy().ends_with(encrypted_postfix) {
-        compare_files_by_timestamps(target_abs_path, source_abs_path, sync_time_opt.map(|s| &s.mtime))
+    if source_abs_path
+        .as_os_str()
+        .to_string_lossy()
+        .ends_with(encrypted_postfix)
+    {
+        compare_files_by_timestamps(
+            target_abs_path,
+            source_abs_path,
+            sync_time_opt.map(|s| &s.mtime),
+        )
     } else {
         compare_files_by_content(target_abs_path, source_abs_path, sync_time_opt)
     }
 }
 
-pub fn read_property_from_config(path_to_config_file: &PathBuf, param_name: &str) -> Result<Option<String>, DfmError> {
-    let config_file_content = fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
+pub fn read_property_from_config(
+    path_to_config_file: &PathBuf,
+    param_name: &str,
+) -> Result<Option<String>, DfmError> {
+    let config_file_content =
+        fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
     let config: Table = toml::from_str(&config_file_content).map_err(|e| {
-        DfmError::other(format!("config file corrupt: {}: {}", path_to_config_file.display(), e))
+        DfmError::other(format!(
+            "config file corrupt: {}: {}",
+            path_to_config_file.display(),
+            e
+        ))
     })?;
     match config.get(param_name) {
         Some(v) => Ok(Some(v.to_string())),
-        None => Ok(None)
+        None => Ok(None),
     }
 }
 
-pub fn write_property_to_config(path_to_config_file: &PathBuf, param_name: &str, param_new_value: &str) -> Result<(), DfmError> {
-    let config_file_content = fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
+pub fn write_property_to_config(
+    path_to_config_file: &PathBuf,
+    param_name: &str,
+    param_new_value: &str,
+) -> Result<(), DfmError> {
+    let config_file_content =
+        fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
     let mut config: Table = toml::from_str(&config_file_content).map_err(|e| {
-        DfmError::other(format!("config file corrupt: {}: {}", path_to_config_file.display(), e))
+        DfmError::other(format!(
+            "config file corrupt: {}: {}",
+            path_to_config_file.display(),
+            e
+        ))
     })?;
-    config.insert(param_name.to_owned(), Value::String(param_new_value.to_owned()));
+    config.insert(
+        param_name.to_owned(),
+        Value::String(param_new_value.to_owned()),
+    );
     let new_content = toml::to_string_pretty(&config)?;
     atomic_write(path_to_config_file, new_content)
 }
 
 pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<String>, DfmError> {
-    let config_file_content = fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
+    let config_file_content =
+        fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
     let config: Table = toml::from_str(&config_file_content).map_err(|e| {
-        DfmError::other(format!("config file corrupt: {}: {}", path_to_config_file.display(), e))
+        DfmError::other(format!(
+            "config file corrupt: {}: {}",
+            path_to_config_file.display(),
+            e
+        ))
     })?;
     let mut params = vec![];
     for (name, value) in config.iter() {
@@ -1223,31 +1425,94 @@ pub fn read_properties_from_config(path_to_config_file: &PathBuf) -> Result<Vec<
 
 #[test]
 fn test_file_path_relative_to() {
-    assert_eq!(file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c")), PathBuf::from("d"));
-    assert_eq!(file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c/")), PathBuf::from("d"));
-    assert_eq!(file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c/d")), PathBuf::from("."));
+    assert_eq!(
+        file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c")),
+        PathBuf::from("d")
+    );
+    assert_eq!(
+        file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c/")),
+        PathBuf::from("d")
+    );
+    assert_eq!(
+        file_path_relative_to(&PathBuf::from("/a/b/c/d"), &PathBuf::from("/a/b/c/d")),
+        PathBuf::from(".")
+    );
 }
 
 #[test]
 fn test_remove_dots_from_path() {
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/")), PathBuf::from("/"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a")), PathBuf::from("/a"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/e")), PathBuf::from("/a/e"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/b/e/..")), PathBuf::from("/a/b"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/b/c/../../d/e")), PathBuf::from("/a/d/e"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/b/../../d/e")), PathBuf::from("/d/e"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/../../d/e")), PathBuf::from("../d/e"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/../../d/e")), PathBuf::from("../../d/e"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/b/e/./f/g")), PathBuf::from("/a/b/e/f/g"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("./f/g")), PathBuf::from("f/g"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("f/g")), PathBuf::from("f/g"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("f/../g")), PathBuf::from("g"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("f/../")), PathBuf::from("."));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("./")), PathBuf::from("."));
-    assert_eq!(remove_dots_from_path(&PathBuf::from(".")), PathBuf::from("."));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("..")), PathBuf::from(".."));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/..")), PathBuf::from("/"));
-    assert_eq!(remove_dots_from_path(&PathBuf::from("/a/../../b")), PathBuf::from("../b"));
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/")),
+        PathBuf::from("/")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a")),
+        PathBuf::from("/a")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a/e")),
+        PathBuf::from("/a/e")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a/b/e/..")),
+        PathBuf::from("/a/b")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a/b/c/../../d/e")),
+        PathBuf::from("/a/d/e")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a/b/../../d/e")),
+        PathBuf::from("/d/e")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a/../../d/e")),
+        PathBuf::from("../d/e")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/../../d/e")),
+        PathBuf::from("../../d/e")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a/b/e/./f/g")),
+        PathBuf::from("/a/b/e/f/g")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("./f/g")),
+        PathBuf::from("f/g")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("f/g")),
+        PathBuf::from("f/g")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("f/../g")),
+        PathBuf::from("g")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("f/../")),
+        PathBuf::from(".")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("./")),
+        PathBuf::from(".")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from(".")),
+        PathBuf::from(".")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("..")),
+        PathBuf::from("..")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a/..")),
+        PathBuf::from("/")
+    );
+    assert_eq!(
+        remove_dots_from_path(&PathBuf::from("/a/../../b")),
+        PathBuf::from("../b")
+    );
 }
 
 #[test]
@@ -1318,14 +1583,26 @@ fn test_merge_settings() {
     assert_eq!(merged.target_dir, "/home/user");
     // Config values win per field.
     assert_eq!(merged.dot_prefix, "cfg_");
-    assert_eq!(merged.merge_tool_command, Some("meld {target} {source} {result}".to_string()));
-    assert_eq!(merged.diff_tool_command, Some("meld {target} {source}".to_string()));
+    assert_eq!(
+        merged.merge_tool_command,
+        Some("meld {target} {source} {result}".to_string())
+    );
+    assert_eq!(
+        merged.diff_tool_command,
+        Some("meld {target} {source}".to_string())
+    );
     // Missing config fields fall back to defaults.
     assert_eq!(merged.symlink_postfix, default.symlink_postfix);
     assert_eq!(merged.encrypted_postfix, default.encrypted_postfix);
-    assert_eq!(merged.obtain_password_shell_command, default.obtain_password_shell_command);
+    assert_eq!(
+        merged.obtain_password_shell_command,
+        default.obtain_password_shell_command
+    );
     // An explicitly empty force_encryption_for means "use defaults".
-    assert_eq!(patterns(&merged.force_encryption_for), patterns(&default.force_encryption_for));
+    assert_eq!(
+        patterns(&merged.force_encryption_for),
+        patterns(&default.force_encryption_for)
+    );
 
     // Non-empty force_encryption_for is taken from the config.
     let custom = Config {
@@ -1357,7 +1634,10 @@ fn test_pattern_matches_path_components_single_component() {
     // Root-relative: matches the leading component of a nested path...
     assert!(pattern_matches_path_components(r"abc\.c", "abc.c/file"));
     // ...but never a deeper component with the same name
-    assert!(!pattern_matches_path_components(r"abc\.c", "dir/abc.c/file"));
+    assert!(!pattern_matches_path_components(
+        r"abc\.c",
+        "dir/abc.c/file"
+    ));
     assert!(!pattern_matches_path_components(r"abc\.c", "dir/abc.c"));
     // Exact pattern does NOT match a different first component
     assert!(!pattern_matches_path_components(r"abc\.c", "the-abc.c"));
@@ -1399,9 +1679,15 @@ fn test_pattern_matches_path_components_cross_component_match() {
     assert!(pattern_matches_path_components(pat, "1abc/define/123"));
     assert!(pattern_matches_path_components(pat, "abc/define"));
     // Not anchored at the path root — the sequence must lead the path
-    assert!(!pattern_matches_path_components(pat, "hola/1abc/define/123"));
+    assert!(!pattern_matches_path_components(
+        pat,
+        "hola/1abc/define/123"
+    ));
     // Non-adjacent: "abc" and "define" separated by "something"
-    assert!(!pattern_matches_path_components(pat, "abc/something/define"));
+    assert!(!pattern_matches_path_components(
+        pat,
+        "abc/something/define"
+    ));
 }
 
 #[test]
@@ -1439,7 +1725,10 @@ fn test_pattern_matches_path_components_trailing_slash_pattern() {
     // Trailing '/' must be treated the same as no slash: "dirname/" ignores
     // the top-level dirname directory and everything inside it.
     assert!(pattern_matches_path_components("dirname/", "dirname/a.txt"));
-    assert!(!pattern_matches_path_components("dirname/", "a/dirname/b.txt"));
+    assert!(!pattern_matches_path_components(
+        "dirname/",
+        "a/dirname/b.txt"
+    ));
     assert!(pattern_matches_path_components("dirname/", "dirname"));
     assert!(!pattern_matches_path_components("dirname/", "other.txt"));
     assert!(!pattern_matches_path_components("dirname/", "the-dirname"));
@@ -1453,7 +1742,13 @@ fn test_pattern_matches_path_components_trailing_slash_equivalence() {
     // With and without trailing '/' must behave identically.
     let no_slash = "dirname";
     let with_slash = "dirname/";
-    for rel in ["dirname/a.txt", "a/dirname/b.txt", "dirname", "other.txt", "x/dirname/y"] {
+    for rel in [
+        "dirname/a.txt",
+        "a/dirname/b.txt",
+        "dirname",
+        "other.txt",
+        "x/dirname/y",
+    ] {
         assert_eq!(
             pattern_matches_path_components(no_slash, rel),
             pattern_matches_path_components(with_slash, rel),
@@ -1472,4 +1767,21 @@ fn test_pattern_matches_path_components_trailing_slash_path() {
     // the no-slash form.
     assert!(!pattern_matches_path_components("dirname/", "a/dirname/"));
     assert!(!pattern_matches_path_components("abc\\.c", "the-abc.c/"));
+}
+
+#[test]
+fn test_refuse_root_access_matrix() {
+    // Ordinary user: never refused, even with a stray exported SUDO_USER.
+    assert!(!should_refuse_root_access(1000, 1000, None));
+    assert!(!should_refuse_root_access(1000, 1000, Some("alice")));
+    // Root session invoked by root itself, no sudo: allowed.
+    assert!(!should_refuse_root_access(0, 0, None));
+    // sudo by a non-root user: effective root, SUDO_USER set.
+    assert!(should_refuse_root_access(0, 0, Some("alice")));
+    // setuid-style elevation: effective root over a non-root real uid.
+    assert!(should_refuse_root_access(1000, 0, None));
+    assert!(should_refuse_root_access(1000, 0, Some("alice")));
+    // Only the effective uid grants privileges; a process owned by root but
+    // running without root privileges is not refused.
+    assert!(!should_refuse_root_access(0, 1000, None));
 }
