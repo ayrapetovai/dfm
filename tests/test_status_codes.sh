@@ -40,3 +40,9 @@ rm unpulled.txt
 dfm status --short | grep -qF "!? unpulled.txt"
 # filtered flag
 dfm status --unpulled 2>/dev/null | grep -qF "!?  unpulled.txt"
+# --all shows Unpulled too
+dfm status --all 2>/dev/null | grep -qF "!?  unpulled.txt"
+# default report must not print the Unpulled block (only --unpulled/--all show it)
+RES=$(dfm status 2>/dev/null)
+assert_fail grep -qF "Unpulled" <<<"$RES"
+assert_fail grep -qF "unpulled.txt" <<<"$RES"

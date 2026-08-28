@@ -547,7 +547,10 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         write_stdout(&out)
     } else {
         let has_managed = entries.iter().any(|e| e.code.is_managed());
-        let output = format_default(&filtered, &entries, report_stale, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed);
+        // Show the Unpulled block when explicitly requested (`--unpulled`) or
+        // when `--all` unhides every category.
+        let show_unpulled = *unpulled || *all;
+        let output = format_default(&filtered, &entries, report_stale, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed, show_unpulled);
         print_paged(&output)?;
         Ok(())
     }
@@ -787,7 +790,19 @@ fn color_path(code: StatusCode, path: &str) -> String {
     }
 }
 
-fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &Path, source_dir_abs: &Path, has_managed: bool) -> String {
+#[allow(clippy::too_many_arguments)]
+fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &Path, source_dir_abs: &Path, has_managed: bool, show_unpulled: bool) -> String {
+    // The Unpulled block belongs only to `--unpulled`; the default report must
+    // exclude it. Other commands' `--short`/`--porcelain` keep `!?` through the
+    // shared filter, so the exclusion is localized here.
+    let filtered: Vec<&StatusEntry> = if show_unpulled {
+        entries.to_vec()
+    } else {
+        entries.iter().copied().filter(|e| e.code != StatusCode::Unpulled).collect()
+    };
+    // Effective "are there entries to show" for the empty-report message.
+    let no_entries = filtered.is_empty();
+
     let mut out = String::new();
 
     // Header — replace home directory prefix with ~
@@ -799,7 +814,7 @@ fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_p
         out.push_str(&format!("Source: {}\n", source_str));
     }
     out.push_str(&format!("Target: {}\n", target_str));
-    if entries.is_empty() {
+    if no_entries {
         if has_managed {
             out.push_str("All up-to-date.\n");
         } else {
@@ -818,7 +833,7 @@ fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_p
     let mut ignored: Vec<&StatusEntry> = Vec::new();
     let mut uptodate: Vec<&StatusEntry> = Vec::new();
 
-    for e in entries {
+    for e in &filtered {
         match e.code {
             StatusCode::BothModified => merge.push(e),
             StatusCode::TargetModified => add.push(e),
@@ -840,12 +855,14 @@ fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_p
 
         // Fold shared directories: a `dir/*` is only emitted when *every* path
         // under `dir` belongs to this group. Paths of any other status (ignored
-        // pruned dirs, up-to-date / tracked files, parallel groups) sever the
-        // fold, so an ignored sibling directory keeps files listed individually.
+        // pruned dirs, up-to-date / tracked files, parallel groups; plus the
+        // Unpulled entries excluded from the default report) sever the fold, so
+        // an ignored sibling directory keeps files listed individually.
         let member_paths: BTreeSet<&str> = items.iter().map(|i| i.path.as_str()).collect();
         let blocked: BTreeSet<String> = all_entries
             .iter()
             .filter(|e| !member_paths.contains(e.path.as_str()))
+            .filter(|e| show_unpulled || e.code != StatusCode::Unpulled)
             .map(|e| e.path.clone())
             .collect();
 

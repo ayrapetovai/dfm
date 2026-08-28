@@ -122,6 +122,8 @@
     Explicit path arguments restrict the diff to those files;
     `--all` is still the default.
 
+12. Command 'dfm status' without flags must not print block Unpulled implemented.
+
 ## Documents
 
 - License: switch to GPL-3.0-only, applying to all files in the repository.
