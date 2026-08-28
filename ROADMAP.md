@@ -78,26 +78,7 @@
    Note: `-e` is also the status `--encrypted` short flag —
    same letter on different subcommands, so it is legal.
 
-7. Add 'sync' subcommand:
-   it processes only files that exist on both the target and the source side
-   AND have a sync record.
-   It never 'add's unmanaged files, never 'pull's unpulled/never-synced files,
-   and never errors on (or touches) unmanaged files.
-   Per file: equal content/mtimes → skip;
-   SourceModified → copy source → target;
-   TargetModified → copy target → source;
-   BothModified → conflict.
-   Conflicts block the run: without --force, sync prints the conflicting paths,
-   modifies nothing and exits non-zero; with --force, sync proceeds
-   on the non-conflicting files but still never modifies the conflicting ones.
-   The conflict-searching (walkdir) code is the same module
-   shared with 'add' and 'pull'.
-   Path arguments restrict sync to those files/directories (recursive);
-   relative paths anchor at the target directory
-   with the same in-scope checks as add/pull,
-   and -n/--dry-run, --force, --symlink, --encrypt behave as in add/pull.
-   All add/pull decisions are planned into one task list, executed per file,
-   then the state file is written once at the end (all-or-nothing per run).
+7. Add 'sync' subcommand implemented.
 
 8. Add a progress bar for the action phase of the `add`, `pull` and `sync`
    commands (the walkdir phase already has progress).
