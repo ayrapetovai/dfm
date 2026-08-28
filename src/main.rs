@@ -146,6 +146,31 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 )
             },
         ),
+        Command::Sync {
+            paths,
+            force,
+            symlink,
+            encrypt,
+            dry_run,
+        } => with_state(
+            state_opt,
+            state_read_error.as_ref(),
+            path_to_state_file.as_ref(),
+            |state| {
+                sync_command(
+                    &settings,
+                    &xdg,
+                    SyncArgs {
+                        paths,
+                        force,
+                        symlink,
+                        encrypt,
+                        dry_run: resolve_dry_run(dry_run, args.dry_run),
+                    },
+                    state,
+                )
+            },
+        ),
         Command::Pull {
             paths,
             force,

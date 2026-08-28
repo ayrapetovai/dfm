@@ -92,6 +92,31 @@ pub enum Command {
         dry_run: bool,
     },
 
+    /// Synchronize already-managed files (both sides exist and have a sync
+    /// record) in both directions, adding target changes to the source and
+    /// pulling source changes to the target.
+    Sync {
+        /// Files to synchronize. If omitted - all managed files.
+        #[arg(value_name = "PATH")]
+        paths: Option<Vec<PathBuf>>,
+
+        /// Overwrite on conflict and add symlinks.
+        #[arg(long, short = 'f')]
+        force: bool,
+
+        /// Move file to the source directory, create a symlink on place of it.
+        #[arg(long, short = 's')]
+        symlink: bool,
+
+        /// Copy encrypted form of file to the source directory.
+        #[arg(long, short = 'e')]
+        encrypt: bool,
+
+        /// Run only checks, no changes will be made to filesystem.
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
+
     /// Copy changes from the source directory to the target directory.
     Pull {
         /// Files to be updated from source directory to target.
