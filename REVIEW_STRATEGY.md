@@ -1,6 +1,6 @@
 Review source code and integrations tests for:
 - best practices and development patterns for Rust are used.
-- no code is duplicated.
+- no code is duplicated; variable, function and struct names are descriptive and coherent to what they do.
 - robust error handling.
 - clear and generalized code-structure, common for all subcommands.
 - logs do not hide the case of error, every step is logged with debug level.
