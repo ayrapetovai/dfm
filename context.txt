@@ -1,798 +1,127 @@
 Inform the user if the limit of tokens for conversation approaches: 50%, 75%, 95%.
 
-# DFM — Dotfile Manager (Rust)
+# DFM — dotfile manager (Rust)
 
-Rust CLI that syncs dotfiles between a **target** dir (usually `$HOME`) and a
-**source** dir (a git repo like `~/dotfiles`).
+## What dfm is / main goals
 
-Commands: `init`, `add` (target→source), `pull` (source→target), `merge`,
-`diff`, `forget`, `purge`, `ignore`, `paths`, `config`, `status`,
-`encrypt`, `decrypt`.
+Syncs dotfiles between a **target** dir (usually `$HOME`) and a **source** dir (a git repo like `~/dotfiles`). Commands: `init`, `add` (target→source), `pull` (source→target), `merge`, `diff`, `forget`, `purge`, `ignore`, `paths`, `config`, `status`, `encrypt`, `decrypt`.
 
-Global flags: `-n/--dry-run`, `-v <0-3>`, `-c <PATH>` (alt config). Verbosity:
-`-v 1` brief (default), `-v 2` info, `-v 3` debug.
+Core invariants:
+- **Local only**: sync between two dirs on one machine; never talks to git servers/network/cloud. Git is used only by external commands (status header shows git branch); git commands are NOT embedded into dfm.
+- **State-driven**: every decision comes from `state.toml` (`SyncTime{mtime, sha256}` per source-relative path), not from scanning alone. Content hash makes change detection deterministic.
+- **Failure-safe**: atomic writes (sibling temp + `rename`), mutating ops are queued as task enums then executed in a final loop, state committed once at the end (all-or-nothing per run).
+- **Deterministic output**: status entries sorted by path; `--porcelain`/`--short` formats are frozen (uncolored, never paged).
+- **Encrypted sources** are stored as self-contained blobs (never plaintext in the source dir).
+- **Root guard**: refuses to run with root privileges not obtained as the real root user (sudo/setuid); bypass via `DFM_ALLOW_ROOT` (any non-empty value).
+
+Global flags: `-n/--dry-run`, `-v <0-3>` (1 brief default, 2 info, 3 debug), `-c <PATH>` alt config.
 
 ## Build / test
 
 ```bash
-cargo build                            # debug
-cargo build --release                  # panic=abort, opt-level z, lto fat
-cargo test                             # 30 unit tests (lib.rs + crypt.rs)
-bash tests/launcher.sh -q              # 209 shell integration tests
-bash tests/launcher.sh tests/test_x.sh # run one test (shows -x trace)
-cargo aur                              # target/cargo-aur tarball + PKGBUILD
+# /usr/bin/cargo proxy is broken — set the stable toolchain PATH first:
+export PATH="$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+cargo build              # debug binary: target/debug/dfm (build.rs renders dfm.1)
+cargo test               # 30 unit tests (lib.rs + crypt.rs), no sealed_test dep
+bash tests/launcher.sh [-q] [test_x.sh]   # 208 shell integration tests; one test = -x trace
+cargo clippy             # must stay clean; release profile: opt-level z, lto fat, panic=abort
 ```
 
-Build.rs renders `dfm.1` (via clap_mangen) into target/<profile>/dfm.1 on every
-build; `cargo aur`'s release build puts it at target/release/dfm.1, which
-`[package.metadata.aur] files` packs and installs to /usr/share/man/man1/dfm.1.
+## Layout
 
-## Structure
+`src/main.rs` dispatch + config/state loading; `src/cli.rs` clap Args/Command (`#[path]`-included by build.rs); `src/lib.rs` DfmError, Settings/Config/StateObject, path+ignore helpers, `list_directory`, `compare_files`, ProgressLine, unit tests; `src/crypt.rs` encryption; `build.rs` renders dfm.1 via clap_mangen; `src/commands/{add,pull,merge,diff,forget,init,ignore,purge,config,paths,status,encrypt}.rs`; `src/commands/mod.rs` shared helpers.
 
-```
-src/main.rs          entry point: dispatch + state/config loading; uses clap
-                     Args/Command from dfm::cli
-src/cli.rs           pub clap Args/Command (Parser/Subcommand); included by
-                     build.rs via #[path]
-src/lib.rs           DfmError, Settings/Config/StateObject/SyncTime, path+ignore
-                     helpers, list_directory, compare_files*, ProgressLine, #[test]s
-src/crypt.rs         DFMENC blob (Argon2id + XChaCha20-Poly1305) encrypt/decrypt,
-                     password cache, obtain_password
-build.rs             renders dfm.1 (clap_mangen) to target/<profile>/dfm.1;
-                     included cli.rs; build-deps clap + clap_mangen
-src/commands/mod.rs  re-exports + shared helpers (below); split_command
-src/commands/{add,pull,merge,diff,forget,init,ignore,purge,config,paths,status,encrypt}.rs
-tests/launcher.sh    runner (exports helper functions)
-tests/test_*.sh      209 shell tests
-```
+## Key types & files (lib.rs)
 
-## Key types (lib.rs)
+- **DfmError**: `Io/Unsupported/NotFound/InvalidData/InvalidInput/Other`; helpers `other(msg)`, `is_permission_denied()`. `From<io/toml/regex/microxdg>`.
+- **Settings/Config**: same fields, Config is optional TOML. `source_dir`/`target_dir` live ONLY in the state file, not config. `merge_tool_command` default `vimdiff {target} {source} {result}`; `diff_tool_command` default `vimdiff -M {target} {source}` (read-only).
+- **StateObject**: `{source_directory, target_directory, syncs: HashMap<String, SyncTime>}`. Sync key = source-relative path; `validate_state_key` rejects `..`/absolute/drive components on read (tamper hardening).
+- **SyncTime**: `{mtime: SystemTime, sha256}`; mtime serialized `"<secs>;<nanos>"`; sha256 = hex of content at last sync.
+- Paths: config `$XDG_CONFIG_HOME/dfm/config.toml` (fallback `~/.dfm.toml`); state `$XDG_STATE_HOME/dfm/state.toml`; target ignore `$XDG_STATE_HOME/dfm/ignore_file`; source ignore `<source>/.dfm_ignore_file`; source marker `<source>/.dfm_root` (content `.`). Non-UTF-8 paths via `to_string_lossy()`, never `to_str().unwrap()`.
+- main.rs needs the state file for add/pull/forget/merge/diff/status (`NotFound` otherwise); init/config/purge/ignore/paths work without it. Missing config file → silent defaults (`NotFound`, no warning); corrupt/unreadable config → warning.
 
-- **`DfmError`** — `Io`, `Unsupported`, `NotFound`, `InvalidData`,
-  `InvalidInput`, `Other`; `From<io/toml::ser/toml::de/regex/microxdg::XdgError>`.
-  Shorthand `DfmError::other(msg)`.
-- **`Settings`** — merged runtime config: `source_dir`, `target_dir`,
-  `dot_prefix` ("dot_"), `symlink_postfix` (".symlink"), `encrypted_postfix`
-  (".encrypted"), `force_encryption_for` (default `\.ssh`),
-  `obtain_password_shell_command`, `merge_tool_command` (default
-  `vimdiff {target} {source} {result}`), `diff_tool_command` (default
-  `vimdiff -M {target} {source}` — read-only). `force_encryption_for` is checked
-  against `BY_DEFAULT_FORCE_ENCRYPTION_FILES` (`std::sync::LazyLock<Vec<Regex>>`,
-  default `\.ssh`).
-- **`Config`** — same fields, optional, TOML. **source_dir/target_dir are NOT
-  in config** — they come from the state file.
-- **`StateObject`** — `{ source_directory, target_directory, syncs:
-  HashMap<String, SyncTime> }`. State file `$XDG_STATE_HOME/dfm/state.toml`.
-  Sync key = source-relative path (validated on read via
-  `validate_state_key`: rejects `..`/absolute/drive components — tamper
-  hardening). `read_state` returns an error on any invalid key.
-- **`SyncTime`** — `{ mtime: SystemTime, sha256: String }`. `mtime` serializes
-  via `sync_time_ser` as `"<secs>;<nanos>"`; `sha256` = hex SHA-256 of the
-  content at last sync. Content hashing makes change detection deterministic
-  (independent of filesystem mtime granularity). `Deref<Target=SystemTime>`.
-- **Conflict detection (lib.rs)**: `compare_files(encrypted_postfix, TF, SF, sync)`
-  dispatches on source type — `.encrypted` → `compare_files_by_timestamps`
-  (mtime, since re-encryption changes bytes); plain → `compare_files_by_content`
-  (sha256 vs stored hash). See **Conflict detection** below for the algorithm.
+## Path encoding (lib.rs)
 
-## Paths (lib.rs)
-
-- Config `$XDG_CONFIG_HOME/dfm/config.toml`, fallback `~/.dfm.toml`
-  (`calc_config_file_path`). State `$XDG_STATE_HOME/dfm/state.toml`; target
-  ignore `$XDG_STATE_HOME/dfm/ignore_file`; source ignore
-  `<source>/.dfm_ignore_file`; marker `<source>/.dfm_root` (content `.`).
-- Paths are built with `Path::join`/`PathBuf::push`; XDG subdirectory paths are
-  assembled with `format!("{}/{}", dir, name)` and passed to the `xdg` helpers.
-  Non-UTF-8 paths are handled via `.to_string_lossy()`/`.display()` where a
-  `String` is required — no `to_str().unwrap()` panics.
-- `filepath_in_source_dir` target→source: leading `.` in a filename/component
-  becomes `dot_prefix` (`dot_bashrc`↔`.bashrc`, `dot_config/foo`↔`.config/foo`);
-  `add_postfix_opt` appends `.symlink`/`.encrypted`. The encoding is injective:
-  a literal `dot_`-prefixed component is escaped as `~dot_…` (a literal `~` as
-  `~~…`). `source_rel_to_target_rel` inverts this component-wise (state key →
-  target-rel: unescape `~`, `dot_`→`.`, strip postfixes).
-- `file_path_relative_to(abs, dir)` → rel; `remove_dots_from_path` resolves
-  `.`/`..` lexically (returns `.` when empty, keeps root `/`).
+- target→source: leading `.` of a component → `dot_prefix` (`dot_bashrc`↔`.bashrc`); `add_postfix_opt` appends `.symlink`/`.encrypted` **to the full filename** (`link-to-file.txt.symlink`). Encoding is injective: literal `dot_` → `~dot_…`, literal `~` → `~~…`. `source_rel_to_target_rel` inverts component-wise.
+- `file_path_relative_to(abs,dir)` → rel; `remove_dots_from_path` resolves `.`/`..` lexically.
 
 ## Ignore matching (lib.rs)
 
-One regex per line; `#` comments (`\#` escapes); blank lines skipped
-(`load_ignore_regex` → `RegexSet`). **Root-anchored component matching**
-(`check_path_matches_regex_component_wise` / `pattern_matches_path_components`)
-is used for all ignore checks. Pattern split on `/`, empty segments dropped
-(each side); each sub-pattern anchored `^(?:…)$` unless it has its own
-`^`/`$`; path split on `/`, leading `.` component skipped. Single sub-pattern
-with a left-glob (`.*`/`^`) tests every component at any depth; **without** a
-left-glob it matches only the **first** path component (`abc` ignores
-`abc/…`, never `dir/abc/…`). Multi-part patterns match the first components
-in order (root-anchored sequence, no sliding): `dir/abc` matches `dir/abc/…`
-but not `x/dir/abc/…`. Records stored by `dfm ignore PATH` are the escaped
-target-relative paths, so they anchor at the target root by construction.
-Trailing-empty segments are dropped → `dirname/` ≡ `dirname`.
-`check_path_matches_regex_substring` (full-path substring) is used only for
-`force_encryption_for`. `dir_ignore_pattern`/`is_dir_ignored` probe a dir as
-`R + "/x"` (sentinel) to test whether its subtree is fully ignored.
+One regex per line; `#` comment (`\#` escapes); blank skipped → `RegexSet`. **Root-anchored component matching** for all ignore checks: pattern split on `/`, each sub-pattern anchored `^(?:…)$` unless it has own `^`/`$`; path split on `/`, leading `.` dropped. Single sub-pattern **with** a left-glob (`.*`/`^`) tests every component at any depth; **without** it matches only the **first** component (`abc` → `abc/…`, never `dir/abc/…`). Multi-part patterns match first components in order (no sliding): `dir/abc` hits `dir/abc/…`, not `x/dir/abc/…`. `dirname/` ≡ `dirname`. `dfm ignore PATH` stores `regex::escape` of the **lexical target-relative** path (symlink records itself, not pointee) → anchored at target root by construction; a **source-side** path goes to the *source* ignore as `^<target-rel>$` stripped of `dot_`. `force_encryption_for` uses full-path substring matching instead. Dir-subtree probe = `R + "/x"` sentinel.
 
-## Conflict detection (lib.rs)
-
-`compare_files` returns `BothModified | SourceModified | NonModified |
-TargetModified | NeverSynchronized`, evaluated in order (`sync` =
-`sync_time_opt` SystemTime):
+## Conflict detection (lib.rs) — `compare_files(encrypted_postfix, TF, SF, sync)`
 
 ```
 both_not_modified    = TF==sync && sync==SF
 only_source_modified = (TF==sync && sync<SF) || TF<SF
 only_target_modified = (TF>sync && sync==SF) || TF>SF
-both_modified        = TF>sync && sync<SF
+both_modified        = TF>sync && sync<SF   → also NeverSynchronized (no entry)
 ```
 
-Fallback clauses `TF<SF`/`TF>SF` cover mtime granularity; else error
-"timestamps ... inconsistent". No `NeverSynchronized` → no sync entry.
+Fallback `TF<SF`/`TF>SF` covers mtime granularity. Encrypted sources compare by **timestamps** (re-encryption changes bytes); plain sources by sha256 vs stored hash. `sync` = stored `SystemTime`.
 
 ## Shared helpers (commands/mod.rs)
 
-- `sync_file_copy(from, to, source_file_in_source_dir, state, source_dir)` —
-  copy, preserve permissions, set mtime on both sides, update state.
-- `update_sync_state` — compute `sha256(source)`, insert `SyncTime{now,
-  sha256}`, set mtime on both sides (via `filetime_creation`).
-- `get_sync_time` / `remove_sync_state` — look up / drop a state entry by
-  source-relative path.
-- `resolve_source_variant(settings, ...)` + `SourceVariant{Plain,Encrypted,
-  Symlink}` — resolve an existing source for a target path, tried in order
-  plain → encrypted → symlink pointer; `None` when the target has no source.
-- `source_rel_to_target_rel(state_key, ...)` — state key → target-rel: strip
-  `dot_prefix`→`.`, drop one trailing symlink/encrypted postfix.
-- `source_rel_to_target_abs(source_rel, target_dir_abs, settings) →
-  (target_rel, target_abs)` — shared source−-rel→target mapping (join + remove
-  dots) used by pull, merge, status, purge.
-- `cli_path_to_abs(path) -> Result<PathBuf>` — resolve a user PATH argument:
-  absolute → `remove_dots_from_path`, relative → join the **current working
-  directory** (normal shell semantics), then lexical normalization. Used by
-  diff + add's symlink branch + forget's lexical fallback; `init` resolves
-  its own arguments.
-- `cli_path_in_scope(arg, target_dir_abs, source_dir_abs) -> Result<PathBuf>`
-  — `cli_path_to_abs` + scope check: resolved path must start with target OR
-  source dir, else `InvalidInput("path … resolves to …, which is outside the
-  target directory …")`. Used by status (`resolve_status_paths`),
-  add, pull, merge, forget, ignore at their argument entry. Rationale: an
-  escaping path (leading `..` past the managed root, or absolute elsewhere)
-  used to silently escape the tree — status printed mangled `?? ./../../<abs>`
-  entries via `file_path_relative_to`'s fallback; add gave raw I/O errors;
-  diff said "not managed". diff stays permissive on purpose.
-- `resolve_dry_run(cmd_flag, global_flag)`; `require_force(force, msg)`;
-  `prune_ignore_file(path, should_ignore, dry_run)` (keeps blank lines + full
-  kept-line text, returns removed, writes only when something removed and
-  not dry-run); `prune_matched_ignore_patterns(xdg, patterns, dry_run)` (after
-  successful add/pull `--force`, drop the matched target-ignore patterns);
-  `list_directory_or_error`; `msg_dry_run()`/`msg_nothing_to_do()`;
-  `read_symlink_pointer`/`symlink_pointer_matches`.
-- `split_command(cmd) -> (Option<&str>, Vec<&str>)` — whitespace-split a command
-  template into program + args; shared by `run_merge` (merge tool),
-  `run_diff` (diff tool), and `print_paged` (pager).
-- `resolve_tool_command(command_opt: &Option<String>, tool_name, config_key) ->
-  Result<String, DfmError>` (mod.rs) — returns the configured tool command, or
-  errors with `Other("no {tool_name} tool configured — set {config_key} in
-  config")` when unset/empty; used by `run_merge`/`run_diff` (config key
-  `merge_tool_command`/`diff_tool_command`).
-- `DirGuard` (mod.rs, `pub(crate)`) — removes a `.current_merge`/`.current_diff`
-  dir on Drop; `run_merge` and `run_diff` remove a stale leftover up front.
-- `create_private_temp_dir(path)` (mod.rs) — recursive mkdir with mode 0700
-  (`DirBuilderExt::mode`), so decrypted scratch files in `.current_merge`/
-  `.current_diff` are not world-readable while a tool runs; used by both
-  `run_merge` and `run_diff`.
-- `report_progress` + `ProgressLine` — single self-overwriting stderr line
-  (`\r` + pad); shown at `-v 0/1`, suppressed at `-v ≥ 2` (single gate in
-  `ProgressLine::set`, no-op when `log::max_level() >= Info`). `report_progress`
-  throttles to ~20 updates and is silent below 100 files.
+- `sync_file_copy` (copy + preserve perms + set mtimes + update state); `update_sync_state` (sha256 + `SyncTime{now}`); `get_sync_time`/`remove_sync_state`.
+- `resolve_source_variant` → `SourceVariant{Plain,Encrypted,Symlink}` (plain→encrypted→symlink order).
+- `source_rel_to_target_rel` / `source_rel_to_target_abs` (shared source→target mapping: pull, merge, status, purge).
+- `cli_path_to_abs(path)` — user PATH arg: absolute → `remove_dots`; relative → join **CWD** (shell semantics) + lexical normalization. `cli_path_in_scope(arg, target, source)` — that + check start_with target OR source else `InvalidInput`; wired into status/add/pull/merge/forget/ignore at argument entry. **diff stays permissive** ("not managed").
+- `resolve_dry_run`, `require_force`, `prune_ignore_file`, `prune_matched_ignore_patterns` (after successful add/pull `--force`, drop matched patterns), `read_symlink_pointer`, `split_command` (whitespace-split template → program+args).
+- `resolve_tool_command(cmd_opt, tool_name, config_key)` → tool command or `Other("no {tool} tool configured — set {key} in config")`.
+- `run_merge`/`run_diff`: `.current_merge`/`.current_diff` scratch dirs in the source dir resolved from `source_dir_abs_path`, created mode **0700** (`create_private_temp_dir`), stale leftover removed up front, `DirGuard` cleans up on Drop. Tool is spawned **directly, no shell** (`|`,`>` don't work); missing program → `NotFound("… tool {prog} not found")`. diff creates the scratch dir only for **encrypted** sources (plain diffs pass `{source}` straight through → works on read-only source dirs).
+- `report_progress`/`ProgressLine`: single `\r`-overwriting stderr line; shown at `-v 0/1`, suppressed at `-v ≥ 2`; silent below 100 files (~20 updates).
 
-## Commands (semantics)
+## Command semantics (key contracts)
 
-- **`init <SOURCE> [TARGET]`** — create source dir; follow/create `.dfm_root`
-  pointer chain (content `.`); extend source ignore with `.dfm_root`, `.git`,
-  `.dfm_ignore_source`, `.dfm_ignore_target`, `.current_merge`, `.current_diff`
-  (the merge/diff temp dirs); create state file + default config. Does **NOT**
-  look for config inside the source dir (README matches).
-- **`add [PATH...] [-f] [-s] [-e]`** — traverse target (or given paths). Skips
-  dfm runtime files (state file, target ignore) and out-of-target paths,
-  source-dir paths. The dfm config file is NOT skipped: it is managed like any
-  other dotfile (named or traversed; `dfm add .config/dfm` works). Symlink →
-  pointer-file (`CreateSymlinkFilePointer`, no pointee fallthrough). Ignored →
-  skip unless `--force`; `--force` **also overrides for ignored symlinks**
-  (both use `handle_ignore_or_override`, which removes the matching
-  target-ignore pattern). Conflicts
-  (`SourceModified`/`BothModified`/`NeverSynchronized`(≠content))
-  need `--force`; `conflict_detected` set only for explicitly-named paths
-  (silent skip during traversal). Tasks: `Copy`, `CopyEncryptedFile`,
-  `CreateSymlinkFilePointer`, `CopyAndSymlink` (copy→source, rename target to a
-  `.dfm-backup` sibling, symlink target→source relative, drop backup; on
-  symlink failure the backup is restored over the target), `UpdateSync`. `-s`
-  and `-e` mutually exclusive; `-e` on a symlink is an error; encrypted add
-  deletes stale plain source+state.
-- **`pull [PATH...] [-f] [-s]`** — traverse source (dotfiles pruned via
-  `^(.+/)?[^.][^/]+$`) or given paths (source→infer target, target→compute
-  source). Missing target: symlink-file→`CreateOrUpdateSymlink`; `.encrypted`→
-  `Decrypt`; else `Copy` (symlink with `-s`). Existing target symlink recreated
-  if pointee differs. Encrypted: `handle_encrypted_timestamps`
-  (BothModified/TargetModified/NeverSynchronized→`--force`, SourceModified→
-  decrypt). Tasks: `Copy`, `CreateOrUpdateSymlink`, `Decrypt`. Decrypt sync
-  key = encrypted source path.
-- **`merge [PATH...] [-n]`** — no paths: merge only `BothModified` state
-  entries. With paths: merge any modified file; resolve source/target path,
-  try state keys exact/`.encrypted`/`.symlink` (`resolve_state_key`); skip
-  symlink targets + ignored.   Calls `run_merge` (mod.rs): `.current_merge/` in
-  source dir (**resolved from `source_dir_abs_path`, and a stale leftover
-  `.current_merge` is removed first**, created with mode 0700), copy `target.<f>`/`source.<f>` (decrypted if encrypted), result
-  `<f>` is **not pre-created**; `merge_tool_command` = first whitespace token =
-  program, rest = args with `{target}`/`{source}`/`{result}` replaced, run
-  directly (no shell). Success = exit 0 **and** result exists; copy result to
-  both sides (re-encrypt if needed), `update_sync_state`, clean up. Program
-  missing → `NotFound("merge tool {prog} not found")`.
-- **`diff [PATH...]`** — read-only; no paths → do nothing, exit 0 (also does
-  nothing when the state file is missing, like no paths). `diff_one_path`
-  resolves source-side (target-rel via `starts_with(source_dir_abs_path)` +
-  `state_key_for`) or target-side (via `file_path_relative_to`, `!starts_with(
-  target_dir_abs_path)` → not managed); `path_exists` (via `symlink_metadata`,
-  `NotFound` only) distinguishes a missing path from permission-denied.
-   Situations: target symlink → print both pointees; source missing → `<path> is
-   not pulled` (computed target abs path); no source (existing target, or
-   missing source path whose inferred target exists) → `<path> is not managed`;
-   exists nowhere — given path and counterpart both absent, both branches →
-   `<path> does not exist`;
-  ignored (target ignore file only) → `<path> is ignored by <regexp>`; unreadable
-  → `skipping unreadable path ...`; `get_sync_time`/`compare_files` → NonModified
-  → `<path> is synchronized`, else encrypted content-compare
-  (`read_encrypted_bytes` vs `fs::read(target)`) or sha256 compare → differ →
-  `run_diff` (mod.rs): `DirGuard`; the `.current_diff/` scratch dir (created
-  with mode 0700 when needed) is only touched for **encrypted** sources — plain
-  diffs pass `{source}` straight through and never write into the source dir
-  (read-only dirs work), substitutes `{target}`/`{source}` via `split_command`,
-  run directly (no
-  shell). Decrypted content is offered **as a file only**, never via stdin —
-  vim reads a piped stdin into a `[No Name]` buffer and `:qa` then fails with
-  E37/E162. Program missing → `NotFound("diff tool {prog} not found")` (exit
-  1); tool's non-zero exit → `debug!` only. Never writes state (immutable
-  borrow) nor touches the target.
-- **`forget [PATH...] [-f]`** — never deletes targets. No paths → all
-  (traverse target + orphan state keys; orphan source checked modified → needs
-  `--force`). Dispatches per path: `handle_target_symlink` (returns bool: fully
-  handled vs falls through to pointee), `handle_missing_target` (returns bool:
-  resolved to nothing), `handle_source_path`, `handle_target_file`. An
-  explicitly-named path resolving to nothing — canonicalize NotFound, no source
-  variant, and for a lexically-source-side path the inferred target absent too
-  (`source_rel_to_target_rel`) — is collected into `missing_paths` and fails
-  after analysis with `NotFound("<path> does not exist")` (plural form for
-  several), before any task runs: nothing is forgotten, exit 1, `--force` does
-  not suppress it; broken symlinks keep silent handling. Tasks:
-  `Delete(source)`,
-  `RemoveState(key)`, 3 phases: (1) best-effort delete sources (NotFound ok,
-  other errors collected → fail), (2) remove state, (3) prune empty parents.
-  `--force` when source modified or symlink pointer mismatches (`SourceModified`
-  /`TargetModified`/`BothModified` all gate on `--force`). Symlink pointing into
-  source dir also deletes the target symlink. Note: main.rs dispatches `forget`
-  through `with_state_even_if_error` (persist state even when the command fails),
-  because the state entry is cleaned up before source deletion runs.
-- **`ignore [PATH...] [-p PAT...] [-r REC...]`** — writes `regex::escape(rel)`
-  (lexical target-relative form, symlink NOT resolved so a link records
-  itself) of target paths to the target ignore, but a **source-side** path is
-  stored in stored in
-  the *source* ignore as its target-rel form: `^...$` with `dot_prefix` stripped
-  (source `dot_my.log` → target `.my.log` → `^my\.log$`); already-ignored
-  source entries are migrated (`migrate_ignore_line`). `-p` raw patterns
-  (validated); `-r` removes records from the *target* ignore (raw or escaped
-  match). `paths`/`patterns`/`remove` are mutually exclusive (clap ArgGroup
-  required → no args is a CLI error, despite README). Appends with
-  trailing-newline guard (`ensure_trailing_newline`).
-- **`purge [-s] [-c] [-f]`** — abort (unless `-f`) on un-pulled source changes
-  (mtime > sync). Removes config (unless `-c`), source dir (unless `-s`), state
-  dir. Each component resolved independently; unresolvable → skipped with info
-  log (works with `$HOME` unset). Removal I/O errors aggregated at the end.
-  The config file's **parent directory** is removed only when the config file
-  is the default one (matches `calc_config_file_path`, and never `$HOME`); a
-  custom `-c PATH` removes just the file — a sibling file next to a custom
-  config survives a purge.
-- **`config --get|--set|--list`** — TOML properties; `--set` stores strings;
-  array fields not settable.
-- **`encrypt <FILE> [-o]` / `decrypt <FILE.encrypted> [-o]`** — standalone
-  (crypt.rs) DFMENC blob operations, outside the target/source workflow;
-  `decrypt` restores recorded perms. Both go through `obtain_password`.
-- **`paths`** — prints Source/Target/Config/State/Local ignore/Source ignore;
-  `unresolved` for Config/State/Local ignore when the XDG path cannot be
-  resolved (no panic with `$HOME` unset).
-- **`status [PATH...] [--short|--porcelain] [filters]`** — Phase 1
-  `state.syncs` → codes; each entry is checked against BOTH ignore files:
-  target-side (`!!`/`!L`) and source-side `.dfm_ignore_file` (also `!!`/`!L`)
-  so a source-ignored entry is never offered as pullable — removing its
-  target copy yields `!!`, not `!?`; Phase 2 walk target for unmanaged/ignored
-  files (skips
-  dfm runtime files: state, target-ignore, and anything inside the
-  source dir; the dfm config file is reported like any dotfile — `??` when
-  unmanaged, state-driven codes when managed;
-  `classify_target_symlink`/`classify_target_file`); fully-ignored
-  pruned dirs → one `!! dir/`. **Path scoping** (`resolve_status_paths`): each
-  PATH absolute/relative to the target dir, or a source-dir path mapped back to
-  its target counterpart (like `pull`); nonexistent → error; no PATHS → whole
-  target. Phase 1 keeps `state_keys` full (drives classification) but emits only
-  in-scope entries; Phase 2 walks only the requested roots (folding matches the
-  full report). Phase 3 stale/unused-pattern detection is **full-tree only**:
-  scoped reports skip the whole block (a pattern used outside the scope would
-  falsely read as unused); `--unused-patterns` re-walks the full target even
-  with PATHS. Codes: `--` ok, `MM` both modified, `M ` target, ` M` source,
-  `NM` never-synced, `!?` unpulled, `??` unmanaged, `?L` unmanaged symlink,
-  `LL` managed symlink, `!!` ignored, `!L` ignored symlink, `!P` stale pattern.
-  Entries are **sorted by path** before output so every mode (porcelain/short/
-  default) is deterministic despite Phase 1 iterating a HashMap.
-  `LL` shown only when the symlink's *pointee* resolves into source dir **and**
-  is in state (or pointer file in state). Default view (grouped into "Changes
-  to merge/add/pull", "Unpulled", "Unmanaged files", "Up to date", "Ignored",
-  "Unused ignore patterns"): colored paths, dirs collapsed to `dir/*`
-  (`collapse_shared_dirs`), git header via `git -C <source> status --porcelain
-  -b` (`get_git_info`: branch + ahead/behind + dirty/clean), paged
-  (`$PAGER`/`less -FRSX`, via `stty size`) only when output exceeds terminal
-  height **and stdout is a terminal** (`IsTerminal` — a pipe/file is never
-  paged). `--short` = `<code> <path>`; `--porcelain` = tab-separated, both
-  uncolored & never paged. Filters: `-a -c -m -U -M -p -i -l -u` (hidden by
-  default: up-to-date, `LL`, ignored). `-u/--unused-patterns` early-returns
-  with the report's stale block (header + `  !P  <pat>` lines); no unused
-   patterns → silent exit 0. In `--porcelain` stale lines are appended only
-   when the filtered entry list is empty. Any restrictive filter flag
-   (`-c/-m/-U/-M/-p/-i`) suppresses the stale block in default reports AND the
-   porcelain fallback (`report_stale` = empty slice at the Output stage);
-   `--all` keeps the block (it widens, not restricts); scoped PATHS suppress
-   via empty `stale_patterns` (Phase 3).
+- **init**: create source, `.dfm_root` chain, extend source ignore (`.dfm_root`,`.git`, `.dfm_ignore_source`,`.dfm_ignore_target`,`.current_merge`,`.current_diff`), state file + default config. Never looks for config inside source.
+- **add**: skip dfm runtime files (state, target-ignore) and out-of-target paths. The **config file is NOT skipped** — it is a manageable dotfile (named or traversed). Symlink → pointer file (no pointee fallthrough). Ignored → skip unless `--force` (`handle_ignore_or_override` also prunes the matching pattern, for symlinks too). Conflicts need `--force`; `conflict_detected` only for explicitly-named paths. `-s`/`-e` mutual exclusion; `-e` on symlink = error; encrypted add deletes stale plain source+state. `CopyAndSymlink` renames target to `.dfm-backup` sibling, creates symlink, drops backup only on success (restores on failure).
+- **pull**: reverse mapping; missing target → per type `CreateOrUpdateSymlink`/`Decrypt`/`Copy` (symlink with `-s`); encrypted uses `handle_encrypted_timestamps` (Both/Target/NS → `--force`, Source → decrypt).
+- **merge**: no paths → only `BothModified`; paths → any modified. `merge_tool_command` success = exit 0 AND result exists; copy result to both sides (re-encrypt if needed), `update_sync_state`, clean up.
+- **diff**: read-only, never touches state/target, exit 0 with no args. Situations: missing source → `is not pulled`; no source → `is not managed`; exists nowhere → `does not exist`; `is ignored by <re>`. Decrypted content offered **as a file only**, never stdin (vim reads stdin into `[No Name]`; `:qa` fails E37/E162).
+- **forget**: never deletes targets. No paths → all (traverse target + orphan state keys). Explicit path resolving to nothing → `NotFound("<path> does not exist")`, before any task, exit 1, `--force` doesn't suppress. 3 phases: best-effort delete sources → remove state → prune empty parents. Dispatched via `with_state_even_if_error` (state entry removed before source deletion runs, so it must persist even on failure).
+- **ignore**: `-p` raw, `-r` remove from target ignore, mutually exclusive (ArgGroup → no args is a CLI error). Appends with trailing-newline guard.
+- **purge**: abort (unless `-f`) on un-pulled source changes. Removes config (unless `-c`), source (unless `-s`), state dir. **Config parent dir removed only when config is the default one** (never `$HOME`); custom `-c PATH` removes just the file.
+- **config**: `--get|--set|--list`; note `dfm config list` positional is NOT valid syntax.
+- **status**: Phase 1 `state.syncs` → codes (each entry checked against BOTH ignore files; source-ignored → `!!`, never `!?`); Phase 2 walk target for unmanaged/ignored (skips state + target-ignore + source-dir contents); Phase 3 stale-pattern detection is **full-tree only**. Codes: `--` ok, `MM` both modified, `M ` target, ` M` source, `NM` never-synced, `!?` unpulled, `??` unmanaged, `?L` unmanaged symlink, `LL` managed symlink, `!!` ignored, `!L` ignored symlink, `!P` stale pattern. Default view: git header (`git -C <source> status --porcelain -b`), dirs collapsed `dir/*`, paged (`$PAGER`/`less -FRSX`, `stty size`) only when output > terminal height **and** stdout is a terminal (`IsTerminal`). Path scoping: absolute or target-dir-relative (or source → mapped back); scoped reports skip the stale block; `--short`/`--porcelain` uncolored/unpaged; filters `-a -c -m -U -M -p -i -l -u`.
 
 ## Encryption (crypt.rs)
 
-`encrypt_bytes`: builds a self-contained **DFMENC** (magic `DFMENC`,
-`FORMAT_VERSION = 2`) blob. Public header: Argon2id KDF cost params
-(`m_cost` KiB, `t_cost`, `p_cost`), 16-byte salt, 24-byte nonce. Key derived
-with Argon2id (release: 64 MiB / t=3 / p=4; debug: 8 MiB / t=1 / p=1) over the
-password; payload is **XChaCha20-Poly1305** AEAD where the encrypted plaintext
-is `u32 metadata_len, metadata, content` — metadata carries the inner name,
-file mode and a non-encrypted directory entry per enclosing directory (so a
-pull restores e.g. a 0700 SSH dir). `decrypt_bytes` reads `m_cost/t_cost/p_cost`
-**and caps them** (`m_cost ≤ 16 GiB`, `t_cost ≤ 10`, `p_cost ≤ 1024`) so a
-crafted blob in a public repo cannot force an absurd Argon2 allocation on
-`pull`. Wrong password / tampered ciphertext (`decrypt` returns
-`WrongPassword`). Decryption retries once on a wrong password
-(`decrypt_blob_with_retry`: clears the cache, prints `wrong password for
-{:?}, please try again.` to stderr, re-prompts). The password cache is a
-process-global `Mutex<Option<String>>`. `obtain_password`: if
-`obtain_password_shell_command` is set, pipe it to `sh` **stdin** (not `-c`,
-invisible in `ps`) and read stdout (`trim_end_matches(['\r','\n'])` so manual
-decrypt works); else masked `rpassword` prompt. All notices go to **stderr**.
-Streaming: peak RAM O(64 KiB chunk) regardless of file size (see README §4
-"Memory use").
+Self-contained **DFMENC** blob (`FORMAT_VERSION = 2`). Public header: Argon2id `(m_cost KiB, t_cost, p_cost)`, 16B salt, 24B nonce, chunk_size u32, plaintext_len u64. Key: Argon2id (release 64MiB/t3/p4; debug 8MiB/t1/p1). Payload = chunked XChaCha20-Poly1305 records (ct ≤ 64 KiB + 16B tag); per-chunk nonce = base nonce with last 8B := 7B BE counter + final-flag byte; per-chunk AAD = header||idx||flag → reorder/dup/truncate/splice all fail auth. **Streaming: peak RAM O(chunk)** regardless of file size. Metadata carries inner name, file mode, and a non-encrypted entry per enclosing dir (restores e.g. a 0700 `.ssh` on pull). `decrypt` caps read KDF params (`m_cost ≤ 16GiB`, `t_cost ≤ 10`, `p_cost ≤ 1024`). Wrong password: first-chunk auth failure only (retried once after clearing cache); later failures = "corrupted", partial target removed. Encrypt writes `<dest>.part` + rename. `obtain_password`: configured `obtain_password_shell_command` piped to `sh` **stdin** (not `-c`, invisible in `ps`) else masked rpassword prompt; password cache is process-global `Mutex<Option<String>>`. All notices → stderr.
 
-## Traversal (list_directory, lib.rs)
+## Traversal (list_directory)
 
-Walks each root with `WalkDir::filter_entry`; `rel_base` = where ignore
-patterns are relative to (target or source dir). `TraversalFilter`:
-`KeepMatching(&RegexSet)` (pull: keep rel-path matches — skips dot files AND
-dot dirs) or `PruneIgnoredDirs(&RegexSet)` (add/forget/status/ignore: keep
-every file, prune dirs whose subtree is fully ignored). A dir rel path `R` is
-fully ignored iff component-wise matching hits `R + "/x"` (sentinel makes `R`
-non-last). Root always kept (`depth()==0`) so a named ignored path is still
-entered. Pruned dirs recorded in `ListDirectories::pruned`; `status` renders
-each as one `!! dir/` entry. `filter_entry` never yields pruned entries → they
-don't count toward progress. Rel = `strip_prefix(rel_base)` fallback
-`strip_prefix(walk_root)`, else kept (no pruning). `follow_links(false)` +
-`follow_root_links(false)`; WalkDir `NotFound` passes original path through;
-directories skipped.
+`WalkDir::filter_entry`; `follow_links(false)` + `follow_root_links(false)`. `TraversalFilter::KeepMatching` (pull: keeps rel-path matches, skips dot files AND dot dirs) or `PruneIgnoredDirs` (add/forget/status/ignore: keep all files, prune fully-ignored dir subtrees via `R + "/x"` sentinel). Root always kept so a named ignored path is entered; pruned dirs recorded and rendered as one `!! dir/` (status). `NotFound` passes path through; directories skipped.
 
-## Unreadable objects (permission/ownership)
+## Conventions
 
-`io::ErrorKind::PermissionDenied` (strict perms, wrong owner) is **skip-with-
-warning**, never a command failure:
-- `list_directory` (lib.rs) downgrades WalkDir `PermissionDenied` to a
-  `warn!` naming the path (unlike `NotFound`, which passes the root through,
-  and all other errors, which land in `errors` and fail the command).
-- Analysis loops in add/pull/forget and `compare_files` in status/merge wrap
-  per-file calls; task **execution** loops in add/pull also guard the actual
-  copy/encrypt/symlink calls — a single unreadable object is skipped, remaining
-  tasks still run.
-- `DfmError::is_permission_denied()` (lib.rs) detects the variant; forget's
-  delete phase was already best-effort.
-- Verify with: `chmod 000 <file>` then `dfm add <file>` (exit 0 + warning);
-  re-add after `chmod` restores normal behavior.
+- **Task pattern**: analysis queues task enums; execution loop runs them; `continue` in analysis never cancels already-queued tasks.
+- **State dispatch**: `add`/`pull`/`merge` → `with_state` (state written only on success); `forget` → `with_state_even_if_error`; `status` → read-only borrow.
+- **`main_logic`** resolves state/config as `Option`: unresolvable paths warn and continue (purge/paths work with `$HOME` unset); mutating commands then error via `with_state`.
+- **No shell** for `merge_tool_command`/`diff_tool_command` (whitespace-split, direct spawn).
+- **Unreadable objects** (`PermissionDenied`: strict perms, wrong owner) are **skip-with-warning**, never a command failure — in `list_directory`, per-file analysis, and task execution loops (except `NotFound`, which passes roots through; other errors fail the command).
+- **Root guard** (lib.rs, first thing in `main_logic` after Args::parse): `check_root_privileges()` reads real+effective uid via hand-rolled externs `#[link(name="c")] unsafe extern { getuid, geteuid }` (edition 2024 needs `unsafe extern`; symbols from already-linked libc, no new dep). Refuse iff `euid==0 && (ruid!=0 || SUDO_USER non-empty)` — genuine root (0,0,None) allowed; `euid!=0` never refused. Error `InvalidInput` naming sudo vs setuid-style elevation, exit 1; `--help`/`--version` still work (clap exits first). Unit: `test_refuse_root_access_matrix`. No shell integration test (user removed it). Shell test counts are 208, Rust unit 30.
+- Build notes: installed `/usr/bin/dfm` is an older build **without** the root guard; detect euid-0 with `unshare -r` (emulates euid 0 without privileges), never with sudo.
 
-## Gotchas / conventions
+## Testing conventions (launcher.sh)
 
-- **Symlink pointer postfix appends to the full filename**
-  (`link-to-file.txt` → `link-to-file.txt.symlink`, not `link-to-file.symlink`).
-- **Task pattern**: mutating ops are queued as task enums, executed in a final
-  loop; `continue` in analysis doesn't cancel already-queued tasks.
-- **State dispatch**: `forget` uses `with_state_even_if_error` (persist state
-  even on failure); `add`/`pull`/`merge` use `with_state` (state only written
-  on success). `status` runs on a read-only borrow of state.
-- **`main_logic` resolves state/config as `Option`**: unresolvable paths log a
-  warning and continue (relevant to `purge`/`paths` with `$HOME` unset); mutating
-  commands then error via `with_state`.
-- `source_rel_to_target_rel`/`resolve_source_variant`/`get_sync_time` live in
-  **commands/mod.rs**, not lib.rs.
-- `merge_tool_command`/`diff_tool_command` run directly (no shell) — `|`, `>`,
-  `$VAR` don't work.
-- main.rs requires the state file for add/pull/forget/merge/diff/status
-  (`NotFound` otherwise); init/config/purge/ignore/paths work without it.
+- Every test: subshell `set -eEu -x`, fresh temp `$HOME`, sandbox exports HOME + all four XDG vars (must `mkdir -p`), prefers debug binary. Tests must never read stdin.
+- Helpers: `dfm()`, `write <content> <path>` (2 args, mkdir -p parent), `assert <expr...>`, `assert_succ <cmd>`, `assert_fail` (fails if command exits 0), `run_fail <cmd...>` (asserts non-zero exit, captures combined output into `$FAIL_OUTPUT`), `assert_source <rel>` / `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`, `assert_encrypted` (needs `$PASSWORD`), `uuid` stub.
+- **Assertion rule (grep over captured output, `set -eEu` gotchas)**: positive → plain pipeline (`dfm status 2>/dev/null | grep -qF "pat"`). Negative → **never** `! cmd | grep -qF` (POSIX `-e` skips `!`-inverted commands → false-pass); capture first then let grep be the only command: `RES=$(...); assert_fail grep -qF "pat" <<<"$RES"`. Expected failures → `run_fail dfm ...` then `assert_succ grep -qF "msg" <<<"$FAIL_OUTPUT"`. Under `set -e`, `RES=$(… dfm …)` inherits a non-zero rc → guard `|| true`. Files starting with `-`/`+` need `grep -qF -- "-$VAR"`. Avoid `dfm | grep` pipes where possible; redirect stderr to a file to check it.
 
-## Testing
+## Manual testing (without launcher.sh) — caveats
 
-- `launcher.sh`: `dfm()` = `"$EXECUTABLE" "$@"`; `write() <content> <path>` =
-  `echo`-the-content into `<path>` (mkdir -p parent). Every test runs inside a
-  subshell `set -eEu -x` with a fresh `$HOME` (temp dir); prefers the debug
-  binary. Tests must never read stdin (`< /dev/null`).
-- Helpers: `assert <expr...>`, `assert_fail <cmd...>` (fails the test if the
-  command *exits 0*), **`run_fail <cmd...>`** (asserts non-zero exit, exposes
-  combined stdout+stderr as `$FAIL_OUTPUT` — replaces the set +e/rc/set -e
-  dance), `assert_source <rel>` (file in `$PWD/dotfiles/`),
-  `assert_no_source`, `assert_content_eq`, `add_file <name> [content]`,
-  `assert_encrypted` (needs `$PASSWORD`), `uuid` stub for CI.
-- Counts: **209 shell tests**, **30 Rust unit tests** (16 in src/lib.rs
-   — `test_file_path_relative_to`, `test_remove_dots_from_path`,
-   `test_read_state_rejects_traversal_keys`, `test_merge_settings`,
-    `test_pattern_matches_path_components_*`, `test_pattern_does_not_match_subpath_components`,
-    `test_pattern_is_root_relative_not_any_depth`,
-    `test_refuse_root_access_matrix` —
-   and 8 in src/crypt.rs: round-trip, wrong-password, tampered header,
-  **absurd_kdf_params_rejected**, tampered ciphertext, metadata-not-visible,
-  **dir_rel_is_safe_rejects_escaping_paths**, etc.).
-  No `sealed_test` dependency.
-
-## Review fixes (REVIEW.md / FIX_PLAN.md)
-
-Implemented and verified (build + `cargo test` 22 + `clippy` + all 191 shell
-tests green):
-
-- **C1** (critical): `add` of an explicitly-named symlink outside the target
-  dir used to write a `.symlink` pointer outside the source dir and inject a
-  `..`-escaping key into state.toml. `handle_target_symlink` (add.rs) now
-  guards `starts_with` against the target/source dirs like `handle_target_file`.
-  Regression: `tests/test_add_symlink_outside_target_dir.sh`.
-- **H1**: `main_logic` `warn!`s on an unreadable config instead of silent
-  `read_config(p).ok()` fallback.
-- **M1**: ignore matching regexes cached — `COMPONENT_REGEX_CACHE`
-  (`LazyLock<Mutex<HashMap<String, Arc<Vec<Option<Regex>>>>>`) +
-  `component_sub_regexes()` in lib.rs; `pattern_matches_path_components` uses
-  anchored cached sub-patterns (deterministic; never changes match results).
-- **M2**: shared `atomic_write(path, content)` (sibling temp + `rename`,
-  name `.{file_name}.tmp`) in lib.rs; used by `write_state`, `write_config`,
-  `write_property_to_config`, `prune_ignore_file`, `migrate_ignore_line`.
-  `write_state`/`write_config` signatures widened `&PathBuf` → `&Path`.
-- **M3**: `status` uses `write_stdout()` which tolerates `ErrorKind::BrokenPipe`
-  (both plain stdout and pager stdin/flush); no more broken-pipe error on
-  `dfm status | head -1`.
-- **L1**: purge `fs::copy` now maps via `io_copy_err` (path context in message).
-- **L2**: crypt `restore_target` validates each decrypted `dirs` entry through
-  `dir_rel_is_safe` (rejects ParentDir/RootDir/Prefix/empty, requires a Normal
-  component) — defense-in-depth against a validly-decrypting blob escaping the
-  restore root.
-- **M4** (review finding): **kept existing behavior by decision** — the
-  `forget` state-entry-removal-on-delete-failure contract is deliberate and
-  asserted by `tests/test_forget_d2_remove_fails.sh`; reverting my change kept
-  all 191 tests green with no code change. L3 `.symlink` pointer verbatim =
-  intentionally not fixed (legitimate absolute/`..` pointees; C1 blocks new
-  escaping records).
-
-### Review round 2 (current session)
-
-Implemented and verified (build + `cargo test` 22 + `clippy` clean + all 191
-shell tests green):
-
-- **H1** (critical): `purge` with a custom `-c PATH` deleted PATH's entire
-  parent directory (a sibling keepme.txt was wiped). purge.rs now removes the
-  config file's parent directory only when the config file is the default one
-  (matches `calc_config_file_path`, home dir excluded); a custom `-c` path
-  removes just the file. Regression:
-  `tests/test_purge_custom_config_path.sh`.
-- **H2** (critical): `add --force` silently skipped an ignored **symlink**
-  (the symlink lower-prioritized regex check short-circuited before the force
-  handling). `handle_target_symlink` now routes through
-  `handle_ignore_or_override` + `patterns_to_remove` (like
-  `handle_target_file`) so `--force` adds it and prunes the pattern.
-  Regression: `tests/test_add_symlink_ignored_force.sh`.
-- **M1**: `CopyAndSymlink` deletes the target before symlinking; a symlink
-  failure permanently lost the target. Now the target is renamed to a
-  `.dfm-backup` sibling, the symlink is created, and the backup is dropped
-  only on success (restored over the target on failure, both errors reported).
-- **M3/L3**: `run_merge` resolved `.current_merge` from the un-expanded
-  `settings.source_dir` and never cleared a stale leftover directory — a stale
-  `result.*` from a killed merge tool was mistaken for fresh output. It now
-  uses `source_dir_abs_path` and removes a stale `.current_merge` up front.
-  Regression: `tests/test_merge_stale_merge_dir.sh`.
-- **L1**: the source→target mapping was duplicated in pull.rs / merge.rs /
-  status.rs / purge.rs; extracted `source_rel_to_target_abs` in commands/mod.rs.
-- **L4**: `status` paged output through `$PAGER` even when stdout was a pipe;
-  now gated on `stdout().is_terminal()` (verified manually: no pager spawn when
-  piped, pager spawns only under a tty).
-
-### Current session: `dfm diff`
-
-Implemented `diff` (read-only) + verified (build + `cargo test` 22 + `clippy`
-clean + all 200 shell tests green):
-
-- `Settings`/`Config`: `diff_tool_command` (default `vimdiff -M {target}
-  {source}`, read-only), merged like `merge_tool_command`.
-- crypt.rs: extracted shared `decrypt_with_retry`; added
-  `read_encrypted_bytes(source_file_path) -> (Vec<u8>, u32 perms)`.
-- mod.rs: `resolve_merge_command` generalized → `resolve_tool_command`;
-  `DirGuard` now `pub(crate)`.
-- Tests: `test_diff_{no_args,synchronized,modified,not_managed,ignored,symlink,
-  encrypted,tool_not_found,unreadable}.sh`. Note for modified test: diff output
-  starts with `-`/`+`, so grep needs `assert_succ grep -qF -- "-$VAR"`. New tests avoid
-  `dfm ... | grep ...` pipes; they capture with a here-string instead:
-  `assert_succ grep -qF "..." <<<$(dfm ... 2>/dev/null)`.
-
-### Current session: `dfm diff` hardening (REVIEW.md fixes)
-
-Approved fix plan applied, verified below (build + `cargo test` 22 + `clippy`
-clean + all 200 shell tests green):
-
-- **B1** (lazy `.current_diff`): plain diffs pass `{source}` through directly
-  and never create/remove the temp dir → `dfm diff` works on a read-only source
-  dir. `.current_diff` is created (0700) only when the source is encrypted.
-- **B2** (temp-dir hygiene): `.current_merge`/`.current_diff` now get mode 0700
-  via `create_private_temp_dir` (`DirBuilderExt::mode`), and `init` adds both to
-  the source ignore records so the tools' scratch files are never picked up as
-  managed paths on existing installs.
-- **B3**: `run_merge` now maps a missing tool binary to
-  `NotFound("merge tool {prog} not found")` (spawn `NotFound`), mirroring
-  `run_diff`; other spawn errors stay `Io`.
-- **B4**: `resolve_tool_command` takes the config key name so its error names
-  the exact setting to fix: `no merge tool configured — set
-  merge_tool_command in config` / `... diff_tool_command ...`.
-- **A1**: `announce_encryption_password` takes the precomputed inner name
-  (String) instead of recomputing `file_path_relative_to`; `write_encrypted_file`
-  computes it once, `diff`'s decrypt path passes its computed inner name.
-- **A2/A3**: fixed stale "piped to stdin" comment in `test_diff_encrypted.sh`
-  and the `3>/dev/null` typo in `test_diff_not_managed.sh`.
-- **A4**: README §2.5 documents `diff` as files-only (directories are not
-  traversed, error remains); file-layout adds `.current_merge/`/`.current_diff/`
-  (0700, transient) and the init ignore list mentions them.
-
-### Current session: `diff` "does not exist" + `forget` nonexistent-path error
-
-- **`diff`** (committed by user as c9afba8): a path existing nowhere — target
-  or source branch, counterpart absent too — prints `<path> does not exist`
-  instead of `is not managed`; `is not managed` stays for files that exist but
-  have no source. Tests: `test_diff_not_exists.sh` (new),
-  `test_diff_not_managed.sh` slimmed to unmanaged cases only.
-- **`forget`**: an explicitly-named path resolving to nothing now fails with
-  `NotFound("<path> does not exist")` after the analysis phase — nothing is
-  forgotten, exit 1; replaces the old B2c contract (`tests/
-  test_forget_nonexistent_path.sh` rewritten: it previously asserted
-  silent success). See the forget bullet in Commands above.
-- Note: `handle_missing_target` returns bool now; source-side lexical check via
-  `source_rel_to_target_rel` avoids misreporting when the inferred target
-  exists.
-- Test-harness refactor (same session): added `run_fail` helper; all 8 tests
-  using the set +e/rc dance now use it; converted 26 `! grep` false-pass
-  negative assertions across 10 files to capture + `assert_fail` (they could
-  never fail under errexit). test_ignore_several_directories.sh rewritten:
-  its old check was doubly broken (BRE-literal `|`) and contradicted the
-  designed output — ignored dirs DO show as collapsed `!! dir/` in --all;
-  now asserts that plus no unmanaged dir entries.
-  test_forget_directory.sh: replaced a no-op `grep || true` with
-  `assert -f state.toml`.
-- Harness refactor round 3 (same session): fixed a `grep -qv` inverted-match
-  false-pass in test_status_symlink_inside_target.sh (passed when ANY line
-  lacked the name); 4 unreadable-skip tests now assert exit 0 AND the warning
-  (`>/dev/null 2>warn.txt` + grep) instead of message-only pipes; finished
-  capture-style conversion in status_basic/fold_blocked/paths (merged
-  duplicate-command greps). Third dead assertion found:
-  test_status_basic.sh commented "exit code with conflicts is 1" while
-  asserting `-eq 0`; product reality is status ALWAYS exits 0 (no rc contract
-  documented anywhere) — now asserts 0 with corrected comments.
-- Bug fix: `status --unused-patterns` printed bare `!P\t<pat>` lines without
-  the "Unused ignore patterns:" header — its early-return branch (modeled on
-  the bare-list `--ignored-patterns` mode) bypassed `format_default`, the only
-  place the header existed. Now emits the report's block shape (header +
-  two-space-indented entries). Also removed the dead `*unused_patterns ||`
-  half of the porcelain append condition (unreachable behind that return).
-  Test: test_status_paths_unused_patterns.sh asserts header + entry for
-  scoped and unscoped flag runs. ROADMAP entry removed.
-- Bug fix: a state entry whose source path matches `.dfm_ignore_file` was
-  reported `!?` (Unpulled) when the target copy was removed — status never
-  loaded the source-side ignore file. Phase 1 now classifies such entries
-  `!!`/`!L` with the matched pattern (mirroring the target-side branch), so
-  source-ignored files are not offered as pullable. New test
-  tests/test_status_source_ignored.sh; ROADMAP entry removed. Note: pull/add
-  themselves are state-driven and consult no ignore files (separate concern).
-
-### Testing assertions: got-it-right rule
-
-Assertions are **grep over captured output**. `set -eEu` aborts the test on a
-failing command — but **only if that command is not negated with `!`**. POSIX
-`-e` explicitly exempts "a command whose return value is inverted with `!`", so:
-
-- **Positive** (must appear) → plain pipeline, aborts if not found:
-  `dfm status 2>/dev/null | grep -qF "pat"` or `echo "$RES" | grep -qF "pat"`.
-- **Negative** (must NOT appear) → **never** `! cmd | grep -qF` (that inverts
-  the return and `set -e` skips it → mid-file asserts silently false-pass).
-  Capture output first, then let the *grep itself* be the only command:
-  `RES=$(dfm status 2>/dev/null); assert_fail grep -qF "pat" <<< "$RES"` —
-  `assert_fail` just inverts the command status, so grep exiting 0 (text
-  found) fails the test; grep exiting 1 (absent) passes it.
-- **Expected-failure commands** → `run_fail dfm ...` (launcher.sh): asserts
-  non-zero exit and captures combined output into `$FAIL_OUTPUT`; follow with
-  `assert_succ grep -qF "msg" <<<"$FAIL_OUTPUT"`. Replaced all
-  `set +e / rc=$? / set -e / err.txt` blocks (8 tests).
-- Anywhere shell negation is needed use `if cmd | grep -qF ...; then exit 1; fi`
-  or `assert_fail`, and position grep as the final (non-negated) pipeline step.
-  The two `! grep` false-passes that violated this
-  (test_traversal_skips_ignored_dirs.sh) were converted to `assert_fail`.
-
-### Current session: dfm config file is a manageable dotfile
-
-The dfm config file is no longer treated as an internal file (it is
-user-authored static data, never rewritten mid-run — unlike state.toml and the
-target ignore file, which stay internal):
-
-- add.rs: `internal_dfm_paths` now holds only state + target-ignore; the
-  "is an internal dfm file, skipping" branch never fires for the config.
-  Named (`dfm add .config/dfm`) AND full-traversal adds manage it.
-- status.rs: Phase-2 skip dropped → unmanaged config shows as `??`; managed
-  config gets state-driven codes via Phase 1. All other commands already had
-  no exclusions (pull even had tests: test_manage_own_config.sh).
-- Tests: new `test_add_own_config.sh` (named-dir add, status codes,
-  re-add after `config --set`, forget keeps target) and
-  `test_add_own_config_traversal.sh` (bare `dfm add` picks it up).
-  Quiet-tree tests that need an untouched config now `dfm ignore .config/dfm`
-  up front (test_status_basic.sh, test_missing_config_uses_state.sh,
-  test_status_symlink_outside_target.sh, test_add_symlink_outside_target_dir.sh).
-  test_status_porcelain_sorted.sh sorts porcelain by path field with
-  `LC_ALL=C sort -t$'\t' -k2,2` (whole-line sort broke once a `??` entry and a
-  dot-path joined the mix). Verified: build + cargo test 22 + clippy clean +
-  all 204 shell tests green.
-
-### Current session: status filter flags no longer leak the stale block
-
-`status --modified/--unpulled/--managed` (and every restrictive filter:
-`-c/-m/-U/-M/-p/-i`) printed the "Unused ignore patterns:" block with their
-own list — format_default rendered `stale_patterns` unconditionally. Fix: the
-Output stage builds `report_stale` (empty when a restrictive filter is active)
-and passes it to both `format_default` and the porcelain empty-list fallback.
-Unfiltered default report, `--all`, scoped runs and `-u` mode unchanged.
-Tests: test_status_paths_unused_patterns.sh extended (--modified/--unpulled/
---managed show only own lists; --conflicted --porcelain emits nothing, not
-!P lines; unfiltered report still carries the block). Verified: build +
-cargo test 22 + clippy clean + all 204 shell tests green.
-
-### Current session: PATH args anchor at the target dir + ignore records are target-relative
-
-Two related fixes, verified together (build + cargo test 23 + clippy clean +
-all 206 shell tests green):
-
-- **Relative CLI paths resolve against the target directory** (bug: from an
-  ignored subdir `dfm diff file.txt` CWD-joined to `<subdir>/file.txt` and
-  reported "is ignored by abc" instead of diffing `~/file.txt`). New shared
-  helper `cli_path_to_abs(path, target_dir_abs)` in commands/mod.rs
-  (`cli_path_to_abs` = absolute → remove_dots, relative → join target).
-- **[SUPERSEDED — see "PATH args may not escape" below]** Relative PATH
-  anchoring was first moved target→`cli_path_to_abs(path, target)`, then the
-  user ruled for shell semantics; final state is CWD-anchoring + scope check.
-  Historical test name: tests/test_relative_paths_anchored_at_target.sh.
-- **Ignore records store the lexical target-relative path** (was:
-  `regex::escape(absolute)`). Root cause of a latent breakage: the old loose
-  matcher made absolute records match anywhere; the committed root-anchored
-  matcher (aa10d70) can never match an absolute record → every stored path
-  pattern went dead ("Unused ignore patterns", nothing pruned). ignore.rs
-  now pushes `file_path_relative_to(path, target)` — **lexical**, not
-  canonicalized, so ignoring a symlink records the link itself, not its
-  pointee (test_add_symlink_ignored.sh caught that regression). Raw `-p`
-  patterns unchanged; source-side records unchanged.
-- test_ignore_relative_matching.sh rewritten for real output shape: `!!`
-  lines render only with `--all`/`--ignored` (default view hides them,
-  status.rs filter), ignored-dir entry carries the matched-pattern suffix
-  `!!  abc/  (abc)`; folding shows unmanaged subtree as `??  dir/*`.
-  test_ignore_dirname_slash.sh asserts record `^dirname$` (trailing slash
-  insignificant, storage is relative+escaped now).
-
-### Current session: PATH args may not escape the managed tree
-
-User transcript diagnosed (reproduced in /tmp with HOME = experiment dir):
-from `<target>/dir`, `status ../file.txt` resolved `..` from the TARGET
-anchor → landed above the tree; user ruled that relative args must follow
-shell semantics. Fix (two parts): 1) `cli_path_in_scope` (mod.rs) — after
-anchoring, the resolved path must start with target or source dir, else
-InvalidInput; wired into status/add/pull/merge/forget/ignore argument entry.
-diff stays permissive ("not managed"). 2) Anchoring switched target→CWD in
-`cli_path_to_abs` (now baseless, returns Result; current_dir failure is an
-error). So from `<tree>/dir`, `../file.txt` = the file next to dir inside
-the tree ✓, while escapes past the root are still rejected uniformly.
-Tests: test_paths_may_not_escape_target.sh (six commands × escaping arg +
-absolute /etc/hostname + source-side via `../dotfiles/file.txt` from sub);
-test_relative_paths_cwd_anchored.sh (renamed from …_anchored_at_target:
-bare name from ignored subdir is cwd-relative now and errors "does not
-exist" — accepted tradeoff; `../name` reaches parent's managed files).
-Gotcha: under `set -e`, `RES=$(… dfm …)` inherits nonzero rc → guard with
-`|| true`. Verified: build + cargo test 23 + clippy clean + all shell
-tests green.
-
-### Current session: first-run config warning suppressed
-
-User report: virgin system, `dfm init dotfiles` printed "config file …
-could not be read … continuing with default settings". Cause: read_config
-mapped a missing file to a generic I/O error; main.rs warned on ANY config
-read error. Fix mirrors the state-file convention: read_config returns
-DfmError::NotFound for a missing file ("config file does not exist: …"),
-main.rs treats NotFound as silent defaults and still warns on corrupt/
-unreadable configs. Applies to every command pre-init, not just init.
-Test: tests/test_first_run_no_config_warning.sh (init silent, paths silent
-after rm -rf XDG_CONFIG_HOME/dfm, garbage TOML still warns). Counts 208.
-
-### Current session: scoped status shows the Ignored block
-
-User report: `status <ignored-file>` printed "No files managed." — wrong,
-the file exists and is merely ignored. Two gates hid the entry:
-1) classifiers classify_target_file/_symlink created Ignored entries only
-when all||ignored; 2) the post-filter dropped them otherwise. Fix: one
-visibility flag `show_ignored = all || ignored || paths.is_some()` threaded
-into both classifiers (replaces their all||ignored gate; file classifier no
-longer takes `all`), plus `explicit_paths` in the filter chain. Full-tree
-status unchanged; other flags keep priority (--modified <ignored> stays
-empty); pruned-dir `!! dir/` entries now surface in scoped reports too.
-Tests: test_status_paths.sh extended (named ignored file in default +
-porcelain, scoped parent dir reveals ignored_here/, --modified priority).
-Counts still 208.
-
-### Current session: streaming encryption (format v3)
-
-User request: encrypted files were read fully into RAM (~3× file size);
-switch to chunked AEAD, no backward compat, only existing crates, changes
-only in crypt.rs. New v3 container: header 64 B adds chunk_size u32 +
-plaintext_len u64; payload = records of ct(≤64 KiB)+tag16; per-chunk nonce
-= base_nonce with last 8 B := 7-B BE counter + final-flag byte; per-chunk
-AAD = header || idx || flag → reorder/dup/truncate/splice all fail auth.
-encrypt_stream/DecryptSession{open,stream_rest} cores; public API
-signatures unchanged (write/read_encrypted_file, read_encrypted_bytes,
-standalone encrypt/decrypt). Peak RAM O(chunk) for file paths (diff still
-collects, ~1×). WrongPassword = first-chunk auth failure only (retry before
-any output); later failures = "corrupted", partial target removed. Encrypt
-writes via `<dest>.part` + rename. encrypt_bytes/decrypt_bytes kept as
-in-memory wrappers (tests). Old `decrypt_blob_with_retry`/`restore_target`
-removed; restore split into apply_dir_modes + restore_streamed.
-Gotchas: Tag::from_slice borrows — copy tag to [u8;16] first;
-split_at_mut swap needs swap_with_slice; clippy &PathBuf→&Path on
-encrypt_file_standalone params. Tests: +6 unit (multi-chunk roundtrip,
-exact multiples, truncation, trailing junk, middle-chunk swap, chunk-size
-bounds) = 29. Verified 5 MiB standalone roundtrip in /tmp sandbox; shell
-suite 208 green; clippy clean.
-
-### Current session: root-privilege guard
-
-Refuse to run when dfm holds root privileges it did not get as the root user
-itself: `check_root_privileges()` (lib.rs, called first in main_logic right
-after Args::parse, before Xdg/config/state) reads real+effective uid via two
-hand-rolled externs — `#[link(name="c")] unsafe extern { getuid, geteuid }`
-(edition 2024 requires `unsafe extern`); no new Cargo/runtime dependency,
-symbols come from the already-linked libc.so.6. Decision
-`should_refuse_root_access(ruid, euid, sudo_user)`: refuse iff euid 0 AND
-(ruid != 0 OR SUDO_USER non-empty). Genuine root (0,0,None) allowed; euid!=0
-never refused even with stray exported SUDO_USER. Escape hatch: environment
-`DFM_ALLOW_ROOT` any non-empty value bypasses the check early. Error =
-DfmError::InvalidInput naming the elevation path (sudo w/ SUDO_USER vs
-setuid-style ruid mismatch), exit 1 via existing main path. `--help`/`--version`
-still work under sudo (clap exits before the guard). Unit test
-`test_refuse_root_access_matrix` (6 combos). Shell test
-test_root_privileges_check.sh: self-skips the root-only scenarios when
-`id -u` != 0 (refusal needs euid 0, can't fake in the harness); as root it
-checks sudo-style refusal + DFM_ALLOW_ROOT bypass + genuine-root init works.
-Verified refusal end-to-end locally via `unshare -r` (user namespace gives
-euid 0 to a non-root user without privileges): fake `SUDO_USER=alice` was
-refused, `DFM_ALLOW_ROOT=1` bypassed, genuine root ran. Counts now 209
-shell, 30 unit. README Limitations gained a Root privileges bullet.
-Gotchas: `dfm config list` is not valid syntax (needs `--get/--set/--list`
-flags) — use a real command like `init`/`status` in shell tests; run_fail
-must take `env K=V "$BIN"` form (positions from "$@" are not interpreted as
-env assignments); merged tool-output interleaving can mask stderr ordering —
-redirect stderr to a file when verifying.
+- **Sandbox everything**: `export HOME; export XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME` to fresh temp dirs and `mkdir -p` them; run the **debug build** (`target/debug/dfm`). Never run dfm against the real `$HOME` (it can damage user files — add/pull/forget act on whole trees). Do not install the built distributive.
+- Set the rustup toolchain PATH before building (see Build/test); `cargo build` first.
+- `unshare -r` gives euid 0 to a non-root user → verifies the root guard (fake `SUDO_USER=alice` refused, `DFM_ALLOW_ROOT=1` bypasses, genuine root runs). `sudo` runs `/usr/bin/dfm` (stale binary) — not the build you just made.
+- `dfm config list` is invalid syntax (needs `--get/--set/--list`); `config get` on a missing key warns, exit 0.
+- dfm should never read stdin in scripts: avoid interactive password prompts by clearing stdin (`< /dev/null`) or rely on `$PASSWORD` only if plainly intended.
+- Status paging (and future `diff --all`) only spawns `$PAGER` when stdout is a terminal — a pipe/file never triggers it, so piping is safe.
+- `run_fail` env assignments must use `env K=V "$BIN"` form (positional `"$@"` are not env assignments) — test harness concern.
 
 ## Debug strategies (in order)
 
-1. Run the failing test alone: `bash tests/launcher.sh test_x.sh` (already
-   full `-x` trace). Read the failing assertion + lines above before touching
-   code.
-2. If trace shows success but wrong output, add **one** `eprintln!` at the
-   point the asserted value is computed, print actual, compare to expectation.
+1. Run the failing test alone: `bash tests/launcher.sh test_x.sh` (full `-x` trace). Read the failing assertion + lines above before touching code.
+2. If trace shows success but wrong output, add **one** `eprintln!` at the point the asserted value is computed, print actual, compare to expectation.
 3. Read the function end-to-end to form a hypothesis, confirm with 2.
 
 | Symptom | Likely cause |
@@ -801,3 +130,16 @@ redirect stderr to a file when verifying.
 | `test -f` fails for pointer file | `.symlink` postfix appended to full filename |
 | `assert_source` fails | dot-prefix/postfix/path-component mismatch in computed source path |
 | queued task still runs after `continue` | tasks already queued execute in the final task loop |
+
+## Roadmap
+
+`ROADMAP.md` (Implement features + Documents) is the current feature plan. Every task has been through ambiguity-elimination Q&A and is rewritten precisely there; the "Information to add to the tasks" appendix says **RESOLVED** for all items. Key decisions in short:
+- `status --encrypted` (`-e`) overrides other filters; filters combine additively (no contradictory-flag error); `(encrypted)` marker in human output only (right-aligned; `dir/* (encrypted)` when whole group).
+- Auto-encrypt when any component (target-root down) has `mode & 0077 == 0`; unions with `force_encryption_for`; newly added files only; symmetric on pull.
+- `diff --editable` (`-e`): require equal target/source content first; write back both sides + update sync **only on tool exit 0**; re-encrypt encrypted side.
+- `sync`: only synced+modified files; BothModified = conflict (no `--force`: prints paths, nothing modified, exit ≠ 0; with `--force`: skips conflicts); plan-all/commit-once.
+- `diff --all` (`-a`, default true via config `diff_all_default`; template `diff_all_tool_command` default `diff -u --color=always {source} {target}` / reversed for SourceModified) — line executed as one argument to `sh -c '…'`, placeholders verbatim; BothModified diffed, never-synced silent; encrypted decrypted to scratch.
+- Action-phase progress bar (add/pull/sync): 1 step/file, stdout, TTY-only, on by default.
+- `status <path>` with exactly one path and nothing to report → `<path> is up-to-date.` (stdout).
+- Documents: GPL-3.0-only in a separate LICENSE file (not embedded); README states pure-local sync; shrink README/context.txt by pre-agreed per-section line budgets.
+- Considerations ("source file owned by another user"): user marked **not ready** — open question, must become a decision before it can be a task.
