@@ -92,9 +92,7 @@ pub enum Command {
         dry_run: bool,
     },
 
-    /// Synchronize already-managed files (both sides exist and have a sync
-    /// record) in both directions, adding target changes to the source and
-    /// pulling source changes to the target.
+    /// Synchronize managed files in both directions.
     Sync {
         /// Files to synchronize. If omitted - all managed files.
         #[arg(value_name = "PATH")]
