@@ -26,8 +26,9 @@ assert_content_eq "$PWD/dotfiles/file.txt" "$SOURCE_MOD"
 assert_content_eq "other.txt" "$ORIGINAL"
 assert_content_eq "$PWD/dotfiles/other.txt" "$OTHER_SOURCE"
 
-# with --force: non-conflicting other.txt syncs, conflicting file.txt untouched
-dfm sync --force
+# with --force: conflict is not registered as an error, exit is success,
+# non-conflicting other.txt syncs, conflicting file.txt untouched
+assert_succ dfm sync --force
 assert_content_eq "other.txt" "$OTHER_SOURCE"
 assert_content_eq "$PWD/dotfiles/other.txt" "$OTHER_SOURCE"
 assert_content_eq "file.txt" "$TARGET_MOD"

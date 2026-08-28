@@ -149,8 +149,6 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         Command::Sync {
             paths,
             force,
-            symlink,
-            encrypt,
             dry_run,
         } => with_state(
             state_opt,
@@ -163,8 +161,6 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                     SyncArgs {
                         paths,
                         force,
-                        symlink,
-                        encrypt,
                         dry_run: resolve_dry_run(dry_run, args.dry_run),
                     },
                     state,

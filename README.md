@@ -440,22 +440,18 @@ The "Unused ignore patterns" block is part of the **unfiltered** default report 
 Synchronize only files that are **already managed** — their target and source both exist and have a sync record — copying changes in either direction.
 
 ```bash
-dfm sync [PATH...] [--force] [--symlink] [--encrypt] [--dry-run]
+dfm sync [PATH...] [--force] [--dry-run]
 ```
 
 - `PATH...` — target-directory paths to process. Omitting traverses the entire target directory (respecting ignore rules).
-- Only files with a source counterpart **and** a sync record are eligible. Unmanaged, never-synced, and unpulled files are left untouched.
+- Only files with a source counterpart **and** a sync record are eligible. Unmanaged, never-synced, unpulled, and ignored files are left untouched (ignored files are never processed, with or without `--force`).
 - Changes are copied both ways: a target-only change is pushed to the source, a source-only change is pulled to the target.
-- A change on **both** sides while they differ is a conflict. Without `--force` the whole run blocks (nothing is modified, a non-zero exit is returned and the conflicting paths are reported); with `--force` the run proceeds on non-conflicting files and never touches a conflict.
+- A change on **both** sides while they differ is a conflict. Without `--force` the run traverses all eligible files and exits non-zero when conflicts are present (nothing is modified). With `--force` the conflict is not treated as an error: the run copies all eligible (non-conflicting) files, never touches a conflict, and exits successfully.
 
 | Flag | Description |
 |---|---|
-| `-f`, `--force` | Proceed on non-conflicting files even when a conflict is present. |
-| `-s`, `--symlink` | Convert an already-managed plain pair to the symlink layout (target becomes a symlink over the source file). |
-| `-e`, `--encrypt` | Convert an already-managed plain pair to an encrypted source. |
+| `-f`, `--force` | Do not treat conflicts as errors; copy eligible files and exit successfully. Never modifies a conflict. |
 | `-n`, `--dry-run` | Report what would be done without making changes. |
-
-`--symlink` and `--encrypt` are mutually exclusive. Converting would discard a newer plain source, so it requires `--force` in that case.
 
 ---
 

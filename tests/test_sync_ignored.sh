@@ -1,5 +1,5 @@
 # sync respects the target ignore file: an ignored managed file is left
-# untouched. With --force the ignore is overridden and the file is synced.
+# untouched, with AND without --force (sync never overrides the ignore).
 
 dfm init dotfiles
 write "v1" ignored.txt
@@ -12,6 +12,9 @@ write "v2" ignored.txt         # target change while ignored
 dfm sync
 assert_content_eq "$PWD/dotfiles/ignored.txt" "v1"
 
-# with --force the ignore is overridden and the target change is pushed
+# --force must also skip the ignored file (sync never overrides the ignore)
 dfm sync --force
-assert_content_eq "$PWD/dotfiles/ignored.txt" "v2"
+assert_content_eq "$PWD/dotfiles/ignored.txt" "v1"
+
+# the ignore pattern is untouched by either run
+assert_succ grep -Fq 'ignored\.txt' "$XDG_STATE_HOME/dfm/ignore_file"

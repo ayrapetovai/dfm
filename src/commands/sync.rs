@@ -9,17 +9,15 @@ use crate::DfmError;
 use microxdg::Xdg;
 use super::{
     sync_file_copy, read_symlink_pointer, resolve_source_variant,
-    update_sync_state, remove_sync_state, get_sync_time, SourceVariant,
+    update_sync_state, get_sync_time, SourceVariant,
     list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
-    prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling, cli_path_in_scope,
+    handle_ignore_or_override, IgnoreHandling, cli_path_in_scope,
 };
 
 /// Typed, per-command arguments for `sync` (built by the dispatcher).
 pub struct SyncArgs {
     pub paths: Option<Vec<PathBuf>>,
     pub force: bool,
-    pub symlink: bool,
-    pub encrypt: bool,
     pub dry_run: bool,
 }
 
@@ -29,12 +27,10 @@ enum SyncTask {
     Add(PathBuf, PathBuf),
     /// Copy source → target (plain): mirror of `pull`.
     Pull(PathBuf, PathBuf),
-    /// Encrypt target → source.
+    /// Encrypt target → source (re-encrypt of an already-encrypted pair).
     AddEncrypted(PathBuf, PathBuf),
     /// Decrypt source → target.
     PullEncrypted(PathBuf, PathBuf),
-    /// Copy target → source and replace the target with a symlink to it.
-    CopyAndSymlink(PathBuf, PathBuf),
     /// Update the source symlink pointer file to the target's current pointee.
     UpdatePointer(PathBuf, String),
 }
@@ -49,8 +45,6 @@ fn describe_sync_task(task: &SyncTask) -> String {
             format!("copy encrypted target {:?} to source {:?}", target, source),
         SyncTask::PullEncrypted(target, source) =>
             format!("decrypt source {:?} to target {:?}", source, target),
-        SyncTask::CopyAndSymlink(target, source) =>
-            format!("copy target {:?} to source {:?} and replace target with symlink", target, source),
         SyncTask::UpdatePointer(source_symlink, points_to) =>
             format!("directing source symlink file {:?} to the pointee {:?}", source_symlink, points_to),
     }
@@ -69,12 +63,12 @@ fn handle_symlink(
     target_ignore_file_path: &Path,
     state: &StateObject,
     tasks: &mut Vec<SyncTask>,
-    patterns_to_remove: &mut Vec<String>,
 ) -> Result<(), DfmError> {
     let symlink_rel = file_path_relative_to(target_path, target_dir_abs_path);
+    // Ignored files are never processed; sync never edits the ignore file.
     if handle_ignore_or_override(
         target_ignore_regex, &symlink_rel, false,
-        patterns_to_remove, target_path, target_ignore_file_path,
+        &mut Vec::new(), target_path, target_ignore_file_path,
     ) == IgnoreHandling::Skip {
         return Ok(());
     }
@@ -121,14 +115,10 @@ fn handle_regular_file(
     target_ignore_regex: &RegexSet,
     target_ignore_file_path: &Path,
     internal_dfm_paths: &[PathBuf],
-    force: bool,
-    symlink_flag: bool,
-    encrypt_flag: bool,
     state: &StateObject,
     tasks: &mut Vec<SyncTask>,
     conflict_detected: &mut bool,
     conflict_paths: &mut Vec<String>,
-    patterns_to_remove: &mut Vec<String>,
 ) -> Result<(), DfmError> {
     let target_abs_path = fs::canonicalize(target_path).map_err(|e| io_err(target_path, e))?;
 
@@ -144,9 +134,11 @@ fn handle_regular_file(
     }
 
     let target_rel = file_path_relative_to(&target_abs_path, target_dir_abs_path);
+    // Ignored files are never processed, with or without --force: sync must
+    // not override the ignore (which would also edit the ignore file).
     if handle_ignore_or_override(
-        target_ignore_regex, &target_rel, force,
-        patterns_to_remove, &target_abs_path, target_ignore_file_path,
+        target_ignore_regex, &target_rel, false,
+        &mut Vec::new(), &target_abs_path, target_ignore_file_path,
     ) == IgnoreHandling::Skip {
         return Ok(());
     }
@@ -167,36 +159,6 @@ fn handle_regular_file(
     };
 
     let cmp = compare_files(&settings.encrypted_postfix, &target_abs_path, &source_abs_path, Some(sync_time))?;
-
-    // `--encrypt` and `--symlink` convert an already-managed plain pair into
-    // an encrypted pair or a symlink layout respectively. They never apply to
-    // an already-encrypted source (`--symlink` is rejected; an encrypted pair
-    // is already encrypted, so `--encrypt` is a normal sync).
-    if (encrypt_flag || symlink_flag) && source_variant == SourceVariant::Plain {
-        let is_source_modified = matches!(
-            cmp,
-            CompareByTimestamp::SourceModified | CompareByTimestamp::BothModified
-        );
-        // Converting would silently discard a newer plain source (its content
-        // is replaced by the target), so require --force for that.
-        if is_source_modified && !force {
-            *conflict_detected = true;
-            conflict_paths.push(target_path.to_string_lossy().into_owned());
-            return Ok(());
-        }
-        if encrypt_flag {
-            info!("converting managed plain target {:?} to encrypted source", target_abs_path);
-            let encrypted_source_abs_path = filepath_in_source_dir(
-                &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path,
-                &target_abs_path, Some(&settings.encrypted_postfix),
-            );
-            tasks.push(SyncTask::AddEncrypted(target_abs_path, encrypted_source_abs_path));
-        } else {
-            info!("moving managed target {:?} to a symlink over the source", target_abs_path);
-            tasks.push(SyncTask::CopyAndSymlink(target_abs_path, source_abs_path));
-        }
-        return Ok(());
-    }
 
     match cmp {
         CompareByTimestamp::NonModified => {
@@ -240,13 +202,9 @@ fn handle_regular_file(
 }
 
 pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut StateObject) -> Result<(), DfmError> {
-    let SyncArgs { ref paths, ref force, ref symlink, ref encrypt, dry_run } = args;
+    let SyncArgs { ref paths, ref force, dry_run } = args;
 
-    debug!("sync paths {:?}, force {}, symlink {}, encrypt {}", paths, force, symlink, encrypt);
-
-    if *symlink && *encrypt {
-        return Err(DfmError::other("--symlink and --encrypt are mutually exclusive"));
-    }
+    debug!("sync paths {:?}, force {}", paths, force);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
@@ -277,7 +235,6 @@ pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut 
     let mut tasks: Vec<SyncTask> = Vec::new();
     let mut conflict_detected = false;
     let mut conflict_paths: Vec<String> = vec![];
-    let mut patterns_to_remove: Vec<String> = vec![];
 
     let mut progress = ProgressLine::new();
     for (i, target_path) in traversed_paths.iter().enumerate() {
@@ -288,14 +245,13 @@ pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut 
             handle_symlink(
                 settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
                 &target_ignore_regex, &target_ignore_file_path, state,
-                &mut tasks, &mut patterns_to_remove,
+                &mut tasks,
             )
         } else {
             handle_regular_file(
                 settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
                 &target_ignore_regex, &target_ignore_file_path, &internal_dfm_paths,
-                *force, *symlink, *encrypt, state, &mut tasks, &mut conflict_detected,
-                &mut conflict_paths, &mut patterns_to_remove,
+                state, &mut tasks, &mut conflict_detected, &mut conflict_paths,
             )
         };
 
@@ -342,7 +298,7 @@ pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut 
         if dry_run {
             continue;
         }
-        match execute_sync_task(&task, settings, state, &target_dir_abs_path, &source_dir_abs_path) {
+        match execute_sync_task(&task, settings, state, &source_dir_abs_path) {
             Ok(completed) => {
                 if completed {
                     completed_tasks += 1;
@@ -355,8 +311,6 @@ pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut 
         }
     }
 
-    prune_matched_ignore_patterns(xdg, &patterns_to_remove, dry_run)?;
-
     Ok(())
 }
 
@@ -367,7 +321,6 @@ fn execute_sync_task(
     task: &SyncTask,
     settings: &Settings,
     state: &mut StateObject,
-    target_dir_abs_path: &Path,
     source_dir_abs_path: &Path,
 ) -> Result<bool, DfmError> {
     match task {
@@ -401,18 +354,6 @@ fn execute_sync_task(
                 Err(e) => return Err(e),
             }
             update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
-
-            // Converting plain → encrypted: drop the now-redundant plain
-            // source (its content is superseded by the encrypted blob) and its
-            // stale sync entry.
-            let plain_source = filepath_in_source_dir(
-                &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path,
-                target_file, None,
-            );
-            if plain_source.exists() {
-                fs::remove_file(&plain_source).map_err(|e| io_err(&plain_source, e))?;
-                remove_sync_state(state, &plain_source, source_dir_abs_path);
-            }
             Ok(true)
         },
         SyncTask::PullEncrypted(target_file, source_file) => {
@@ -425,41 +366,6 @@ fn execute_sync_task(
                 Err(e) => return Err(e),
             }
             update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
-            Ok(true)
-        },
-        SyncTask::CopyAndSymlink(target_file, source_file) => {
-            match sync_file_copy(target_file, source_file, source_file, state, source_dir_abs_path) {
-                Ok(()) => {}
-                Err(e) if e.is_permission_denied() => {
-                    warn_unreadable(target_file, &e);
-                    return Ok(false);
-                }
-                Err(e) => return Err(e),
-            }
-
-            // Move the original target aside instead of deleting it, so the
-            // content survives if creating the symlink fails (as in add).
-            let target_parent = target_file.parent()
-                .ok_or_else(|| DfmError::other("target file has no parent directory"))?
-                .to_path_buf();
-            let backup_file = target_parent.join(format!(
-                ".{}.dfm-backup",
-                target_file.file_name()
-                    .ok_or_else(|| DfmError::other("target file has no file name"))?
-                    .to_string_lossy(),
-            ));
-            fs::rename(target_file, &backup_file).map_err(|e| io_err(target_file, e))?;
-
-            let link_target = file_path_relative_to(source_file, &target_parent);
-            if let Err(e) = symlink::symlink_file(&link_target, target_file) {
-                fs::rename(&backup_file, target_file)
-                    .map_err(|restore_err| DfmError::Other(format!(
-                        "symlink {:?} creation failed: {}; restore of backup {:?} also failed: {}",
-                        target_file, e, backup_file, restore_err,
-                    )))?;
-                return Err(io_err(target_file, e));
-            }
-            fs::remove_file(&backup_file).map_err(|e| io_err(&backup_file, e))?;
             Ok(true)
         },
         SyncTask::UpdatePointer(source_symlink, points_to) => {

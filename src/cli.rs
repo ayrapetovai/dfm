@@ -100,17 +100,9 @@ pub enum Command {
         #[arg(value_name = "PATH")]
         paths: Option<Vec<PathBuf>>,
 
-        /// Overwrite on conflict and add symlinks.
+        /// Ignore conflicts and errors of other files, never modifying them.
         #[arg(long, short = 'f')]
         force: bool,
-
-        /// Move file to the source directory, create a symlink on place of it.
-        #[arg(long, short = 's')]
-        symlink: bool,
-
-        /// Copy encrypted form of file to the source directory.
-        #[arg(long, short = 'e')]
-        encrypt: bool,
 
         /// Run only checks, no changes will be made to filesystem.
         #[arg(long, short = 'n')]
