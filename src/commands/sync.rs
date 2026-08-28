@@ -11,7 +11,7 @@ use super::{
     sync_file_copy, read_symlink_pointer, resolve_source_variant,
     update_sync_state, get_sync_time, SourceVariant,
     list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
-    handle_ignore_or_override, IgnoreHandling, cli_path_in_scope,
+    is_ignored, cli_path_in_scope,
 };
 
 /// Typed, per-command arguments for `sync` (built by the dispatcher).
@@ -60,16 +60,13 @@ fn handle_symlink(
     source_dir_abs_path: &Path,
     target_path: &Path,
     target_ignore_regex: &RegexSet,
-    target_ignore_file_path: &Path,
     state: &StateObject,
     tasks: &mut Vec<SyncTask>,
 ) -> Result<(), DfmError> {
     let symlink_rel = file_path_relative_to(target_path, target_dir_abs_path);
     // Ignored files are never processed; sync never edits the ignore file.
-    if handle_ignore_or_override(
-        target_ignore_regex, &symlink_rel, false,
-        &mut Vec::new(), target_path, target_ignore_file_path,
-    ) == IgnoreHandling::Skip {
+    if is_ignored(target_ignore_regex, &symlink_rel) {
+        debug!("target symlink {:?} is ignored, skipping", target_path);
         return Ok(());
     }
 
@@ -113,7 +110,6 @@ fn handle_regular_file(
     source_dir_abs_path: &Path,
     target_path: &Path,
     target_ignore_regex: &RegexSet,
-    target_ignore_file_path: &Path,
     internal_dfm_paths: &[PathBuf],
     state: &StateObject,
     tasks: &mut Vec<SyncTask>,
@@ -136,10 +132,8 @@ fn handle_regular_file(
     let target_rel = file_path_relative_to(&target_abs_path, target_dir_abs_path);
     // Ignored files are never processed, with or without --force: sync must
     // not override the ignore (which would also edit the ignore file).
-    if handle_ignore_or_override(
-        target_ignore_regex, &target_rel, false,
-        &mut Vec::new(), &target_abs_path, target_ignore_file_path,
-    ) == IgnoreHandling::Skip {
+    if is_ignored(target_ignore_regex, &target_rel) {
+        debug!("target {:?} is ignored, skipping", target_abs_path);
         return Ok(());
     }
 
@@ -244,13 +238,13 @@ pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut 
         let handle = if target_path.is_symlink() {
             handle_symlink(
                 settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
-                &target_ignore_regex, &target_ignore_file_path, state,
+                &target_ignore_regex, state,
                 &mut tasks,
             )
         } else {
             handle_regular_file(
                 settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
-                &target_ignore_regex, &target_ignore_file_path, &internal_dfm_paths,
+                &target_ignore_regex, &internal_dfm_paths,
                 state, &mut tasks, &mut conflict_detected, &mut conflict_paths,
             )
         };
@@ -371,9 +365,19 @@ fn execute_sync_task(
         SyncTask::UpdatePointer(source_symlink, points_to) => {
             let source_parent = source_symlink.parent()
                 .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_symlink)))?;
-            fs::create_dir_all(source_parent).map_err(|e| io_err(source_parent, e))?;
-            fs::write(source_symlink, points_to.as_bytes()).map_err(|e| io_err(source_symlink, e))?;
-            Ok(true)
+            let result = (|| -> Result<(), DfmError> {
+                fs::create_dir_all(source_parent).map_err(|e| io_err(source_parent, e))?;
+                fs::write(source_symlink, points_to.as_bytes()).map_err(|e| io_err(source_symlink, e))?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => Ok(true),
+                Err(e) if e.is_permission_denied() => {
+                    warn_unreadable(source_symlink, &e);
+                    Ok(false)
+                }
+                Err(e) => Err(e),
+            }
         },
     }
 }

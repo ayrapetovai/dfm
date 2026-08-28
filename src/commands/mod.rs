@@ -382,6 +382,15 @@ pub(crate) fn handle_ignore_or_override(
     }
 }
 
+/// True when `rel_path` matches the target ignore regex. Unlike
+/// `handle_ignore_or_override`, this only answers "is it ignored?" and never
+/// queues ignore-pattern removal, so the caller cannot override the ignore and
+/// the ignore file is never edited. `sync` uses this because it must never
+/// process or remove ignored files.
+pub(crate) fn is_ignored(target_ignore_regex: &RegexSet, rel_path: &Path) -> bool {
+    check_path_matches_regex_component_wise(target_ignore_regex, rel_path).is_some()
+}
+
 /// Shared copy + permissions + mtime + state update logic used by both
 /// `add` (target → source) and `pull` (source → target).
 ///
