@@ -1140,7 +1140,7 @@ mod tests {
         ));
     }
 
-    // ---- streaming (chunked) format tests --------------------------------
+    // streaming (chunked) format tests
 
     /// Deterministic pseudo-random content of `len` bytes.
     fn pattern(len: usize) -> Vec<u8> {

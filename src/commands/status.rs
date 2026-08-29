@@ -193,9 +193,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // reported like any other dotfile.
     let state_file_path = calc_state_file_path(xdg).ok();
 
-    // ------------------------------------------------------------------
     // Phase 1 — Process every state entry (managed files)
-    // ------------------------------------------------------------------
     let mut entries: Vec<StatusEntry> = Vec::new();
     let mut state_keys: HashSet<String> = HashSet::new();
 
@@ -307,9 +305,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     }
     progress.clear();
 
-    // ------------------------------------------------------------------
     // Phase 2 — Walk target directory for unmanaged files
-    // ------------------------------------------------------------------
     let ListDirectories { found: traversed_target, errors: traversal_errors, pruned: pruned_dirs } =
         list_directory(
             &requested_roots,
@@ -386,9 +382,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         });
     }
 
-    // ------------------------------------------------------------------
     // Phase 3 — Find unused ignore patterns
-    // ------------------------------------------------------------------
     let mut stale_patterns: Vec<String> = Vec::new();
 
     // Unused-pattern detection is a full-tree analysis: a pattern is "unused"
@@ -456,9 +450,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         }
     }
 
-    // ------------------------------------------------------------------
     // Special mode: only list patterns
-    // ------------------------------------------------------------------
     if *ignored_patterns {
         let mut out = String::new();
         for p in target_ignore_regex.patterns() {
@@ -483,9 +475,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         return Ok(());
     }
 
-    // ------------------------------------------------------------------
     // Apply filters
-    // ------------------------------------------------------------------
     // Sort once here so every output mode (porcelain, short, default) is
     // deterministic. Phase 1 iterates a HashMap and Phase 2 a walk, so without
     // this the line order could change between runs.
@@ -509,9 +499,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         true
     }).collect();
 
-    // ------------------------------------------------------------------
     // Output
-    // ------------------------------------------------------------------
     let git_info = get_git_info(&source_dir_abs);
 
     // A restrictive filter asks for one specific list, so the unused-patterns
