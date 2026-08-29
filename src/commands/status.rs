@@ -24,6 +24,7 @@ pub struct StatusArgs {
     pub unmanaged: bool,
     pub managed: bool,
     pub unpulled: bool,
+    pub encrypted: bool,
     pub ignored: bool,
     pub ignored_patterns: bool,
     pub unused_patterns: bool,
@@ -107,6 +108,8 @@ struct StatusEntry {
     path: String,
     /// Ignore pattern that matched this file (only for `!!` entries).
     matched_pattern: Option<String>,
+    /// Part of the encrypted set: managed via a `.encrypted` source file.
+    encrypted: bool,
 }
 
 // Status command entry point
@@ -167,6 +170,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         ref unmanaged,
         ref managed,
         ref unpulled,
+        ref encrypted,
         ref ignored,
         ref ignored_patterns,
         ref unused_patterns,
@@ -224,6 +228,8 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         // Check if this is a managed symlink (state key ends with symlink_postfix)
         let is_managed_symlink = source_rel.ends_with(&settings.symlink_postfix);
+        // Part of the encrypted set: managed via a `.encrypted` source file.
+        let is_encrypted = source_rel.ends_with(&settings.encrypted_postfix);
 
         // Check ignore patterns
         if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_rel)) {
@@ -232,6 +238,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
                 code,
                 path: target_rel.clone(),
                 matched_pattern: Some(pattern),
+                encrypted: is_encrypted,
             });
             continue;
         }
@@ -244,6 +251,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
                 code,
                 path: target_rel.clone(),
                 matched_pattern: Some(pattern),
+                encrypted: is_encrypted,
             });
             continue;
         }
@@ -264,7 +272,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             } else {
                 StatusCode::Unpulled
             };
-            entries.push(StatusEntry { code, path: target_rel.clone(), matched_pattern: None });
+            entries.push(StatusEntry { code, path: target_rel.clone(), matched_pattern: None, encrypted: is_encrypted });
             continue;
         }
 
@@ -301,6 +309,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             code,
             path,
             matched_pattern: None,
+            encrypted: is_encrypted,
         });
     }
     progress.clear();
@@ -379,6 +388,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             code: StatusCode::Ignored,
             path: format!("{}/", pruned_rel),
             matched_pattern,
+            encrypted: false,
         });
     }
 
@@ -488,6 +498,11 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     let explicit_paths = paths.is_some();
 
     let filtered: Vec<&StatusEntry> = entries.iter().filter(|e| {
+        // `-e` overrides all other restrictive filters: report only the
+        // encrypted set, in whatever status category each entry belongs to.
+        if *encrypted {
+            return e.encrypted;
+        }
         if *conflicted && e.code != StatusCode::BothModified { return false; }
         if *modified && !e.code.is_modified() { return false; }
         if *unmanaged && e.code != StatusCode::Unmanaged && e.code != StatusCode::UnmanagedSymlink { return false; }
@@ -507,7 +522,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // --unused-patterns mode). --all only unhides categories — it keeps the
     // block; scoped PATHS already suppress it via empty `stale_patterns`.
     let restrictive_filter = *conflicted || *modified || *unmanaged
-        || *managed || *unpulled || *ignored;
+        || *managed || *unpulled || *encrypted || *ignored;
     let report_stale: &[String] = if restrictive_filter {
         &[]
     } else {
@@ -605,6 +620,7 @@ fn classify_target_symlink(
                 code: StatusCode::ManagedSymlink,
                 path: rel_str.to_string(),
                 matched_pattern: None,
+                encrypted: false,
             });
         }
         return;
@@ -616,6 +632,7 @@ fn classify_target_symlink(
                 code: StatusCode::IgnoredSymlink,
                 path: rel_str.to_string(),
                 matched_pattern: Some(pattern),
+                encrypted: false,
             });
         }
         return;
@@ -625,6 +642,7 @@ fn classify_target_symlink(
         code: StatusCode::UnmanagedSymlink,
         path: rel_str.to_string(),
         matched_pattern: None,
+        encrypted: false,
     });
 }
 
@@ -665,6 +683,7 @@ fn classify_target_file(
                 code: StatusCode::Ignored,
                 path: rel_str.to_string(),
                 matched_pattern: Some(pattern),
+                encrypted: false,
             });
         }
         return;
@@ -674,6 +693,7 @@ fn classify_target_file(
         code: StatusCode::Unmanaged,
         path: rel_str.to_string(),
         matched_pattern: None,
+        encrypted: false,
     });
 }
 

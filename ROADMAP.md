@@ -16,18 +16,6 @@
    `\.state` ← `$XDG_STATE_HOME`, `\.local` ← `$XDG_DATA_HOME`
    (covers `.local/share` too, since unanchored patterns match at any depth).
 
-2. 'status' subcommand gets filter flag `--encrypted` (`-e`):
-   it shows the encrypted set — entries whose `.encrypted` file
-   in the source dir has a managed plaintext counterpart (a synchronized pair).
-   `-e` overrides all other filter flags (`--modified`, `--ignored`, etc.)
-   and always reports the encrypted entries in every category;
-   paths are listed relative to the target directory like other commands.
-   `--porcelain` / `--short` formats are unchanged —
-   the flag only filters which entries appear.
-   Orphaned `.encrypted` files (no managed plaintext source) are never shown.
-   This is the single definition of `status --encrypted`
-   (formerly described by both item 2 and item 10).
-
 3. In default human status output, any entry that corresponds to an encrypted
    source (regardless of state: synchronized, modified, unpulled, unmanaged)
    is marked with the word `(encrypted)` at the end of its line,

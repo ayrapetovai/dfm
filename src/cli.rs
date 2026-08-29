@@ -161,6 +161,10 @@ pub enum Command {
         #[arg(long, short = 'p')]
         unpulled: bool,
 
+        /// Only encrypted entries (managed via a `.encrypted` source file).
+        #[arg(long, short = 'e')]
+        encrypted: bool,
+
         /// Only ignored entries.
         #[arg(long, short = 'i')]
         ignored: bool,

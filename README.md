@@ -427,6 +427,7 @@ Codes are two characters: the first represents the **target** side, the second r
 | `-U`, `--unmanaged` | Untracked files (`??`, `?L`). |
 | `-M`, `--managed` | Tracked entries only (inverse of `--unmanaged`). Implies `--all` for managed files. |
 | `-p`, `--unpulled` | Source-only entries (source modified, target missing). |
+| `-e`, `--encrypted` | Managed entries stored encrypted (`.encrypted` source). Overrides all other filter flags and reports the encrypted set in every category. Orphaned `.encrypted` files (no state) are never shown. |
 | `-i`, `--ignored` | Ignored files (`!!`, `!L`). |
 | `-l`, `--ignored-patterns` | List active ignore patterns (no file entries). |
 | `-u`, `--unused-patterns` | List ignore patterns that match no files. |
