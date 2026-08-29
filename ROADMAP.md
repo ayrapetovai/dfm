@@ -78,8 +78,6 @@
    Note: `-e` is also the status `--encrypted` short flag —
    same letter on different subcommands, so it is legal.
 
-7. Add 'sync' subcommand implemented.
-
 8. Add a progress bar for the action phase of the `add`, `pull` and `sync`
    commands (the walkdir phase already has progress).
    One step = one processed file
@@ -95,11 +93,6 @@
    to stdout, instead of `All up-to-date.`.
    Multiple path arguments keep the old `All up-to-date.` message.
    `--porcelain`/`--short` output is unchanged.
-
-10. Add flag --encrypted (-e) for subcommand 'status', when given the dfm must
-    print a block of filenames relative to target path (like other commands)
-    that are encrypted in source directory.
-    — DUPLICATE of item 2, merged there; delete this bullet when implementing.
 
 11. Add `dfm diff --all` (`-a`):
     diffs all modified files and prints the output to stdout
@@ -121,8 +114,6 @@
     and diffed against the plaintext side (requires the password).
     Explicit path arguments restrict the diff to those files;
     `--all` is still the default.
-
-12. Command 'dfm status' without flags must not print block Unpulled implemented.
 
 ## Documents
 
