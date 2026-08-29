@@ -699,8 +699,8 @@ fn classify_target_file(
 
 // Default categorized output
 
-/// Collapse a set of paths (code, path, matched-pattern) so that a directory
-/// with ≥2 entries beneath it is shown as a single `{dir}/*` entry.
+/// Collapse a set of paths (code, path, matched-pattern, encrypted) so that a
+/// directory with ≥2 entries beneath it is shown as a single `{dir}/*` entry.
 ///
 /// `blocked` holds every path that is *not* part of the group being folded
 /// (files ignored, up-to-date, tracked-but-unlisted, another status group,
@@ -713,15 +713,18 @@ fn classify_target_file(
 /// that has ≥2 descendants and no blocked path beneath it, replaces everything
 /// under it with one `{dir}/*`, and repeats so `a/b/x + a/b/y` becomes
 /// `a/b/*` and then propagates to `a/*`. Paths already marked `*` are never
-/// collapsed further. The `matched_pattern` is dropped from a collapsed entry.
+/// collapsed further. The `matched_pattern` is dropped from a collapsed entry;
+/// the collapsed entry's `encrypted` flag is true only when every member of the
+/// group is encrypted (so `dir/* (encrypted)` is emitted only for a wholly
+/// encrypted directory).
 fn collapse_shared_dirs(
-    paths: &[(StatusCode, String, Option<String>)],
+    paths: &[(StatusCode, String, Option<String>, bool)],
     blocked: &BTreeSet<String>,
-) -> Vec<(StatusCode, String, Option<String>)> {
+) -> Vec<(StatusCode, String, Option<String>, bool)> {
     let mut paths = paths.to_vec();
     loop {
         let mut ancestor_counts: BTreeMap<String, usize> = BTreeMap::new();
-        for (_, path, _) in &paths {
+        for (_, path, _, _) in &paths {
             let parts: Vec<&str> = path.split('/').collect();
             let mut prefix = String::new();
             for (i, part) in parts.iter().enumerate() {
@@ -752,20 +755,23 @@ fn collapse_shared_dirs(
         };
 
         // Replace every entry under `collapsed_dir` with a single
-        // `collapsed_dir/*` entry.
+        // `collapsed_dir/*` entry at the position of the first member.
         let mut next = Vec::new();
-        let mut collapsed_added = false;
         let dir_prefix = format!("{}/", collapsed_dir);
-        for (code, path, pattern) in &paths {
+        let mut collapsed_encrypted = true;
+        for (code, path, pattern, encrypted) in &paths {
             if path == &collapsed_dir || path.starts_with(&dir_prefix) {
-                if !collapsed_added {
-                    next.push((*code, format!("{}/*", collapsed_dir), None));
-                    collapsed_added = true;
-                }
+                collapsed_encrypted &= *encrypted;
                 continue;
             }
-            next.push((*code, path.clone(), pattern.clone()));
+            next.push((*code, path.clone(), pattern.clone(), *encrypted));
         }
+        let member_code = paths[0].0; // every member shares the group's code
+        let member_idx = paths
+            .iter()
+            .position(|(_, p, _, _)| p == &collapsed_dir || p.starts_with(&dir_prefix))
+            .unwrap_or(next.len());
+        next.insert(member_idx, (member_code, format!("{}/*", collapsed_dir), None, collapsed_encrypted));
         paths = next;
     }
     paths
@@ -877,31 +883,49 @@ fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_p
         // Build display paths, then collapse shared directories (e.g.
         // multiple files under dir/ to a single dir/* entry).
         let paths = collapse_shared_dirs(&items.iter()
-            .map(|item| (item.code, item.path.clone(), item.matched_pattern.clone()))
+            .map(|item| (item.code, item.path.clone(), item.matched_pattern.clone(), item.encrypted))
             .collect::<Vec<_>>(), &blocked);
 
         // Build the final display list.
         struct DispLine {
             code: StatusCode,
             path: String,
-            pattern: Option<String>,
+            annotations: Vec<String>,
         }
         let display: Vec<DispLine> = paths.into_iter()
-            .map(|(code, path, pattern)| DispLine { code, path, pattern })
+            .map(|(code, path, pattern, encrypted)| {
+                let mut annotations = Vec::new();
+                if let Some(ref pat) = pattern {
+                    annotations.push(format!("({})", pat));
+                }
+                if encrypted {
+                    annotations.push("(encrypted)".to_string());
+                }
+                DispLine { code, path, annotations }
+            })
             .collect();
 
-        // Align parenthesised patterns (matched_pattern) so '(' starts at the same column.
+        // Align the right-side annotations ((pattern) and (encrypted)) so they
+        // all start at the same column. Lines without any annotation are not
+        // padded.
         let max_path_len = display
             .iter()
-            .filter_map(|d| d.pattern.as_ref().map(|_| d.path.len()))
+            .filter(|d| !d.annotations.is_empty())
+            .map(|d| d.path.len())
             .max()
             .unwrap_or(0);
 
         for d in &display {
-            if let Some(ref pat) = d.pattern {
-                out.push_str(&format!("  {}  {:<max_width$}  ({})\n", d.code, color_path(d.code, &d.path), pat, max_width = max_path_len));
-            } else {
+            if d.annotations.is_empty() {
                 out.push_str(&format!("  {}  {}\n", d.code, color_path(d.code, &d.path)));
+            } else {
+                out.push_str(&format!(
+                    "  {}  {:<max_width$}  {}\n",
+                    d.code,
+                    color_path(d.code, &d.path),
+                    d.annotations.join(" "),
+                    max_width = max_path_len
+                ));
             }
         }
         // Do not print after the last group in list as 'ls -lR' shell command

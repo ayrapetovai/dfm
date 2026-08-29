@@ -16,14 +16,6 @@
    `\.state` ← `$XDG_STATE_HOME`, `\.local` ← `$XDG_DATA_HOME`
    (covers `.local/share` too, since unanchored patterns match at any depth).
 
-3. In default human status output, any entry that corresponds to an encrypted
-   source (regardless of state: synchronized, modified, unpulled, unmanaged)
-   is marked with the word `(encrypted)` at the end of its line,
-   right-aligned so all markers in a block line up in one column.
-   Grouped directory entries (printed as `dir/*`) receive `(encrypted)`
-   after the star when the whole group is encrypted: `.ssh/* (encrypted)`.
-   `--short` and `--porcelain` output are unchanged.
-
 4. Auto-encryption by private directories:
    when adding a file, if any directory component of its path —
    from the target-root downward to the file itself — has mode 700 or stricter

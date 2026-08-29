@@ -434,6 +434,8 @@ Codes are two characters: the first represents the **target** side, the second r
 
 Without any filter flag, the default output shows: modified entries and unmanaged entries. Up-to-date (`--`, `LL`), ignored (`!!`, `!L`), and unpulled (`!?`) entries are **hidden** (use `--all` to see up-to-date, ignored, and unpulled; or `--unpulled` to see only unpulled). Exception: when the report is restricted to explicit `PATH` arguments, ignored entries inside that scope are shown even without a flag — naming a path asks "what is this file's state?", and *ignored* is the answer for those.
 
+Managed entries whose source is encrypted are marked with `(encrypted)` at the end of their line, right-aligned so all markers in a block line up in one column. A fully-encrypted folded directory prints as `dir/* (encrypted)`; a mixed directory folds without the marker and its encrypted members are listed individually under `-e`. The marker appears only in the default human-readable report — `--short` and `--porcelain` never include it.
+
 The "Unused ignore patterns" block is part of the **unfiltered** default report only (and of the dedicated `--unused-patterns` mode). Reports restricted by a filter flag show only their own lists and never include that block; `--all` keeps it.
 
 ### 2.13 `sync`
