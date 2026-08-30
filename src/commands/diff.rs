@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -11,7 +12,7 @@ use super::{
     resolve_tool_command, split_command, DirGuard, create_private_temp_dir,
     state_key_for, source_rel_to_target_abs, resolve_source_variant,
     read_symlink_pointer, get_sync_time, SourceVariant, cli_path_to_abs,
-    print_paged,
+    print_paged, write_stdout,
 };
 
 /// Typed, per-command arguments for `diff` (built by the dispatcher).
@@ -271,19 +272,11 @@ fn run_diff(
         source_abs.to_path_buf()
     };
 
-    let command = resolve_tool_command(&settings.diff_tool_command, "diff", "diff_tool_command")?;
-    let (prog, args) = split_command(&command);
-    let prog = prog.ok_or_else(|| DfmError::Other("diff command is empty".into()))?;
-    let target_str = target_abs.to_string_lossy();
-    let source_str = source_arg.to_string_lossy();
-    let args: Vec<String> = args.iter().map(|a| {
-        a.replace("{target}", target_str.as_ref())
-         .replace("{source}", source_str.as_ref())
-    }).collect();
+    let (prog, args) = build_diff_program(&settings.diff_tool_command, "diff_tool_command", target_abs, &source_arg)?;
 
     info!("running diff tool: {} {:?}", prog, args);
 
-    let mut child = match Command::new(prog).args(&args).spawn() {
+    let mut child = match Command::new(&prog).args(&args).spawn() {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(DfmError::NotFound(format!("diff tool {} not found", prog)));
@@ -312,15 +305,23 @@ fn diff_all(
     let target_ignore_regex = load_ignore_regex(&calc_local_ignore_file(xdg)?)?;
     let source_ignore_regex = load_ignore_regex(&calc_source_ignore_file(&source_dir_abs))?;
 
-    // Scratch dir for decrypted encrypted sources; removed on every exit path.
+    // Scratch dir for decrypted encrypted sources, removed on every exit path.
+    // The directory is only created when an encrypted source is actually
+    // diffed, so `diff --all` also works on read-only source dirs (the plain
+    // `{source}` is passed straight through).
     let diff_dir = source_dir_abs.join(".current_diff");
     let _guard = DirGuard(diff_dir.clone());
-    if diff_dir.exists() {
-        fs::remove_dir_all(&diff_dir).map_err(|e| io_err(&diff_dir, e))?;
-    }
-    create_private_temp_dir(&diff_dir)?;
+    let mut scratch_ready = false;
 
-    let mut output = String::new();
+    // Stream each diff to stdout when it is not a terminal so bulk output
+    // (e.g. redirected to a file) is never buffered in memory; on a terminal,
+    // collect into one buffer so the whole report pages through one pager.
+    let mut sink = if std::io::stdout().is_terminal() {
+        DiffSink::Buffer(String::new())
+    } else {
+        DiffSink::Stdout
+    };
+
     for (source_rel, sync_time) in &state.syncs {
         // Managed symlinks are never "modified" — skip them entirely.
         if source_rel.ends_with(&settings.symlink_postfix) {
@@ -343,8 +344,8 @@ fn diff_all(
             continue;
         }
 
-        let target_abs = target_dir_abs.join(&target_rel);
-        let source_abs = source_dir_abs.join(source_rel);
+        let source_abs = remove_dots_from_path(&source_dir_abs.join(source_rel));
+        let target_abs = remove_dots_from_path(&target_dir_abs.join(&target_rel));
 
         // Both sides must be present for a diff; anything else (unpulled,
         // stale) produces nothing.
@@ -359,23 +360,23 @@ fn diff_all(
             Some(sync_time),
         )? {
             CompareByTimestamp::TargetModified | CompareByTimestamp::BothModified => {
-                let source_arg = prepare_source(settings, &diff_dir, &target_abs, &source_abs, is_encrypted)?;
+                let source_arg = prepare_source(settings, &diff_dir, &mut scratch_ready, &target_abs, &source_abs, is_encrypted)?;
                 run_diff_capture(
                     &settings.diff_all_tool_command_target,
                     "diff_all_tool_command_target",
                     &target_abs,
                     &source_arg,
-                    &mut output,
+                    &mut sink,
                 )?;
             }
             CompareByTimestamp::SourceModified => {
-                let source_arg = prepare_source(settings, &diff_dir, &target_abs, &source_abs, is_encrypted)?;
+                let source_arg = prepare_source(settings, &diff_dir, &mut scratch_ready, &target_abs, &source_abs, is_encrypted)?;
                 run_diff_capture(
                     &settings.diff_all_tool_command_source,
                     "diff_all_tool_command_source",
                     &target_abs,
                     &source_arg,
-                    &mut output,
+                    &mut sink,
                 )?;
             }
             // Up-to-date and never-synchronized files produce nothing.
@@ -383,7 +384,21 @@ fn diff_all(
         }
     }
 
-    print_paged(&output)
+    sink.finish()
+}
+
+/// Create the private diff scratch directory once (`ready` tracks whether it
+/// already exists). Recreating it proves harmless, so callers may call this
+/// before every encrypted source.
+fn ensure_scratch(diff_dir: &Path, ready: &mut bool) -> Result<(), DfmError> {
+    if !*ready {
+        if diff_dir.exists() {
+            fs::remove_dir_all(diff_dir).map_err(|e| io_err(diff_dir, e))?;
+        }
+        create_private_temp_dir(diff_dir)?;
+        *ready = true;
+    }
+    Ok(())
 }
 
 /// Resolve the `{source}` argument: the plain source path, or for an encrypted
@@ -391,6 +406,7 @@ fn diff_all(
 fn prepare_source(
     settings: &Settings,
     diff_dir: &Path,
+    scratch_ready: &mut bool,
     target_abs: &Path,
     source_abs: &Path,
     is_encrypted: bool,
@@ -401,6 +417,7 @@ fn prepare_source(
     let inner_name = file_path_relative_to(target_abs, Path::new(&settings.target_dir));
     dfm::crypt::announce_encryption_password(&inner_name.to_string_lossy());
     let (decrypted, _mode) = dfm::crypt::read_encrypted_bytes(settings, source_abs)?;
+    ensure_scratch(diff_dir, scratch_ready)?;
     let file_name = target_abs
         .file_name()
         .ok_or_else(|| DfmError::Other("target path has no file name".into()))?
@@ -410,29 +427,20 @@ fn prepare_source(
     Ok(decrypted_path)
 }
 
-/// Run one non-interactive diff for `--all`, capturing stdout into the shared
-/// output buffer. The template is split into program + args (no shell) and
-/// `{target}`/`{source}` are substituted, like the merge tool.
+/// Run one non-interactive diff for `--all`, forwarding its captured stdout to
+/// the sink (buffered for paging, or streamed to stdout for non-terminal use).
 fn run_diff_capture(
     template: &Option<String>,
     config_key: &str,
     target_abs: &Path,
     source_arg: &Path,
-    output: &mut String,
+    sink: &mut DiffSink,
 ) -> Result<(), DfmError> {
-    let command = resolve_tool_command(template, "diff", config_key)?;
-    let (prog, args) = split_command(&command);
-    let prog = prog.ok_or_else(|| DfmError::Other("diff command is empty".into()))?;
-    let target_str = target_abs.to_string_lossy();
-    let source_str = source_arg.to_string_lossy();
-    let args: Vec<String> = args.iter().map(|a| {
-        a.replace("{target}", target_str.as_ref())
-         .replace("{source}", source_str.as_ref())
-    }).collect();
+    let (prog, args) = build_diff_program(template, config_key, target_abs, source_arg)?;
 
     info!("running diff: {} {:?}", prog, args);
 
-    let child = match Command::new(prog)
+    let child = match Command::new(&prog)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -447,7 +455,54 @@ fn run_diff_capture(
 
     let outcome = child.wait_with_output().map_err(DfmError::Io)?;
     if let Ok(chunk) = String::from_utf8(outcome.stdout) {
-        output.push_str(&chunk);
+        sink.write(&chunk)?;
     }
     Ok(())
+}
+
+/// Where `diff --all` sends each captured diff: buffered for the single pager
+/// on a terminal, or streamed straight to stdout otherwise.
+enum DiffSink {
+    Buffer(String),
+    Stdout,
+}
+
+impl DiffSink {
+    fn write(&mut self, chunk: &str) -> Result<(), DfmError> {
+        match self {
+            DiffSink::Buffer(buf) => {
+                buf.push_str(chunk);
+                Ok(())
+            }
+            DiffSink::Stdout => write_stdout(chunk),
+        }
+    }
+
+    fn finish(self) -> Result<(), DfmError> {
+        match self {
+            DiffSink::Buffer(buf) => print_paged(&buf),
+            DiffSink::Stdout => Ok(()),
+        }
+    }
+}
+
+/// Split a diff template and substitute the `{target}`/`{source}` placeholders.
+/// The program and args are returned separately so a missing tool can be
+/// reported precisely; shared by the per-path and `--all` diff modes.
+fn build_diff_program(
+    template: &Option<String>,
+    config_key: &str,
+    target_abs: &Path,
+    source_arg: &Path,
+) -> Result<(String, Vec<String>), DfmError> {
+    let command = resolve_tool_command(template, "diff", config_key)?;
+    let (prog, args) = split_command(&command);
+    let prog = prog.ok_or_else(|| DfmError::Other("diff command is empty".into()))?;
+    let target_str = target_abs.to_string_lossy();
+    let source_str = source_arg.to_string_lossy();
+    let args: Vec<String> = args.iter().map(|a| {
+        a.replace("{target}", target_str.as_ref())
+         .replace("{source}", source_str.as_ref())
+    }).collect();
+    Ok((prog.to_string(), args))
 }
