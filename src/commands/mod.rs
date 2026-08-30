@@ -41,6 +41,9 @@ pub(crate) use status::StatusArgs;
 pub(crate) use sync::SyncArgs;
 
 use std::fs;
+use std::env;
+use std::io::{IsTerminal, Write};
+use std::process::Stdio;
 use crate::DfmError;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -580,4 +583,74 @@ pub(crate) fn run_merge(
 
     info!("merge completed for {:?}", target_abs_path);
     Ok(())
+}
+
+// Pager
+
+/// Write a string to stdout, tolerating a broken pipe: when the reader closes
+/// the stream on purpose (e.g. `dfm status | head -1`) the write-failed error
+/// from the closed pipe is not a failure of this command.
+pub(crate) fn write_stdout(s: &str) -> Result<(), DfmError> {
+    let mut out = std::io::stdout();
+    match out.write_all(s.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(e) => Err(DfmError::Io(e)),
+    }
+}
+
+/// Write prebuilt output to a pager when stdout is an interactive terminal and
+/// the output is taller than the terminal; otherwise write it directly. Shared
+/// by `status` and `diff --all` so both page through the same mechanism.
+pub(crate) fn print_paged(output: &str) -> Result<(), DfmError> {
+    if !std::io::stdout().is_terminal() {
+        return write_stdout(output);
+    }
+    let line_count = output.lines().count();
+    let term_height = terminal_height().unwrap_or(24);
+
+    if line_count > term_height {
+        let pager_cmd = env::var("PAGER").unwrap_or_else(|_| "less -FRSX".to_string());
+        let (prog, args) = split_command(&pager_cmd);
+        let Some(prog) = prog else {
+            return write_stdout(output);
+        };
+        let mut child = std::process::Command::new(prog)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Err(e) = stdin.write_all(output.as_bytes())
+                && e.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(DfmError::Io(e));
+            }
+            if let Err(e) = stdin.flush()
+                && e.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(DfmError::Io(e));
+            }
+        }
+        child.wait()?;
+        Ok(())
+    } else {
+        write_stdout(output)
+    }
+}
+
+fn terminal_height() -> Option<usize> {
+    if let Ok(output) = std::process::Command::new("stty")
+        .arg("size")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        && let Ok(s) = String::from_utf8(output.stdout)
+        && let Some(rows_str) = s.split_whitespace().next()
+        && let Ok(rows) = rows_str.parse::<usize>()
+    {
+        return Some(rows);
+    }
+    None
 }

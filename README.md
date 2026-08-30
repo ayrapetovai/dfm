@@ -38,7 +38,7 @@ git push
 | `git` | Git-info line in `status` output | Shows branch and dirty state of the source directory. Silently skipped if the source directory is not a git repository. |
 | `sh` (POSIX) | `obtain_password_shell_command` | The command is piped to `sh` stdin (not exposed in `ps`). Falls back to interactive password prompt when unset. |
 | A merge tool (`vimdiff` by default) | `merge` subcommand | Configured via `merge_tool_command`. Any command that accepts `{target}`, `{source}`, `{result}` placeholders works (e.g., `vimdiff`, `nvim -d`, `meld`). |
-| A diff tool (`vimdiff` by default) | `diff` subcommand | Configured via `diff_tool_command`. Any command that accepts `{target}`, `{source}` placeholders works (e.g., `diff -u`, `vimdiff`, `meld`). |
+| A diff tool (`vimdiff` by default) | `diff` subcommand | Configured via `diff_tool_command` (per-path) and `diff_all_tool_command_target`/`diff_all_tool_command_source` (batch `--all`). Any command that accepts `{target}`, `{source}` placeholders works (e.g., `diff -u`, `vimdiff`, `meld`). |
 
 ---
 
@@ -207,11 +207,11 @@ After the merge tool exits successfully, `result.<file>` is copied back to both 
 Show the differences between a managed target file and its source using a diff tool.
 
 ```bash
-dfm diff [PATH...]
+dfm diff [PATH...] [-a|--all]
 ```
 
 - `PATH...` — files to diff. Pass a target path or a source path; the corresponding counter-part is resolved automatically (same as `pull`).
-- Without arguments, `dfm diff` does nothing and exits successfully.
+- Without arguments, `dfm diff` diff-s every *modified* managed file (`-a`/`--all`, the default): each modified file is diffed with the non-interactive `diff_all_tool_command_*` templates, all output is concatenated, and the whole report goes through the same pager `status` uses. Up-to-date and never-synchronized files produce nothing.
 - `dfm diff` **never modifies any file** — it only reads.
 
 For each path, `dfm diff` reports:
@@ -236,6 +236,15 @@ The diff tool is configured by the `diff_tool_command` setting (default: `vimdif
 | `{source}` | Source directory side. When the source file is encrypted, the *decrypted* plaintext is passed to the tool as a temporary file (substituted for `{source}`); it is never piped to the tool's stdin (an interactive tool like `vimdiff` would read stdin into an extra buffer and refuse to quit), and the `.encrypted` bytes are never shown. |
 
 Like the merge tool, the diff tool is launched directly (fork-exec, no shell). A missing diff tool makes `dfm diff` fail with exit code 1.
+
+The `--all` batch mode (the no-argument default) is driven by two non-interactive templates, selected by which side changed:
+
+| Config key | Default | Used for |
+|---|---|---|
+| `diff_all_tool_command_target` | `diff -u --color=always {source} {target}` | Target- and both-modified files |
+| `diff_all_tool_command_source` | `diff -u --color=always {target} {source}` | Source-modified files |
+
+In batch mode the modified side is shown as the *new* side. Encrypted sources are decrypted to a transient scratch copy (requires the password) and diffed against the plaintext target; the scratch directory is removed afterwards. Explicit path arguments always use the per-path interactive `diff_tool_command` described above, never the batch templates.
 
 ### 2.6 `forget`
 
@@ -472,6 +481,8 @@ force_encryption_for = ["\\.ssh"]
 obtain_password_shell_command = ""
 merge_tool_command = "vimdiff {target} {source} {result}"
 diff_tool_command = "vimdiff -M {target} {source}"
+diff_all_tool_command_target = "diff -u --color=always {source} {target}"
+diff_all_tool_command_source = "diff -u --color=always {target} {source}"
 ```
 
 ### Properties
@@ -484,8 +495,9 @@ diff_tool_command = "vimdiff -M {target} {source}"
 | `force_encryption_for` | Array of regex | File paths matching these regexes are always encrypted on `add`. |
 | `obtain_password_shell_command` | String (shell command) | Command to obtain the encryption password. See [Encryption](#4-encryption). |
 | `merge_tool_command` | String (template) | Merge tool command with `{target}`, `{source}`, `{result}` placeholders. |
-| `diff_tool_command` | String (template) | Diff tool command with `{target}`, `{source}` placeholders. |
-
+| `diff_tool_command` | String (template) | Diff tool command with `{target}`, `{source}` placeholders (per-path `diff`). |
+| `diff_all_tool_command_target` | String (template) | `diff --all` template for target/both-modified files, with `{target}`, `{source}` placeholders. |
+| `diff_all_tool_command_source` | String (template) | `diff --all` template for source-modified files, with `{target}`, `{source}` placeholders. |
 The source and target directories are **not** stored in the config file — they come from the state file (`state.toml`).
 
 ### Managing the config file itself

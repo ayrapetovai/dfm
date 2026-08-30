@@ -3,7 +3,6 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCmd, Stdio};
-use std::io::{IsTerminal, Write};
 
 use colored::Colorize;
 use log::{debug, info};
@@ -12,7 +11,7 @@ use regex::RegexSet;
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{list_directory, report_progress, split_command, state_key_for, source_rel_to_target_abs, cli_path_in_scope};
+use super::{list_directory, report_progress, state_key_for, source_rel_to_target_abs, cli_path_in_scope, print_paged, write_stdout};
 
 /// Typed, per-command arguments for `status` (built by the dispatcher).
 pub struct StatusArgs {
@@ -970,80 +969,6 @@ fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_p
     }
 
     out
-}
-
-// Pager
-
-/// Write a string to stdout, tolerating a broken pipe: when the reader closes
-/// the stream on purpose (e.g. `dfm status | head -1`) the write-failed error
-/// from the closed pipe is not a failure of this command.
-fn write_stdout(s: &str) -> Result<(), DfmError> {
-    use std::io::Write;
-    let mut out = std::io::stdout();
-    match out.write_all(s.as_bytes()) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-        Err(e) => Err(DfmError::Io(e)),
-    }
-}
-
-fn print_paged(output: &str) -> Result<(), DfmError> {
-    // The pager only makes sense for an interactive terminal: when stdout is a
-    // pipe or file, page the output directly (a pipe cannot be scrolled, and a
-    // captured pager would corrupt e.g. `dfm status | grep`).
-    if !std::io::stdout().is_terminal() {
-        return write_stdout(output);
-    }
-    // Detect terminal height
-    let line_count = output.lines().count();
-    let term_height = terminal_height().unwrap_or(24);
-
-    if line_count > term_height {
-        // Use pager
-        // TODO create a field in config file and settings for the paging command
-        // by default in config it must be 'less -FRSX', but env PAGER has the priority.
-        let pager_cmd = env::var("PAGER").unwrap_or_else(|_| "less -FRSX".to_string());
-        let (prog, args) = split_command(&pager_cmd);
-        let Some(prog) = prog else {
-            return write_stdout(output);
-        };
-        let mut child = ProcessCmd::new(prog)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            // The pager may exit early (e.g. `less` quit by the user): the
-            // resulting broken pipe is expected, not an error.
-            if let Err(e) = stdin.write_all(output.as_bytes())
-                && e.kind() != std::io::ErrorKind::BrokenPipe
-            {
-                return Err(DfmError::Io(e));
-            }
-            if let Err(e) = stdin.flush()
-                && e.kind() != std::io::ErrorKind::BrokenPipe
-            {
-                return Err(DfmError::Io(e));
-            }
-        }
-        child.wait()?;
-        Ok(())
-    } else {
-        write_stdout(output)
-    }
-}
-
-fn terminal_height() -> Option<usize> {
-    // Try via `stty size`
-    if let Ok(output) = ProcessCmd::new("stty").arg("size").stdout(Stdio::piped()).stderr(Stdio::null()).output()
-        && let Ok(s) = String::from_utf8(output.stdout)
-        && let Some(rows_str) = s.split_whitespace().next()
-        && let Ok(rows) = rows_str.parse::<usize>()
-    {
-        return Some(rows);
-    }
-    None
 }
 
 // Git integration

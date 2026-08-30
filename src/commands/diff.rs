@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use log::{debug, info};
 
@@ -11,11 +11,13 @@ use super::{
     resolve_tool_command, split_command, DirGuard, create_private_temp_dir,
     state_key_for, source_rel_to_target_abs, resolve_source_variant,
     read_symlink_pointer, get_sync_time, SourceVariant, cli_path_to_abs,
+    print_paged,
 };
 
 /// Typed, per-command arguments for `diff` (built by the dispatcher).
 pub struct DiffArgs {
     pub paths: Option<Vec<PathBuf>>,
+    pub all: bool,
 }
 
 /// Show a diff of the given paths using the configured diff tool. The command
@@ -27,8 +29,12 @@ pub fn diff_command(
     args: DiffArgs,
     state: &StateObject,
 ) -> Result<(), DfmError> {
-    let DiffArgs { ref paths } = args;
-    // No paths — nothing to diff.
+    let DiffArgs { paths, all: _all } = args;
+    // With no explicit paths, batch-diff every modified file (`--all`, the
+    // default). Explicit paths keep the per-path interactive behavior below.
+    if paths.is_none() {
+        return diff_all(settings, xdg, state);
+    }
     let Some(paths) = paths else {
         return Ok(());
     };
@@ -39,7 +45,7 @@ pub fn diff_command(
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
-    for path in paths {
+    for path in &paths {
         match diff_one_path(
             settings, state, &target_dir_abs_path, &source_dir_abs_path,
             &target_ignore_regex, path,
@@ -288,6 +294,160 @@ fn run_diff(
     let status = child.wait().map_err(DfmError::Io)?;
     if !status.success() {
         debug!("diff tool exited with status {}", status);
+    }
+    Ok(())
+}
+
+/// Batch-diff every modified managed file (`diff --all`, the default when no
+/// paths are given). For each modified entry the matching non-interactive diff
+/// template runs with its stdout captured, all files' diffs are concatenated,
+/// and the whole report goes through the same pager `status` uses.
+fn diff_all(
+    settings: &Settings,
+    xdg: &Xdg,
+    state: &StateObject,
+) -> Result<(), DfmError> {
+    let (target_dir_abs, source_dir_abs) = calc_working_dir_paths(settings)?;
+
+    let target_ignore_regex = load_ignore_regex(&calc_local_ignore_file(xdg)?)?;
+    let source_ignore_regex = load_ignore_regex(&calc_source_ignore_file(&source_dir_abs))?;
+
+    // Scratch dir for decrypted encrypted sources; removed on every exit path.
+    let diff_dir = source_dir_abs.join(".current_diff");
+    let _guard = DirGuard(diff_dir.clone());
+    if diff_dir.exists() {
+        fs::remove_dir_all(&diff_dir).map_err(|e| io_err(&diff_dir, e))?;
+    }
+    create_private_temp_dir(&diff_dir)?;
+
+    let mut output = String::new();
+    for (source_rel, sync_time) in &state.syncs {
+        // Managed symlinks are never "modified" — skip them entirely.
+        if source_rel.ends_with(&settings.symlink_postfix) {
+            continue;
+        }
+        let is_encrypted = source_rel.ends_with(&settings.encrypted_postfix);
+
+        let target_rel = source_rel_to_target_rel(
+            source_rel,
+            &settings.dot_prefix,
+            &settings.symlink_postfix,
+            &settings.encrypted_postfix,
+        );
+
+        // Ignored on either side is not offered for diffing.
+        if check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_rel)).is_some() {
+            continue;
+        }
+        if check_path_matches_regex_component_wise(&source_ignore_regex, &PathBuf::from(source_rel)).is_some() {
+            continue;
+        }
+
+        let target_abs = target_dir_abs.join(&target_rel);
+        let source_abs = source_dir_abs.join(source_rel);
+
+        // Both sides must be present for a diff; anything else (unpulled,
+        // stale) produces nothing.
+        if !target_abs.exists() || !source_abs.exists() {
+            continue;
+        }
+
+        match compare_files(
+            &settings.encrypted_postfix,
+            &target_abs,
+            &source_abs,
+            Some(sync_time),
+        )? {
+            CompareByTimestamp::TargetModified | CompareByTimestamp::BothModified => {
+                let source_arg = prepare_source(settings, &diff_dir, &target_abs, &source_abs, is_encrypted)?;
+                run_diff_capture(
+                    &settings.diff_all_tool_command_target,
+                    "diff_all_tool_command_target",
+                    &target_abs,
+                    &source_arg,
+                    &mut output,
+                )?;
+            }
+            CompareByTimestamp::SourceModified => {
+                let source_arg = prepare_source(settings, &diff_dir, &target_abs, &source_abs, is_encrypted)?;
+                run_diff_capture(
+                    &settings.diff_all_tool_command_source,
+                    "diff_all_tool_command_source",
+                    &target_abs,
+                    &source_arg,
+                    &mut output,
+                )?;
+            }
+            // Up-to-date and never-synchronized files produce nothing.
+            CompareByTimestamp::NonModified | CompareByTimestamp::NeverSynchronized => {}
+        }
+    }
+
+    print_paged(&output)
+}
+
+/// Resolve the `{source}` argument: the plain source path, or for an encrypted
+/// source a scratch copy of its decrypted plaintext (requires the password).
+fn prepare_source(
+    settings: &Settings,
+    diff_dir: &Path,
+    target_abs: &Path,
+    source_abs: &Path,
+    is_encrypted: bool,
+) -> Result<PathBuf, DfmError> {
+    if !is_encrypted {
+        return Ok(source_abs.to_path_buf());
+    }
+    let inner_name = file_path_relative_to(target_abs, Path::new(&settings.target_dir));
+    dfm::crypt::announce_encryption_password(&inner_name.to_string_lossy());
+    let (decrypted, _mode) = dfm::crypt::read_encrypted_bytes(settings, source_abs)?;
+    let file_name = target_abs
+        .file_name()
+        .ok_or_else(|| DfmError::Other("target path has no file name".into()))?
+        .to_string_lossy();
+    let decrypted_path = diff_dir.join(format!("source.{}", file_name));
+    fs::write(&decrypted_path, decrypted).map_err(|e| io_err(&decrypted_path, e))?;
+    Ok(decrypted_path)
+}
+
+/// Run one non-interactive diff for `--all`, capturing stdout into the shared
+/// output buffer. The template is split into program + args (no shell) and
+/// `{target}`/`{source}` are substituted, like the merge tool.
+fn run_diff_capture(
+    template: &Option<String>,
+    config_key: &str,
+    target_abs: &Path,
+    source_arg: &Path,
+    output: &mut String,
+) -> Result<(), DfmError> {
+    let command = resolve_tool_command(template, "diff", config_key)?;
+    let (prog, args) = split_command(&command);
+    let prog = prog.ok_or_else(|| DfmError::Other("diff command is empty".into()))?;
+    let target_str = target_abs.to_string_lossy();
+    let source_str = source_arg.to_string_lossy();
+    let args: Vec<String> = args.iter().map(|a| {
+        a.replace("{target}", target_str.as_ref())
+         .replace("{source}", source_str.as_ref())
+    }).collect();
+
+    info!("running diff: {} {:?}", prog, args);
+
+    let child = match Command::new(prog)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(DfmError::NotFound(format!("diff tool {} not found", prog)));
+        }
+        Err(e) => return Err(DfmError::Io(e)),
+    };
+
+    let outcome = child.wait_with_output().map_err(DfmError::Io)?;
+    if let Ok(chunk) = String::from_utf8(outcome.stdout) {
+        output.push_str(&chunk);
     }
     Ok(())
 }

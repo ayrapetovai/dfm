@@ -74,27 +74,6 @@
    Multiple path arguments keep the old `All up-to-date.` message.
    `--porcelain`/`--short` output is unchanged.
 
-11. Add `dfm diff --all` (`-a`):
-    diffs all modified files and prints the output to stdout
-    through the same pager mechanism the `status` command uses.
-    `--all` is true by default, controlled by the config bool
-    `diff_all_default` (default true);
-    the command template is the config string `diff_all_tool_command`.
-    Default template: `diff -u --color=always {source} {target}`
-    for TargetModified
-    and `diff -u --color=always {target} {source}` for SourceModified
-    (the `--color-always` spelling in the draft is a typo).
-    Each assembled command is executed as a single argument to a shell —
-    `sh -c '<filled template>'` — with the `{source}`/`{target}`
-    placeholders substituted verbatim (paths with spaces or quotes
-    require a custom template).
-    BothModified files also get a diff printed;
-    never-synchronized files produce nothing.
-    Encrypted sources are decrypted to a scratch copy
-    and diffed against the plaintext side (requires the password).
-    Explicit path arguments restrict the diff to those files;
-    `--all` is still the default.
-
 ## Documents
 
 - License: switch to GPL-3.0-only, applying to all files in the repository.

@@ -195,9 +195,13 @@ pub enum Command {
 
     /// Show diff of managed files using the configured diff tool.
     Diff {
-        /// Files to diff. If omitted - do nothing.
+        /// Files to diff. If omitted - diff all modified files.
         #[arg(value_name = "PATH", num_args = 1..)]
         paths: Option<Vec<PathBuf>>,
+
+        /// Diff all modified files (the default when no paths are given).
+        #[arg(long, short)]
+        all: bool,
     },
 
     // must check conflicts

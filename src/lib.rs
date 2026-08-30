@@ -577,6 +577,8 @@ pub struct Config {
     pub obtain_password_shell_command: Option<String>,
     pub merge_tool_command: Option<String>,
     pub diff_tool_command: Option<String>,
+    pub diff_all_tool_command_target: Option<String>,
+    pub diff_all_tool_command_source: Option<String>,
 }
 
 impl Config {
@@ -589,6 +591,8 @@ impl Config {
             obtain_password_shell_command: settings.obtain_password_shell_command.clone(),
             merge_tool_command: settings.merge_tool_command.clone(),
             diff_tool_command: settings.diff_tool_command.clone(),
+            diff_all_tool_command_target: settings.diff_all_tool_command_target.clone(),
+            diff_all_tool_command_source: settings.diff_all_tool_command_source.clone(),
         }
     }
 }
@@ -606,6 +610,8 @@ pub struct Settings {
     pub obtain_password_shell_command: Option<String>,
     pub merge_tool_command: Option<String>,
     pub diff_tool_command: Option<String>,
+    pub diff_all_tool_command_target: Option<String>,
+    pub diff_all_tool_command_source: Option<String>,
 }
 
 pub fn write_config(path_to_config_file: &Path, config: &Config) -> Result<(), DfmError> {
@@ -679,6 +685,8 @@ pub fn create_default_settings() -> Settings {
         obtain_password_shell_command: Some("".to_owned()), // TODO need to make serde to add empty files to file
         merge_tool_command: Some("vimdiff {target} {source} {result}".to_owned()),
         diff_tool_command: Some("vimdiff -M {target} {source}".to_owned()),
+        diff_all_tool_command_target: Some("diff -u --color=always {source} {target}".to_owned()),
+        diff_all_tool_command_source: Some("diff -u --color=always {target} {source}".to_owned()),
     }
 }
 
@@ -762,6 +770,14 @@ pub fn merge_settings(
                     .diff_tool_command
                     .clone()
                     .or_else(|| default.diff_tool_command.clone()),
+                diff_all_tool_command_target: custom
+                    .diff_all_tool_command_target
+                    .clone()
+                    .or_else(|| default.diff_all_tool_command_target.clone()),
+                diff_all_tool_command_source: custom
+                    .diff_all_tool_command_source
+                    .clone()
+                    .or_else(|| default.diff_all_tool_command_source.clone()),
             }
         }
         None => Settings {
@@ -1577,6 +1593,8 @@ fn test_merge_settings() {
         obtain_password_shell_command: None,
         merge_tool_command: Some("meld {target} {source} {result}".to_string()),
         diff_tool_command: Some("meld {target} {source}".to_string()),
+        diff_all_tool_command_target: None,
+        diff_all_tool_command_source: None,
     };
     let merged = merge_settings(&default, &Some(custom), Some(&state));
     assert_eq!(merged.source_dir, "/home/user/dotfiles");
@@ -1613,6 +1631,8 @@ fn test_merge_settings() {
         obtain_password_shell_command: None,
         merge_tool_command: None,
         diff_tool_command: None,
+        diff_all_tool_command_target: None,
+        diff_all_tool_command_source: None,
     };
     let merged = merge_settings(&default, &Some(custom), None);
     assert_eq!(patterns(&merged.force_encryption_for), vec![r"\.ssh"]);

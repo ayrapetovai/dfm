@@ -255,14 +255,19 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 )
             },
         ),
-        Command::Diff { paths } => {
-            // No paths — do nothing, without even requiring the state file.
+        Command::Diff { paths, all } => {
             if paths.is_none() {
-                return Ok(());
+                // With no paths, diff all modified files (the `--all` default).
+                // Unlike other commands this still needs the state file to know
+                // which files are managed, so it requires initialization.
+                let state = state_opt
+                    .ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
+                diff_command(&settings, &xdg, DiffArgs { paths: None, all }, &state)
+            } else {
+                let state = state_opt
+                    .ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
+                diff_command(&settings, &xdg, DiffArgs { paths, all }, &state)
             }
-            let state =
-                state_opt.ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
-            diff_command(&settings, &xdg, DiffArgs { paths }, &state)
         }
         Command::Status {
             all,
