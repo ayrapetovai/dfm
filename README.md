@@ -45,19 +45,19 @@ git push
 ## Table of Contents
 
 1. [Concepts](#1-concepts) — target/source directories and the terms used throughout.
-2. [Commands](#2-commands) — every subcommand documented with examples.
-   - [init](#21-init) — set up the target/source directories and config.
+2. [Commands](#2-commands)
+   - [init](#21-init) — create the target/source directories and config (install).
    - [add](#22-add) — copy a target file into the source directory.
    - [pull](#23-pull) — copy a source file back into the target directory.
    - [merge](#24-merge) — 3-way merge of conflicting files.
    - [diff](#25-diff) — show changes between target and source.
    - [forget](#26-forget) — stop managing a file (does not delete it).
    - [ignore](#27-ignore) — exclude files from management.
-   - [paths](#28-paths) — show unresolved (unpulled) managed files.
+   - [paths](#28-paths) — show where are config and state files.
    - [config](#29-config) — view and edit configuration.
-   - [purge](#210-purge) — remove stale source files not in state.
+   - [purge](#210-purge) — remove source files, state (uninstall).
    - [status](#211-status) — report managed, modified, unmanaged, ignored files.
-   - [sync](#213-sync) — push and pull only already-managed files.
+   - [sync](#213-sync) — push and pull changed of managed files.
 3. [Configuration](#3-configuration) — config file location and settings.
 4. [Encryption](#4-encryption) — encrypted storage of sensitive files.
 5. [Conflict detection](#5-conflict-detection) — how file conflicts are detected.
