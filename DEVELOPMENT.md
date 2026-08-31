@@ -44,12 +44,14 @@ sudo pacman -R dfm-bin
 Rise version in Cargo.toml, than create tag and draft release.
 
 ```shell
+export NEW_TAG=0.0.0
+export NEW_TAGV=v"$NEW_TAG"
 cargo aur                          # builds release + target/release/dfm.1, then tarball
 makepkg -C ../target/cargo-aur     # build the .pkg.tar.zst
 git push
-git tag -a v0.0.0
+git tag -a $NEW_TAGV
 git push --tags
-gh release create v0.0.0 --title "unstable v0.0.0" --draft --notes "feature list" ./target/release/dfm ./target/cargo-aur/dfm-bin-0.0.0-1-x86_64.pkg.tar.zst ./target/cargo-aur/PKGBUILD
+gh release create $NEW_TAGV --title "unstable $NEW_TAGV" --draft --notes "feature list" ./target/release/dfm ./target/cargo-aur/dfm-bin-$NEW_TAG-1-x86_64.pkg.tar.zst ./target/cargo-aur/PKGBUILD
 ```
 
 The GitHub `source=` in the PKGBUILD points at the
