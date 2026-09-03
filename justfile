@@ -8,10 +8,10 @@ test:
 build:
     cargo build
 
-# Build package for Arch Linux pacman.
+# Build package for pacman.
 package:
     CARGO_TARGET_DIR=/tmp/dfm-target cargo aur
-    (cd ./target/cargo-aur && if [ ! find . -type f -name '*.pkg.tar.zst' 2>&1>/dev/null ]; then makepkg; fi)
+    (cd ./target/cargo-aur && if find . -type f -name '*.pkg.tar.zst' | grep -q .; then :; else makepkg; fi)
     find -L . -type f -name '*.pkg.tar.zst'
 
 # Build package and install via pacman.
