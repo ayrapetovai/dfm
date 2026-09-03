@@ -1,10 +1,14 @@
 # Tasks for dfm development.
 
+# Delete build and package.
+clean:
+    cargo clean
+
 # Run integraion tests.
 test:
     ./tests/launcher.sh
 
-# Build only, no package.
+# Build only, no package creating.
 build:
     cargo build
 
