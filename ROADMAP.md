@@ -23,6 +23,8 @@
    Decide: proceed to use clap_mangen for generating a man page or create a static file
    and include it to the package.
 
+3. Rename `.dfm_ignore_file` living in source to `.dfmignore`.
+
 4. Auto-encryption by private directories:
    when adding a file, if any directory component of its path —
    from the target-root downward to the file itself — has mode 700 or stricter
@@ -80,6 +82,18 @@
    to stdout, instead of `All up-to-date.`.
    Multiple path arguments keep the old `All up-to-date.` message.
    `--porcelain`/`--short` output is unchanged.
+
+10. Add flag --default to subcommand 'config'. dfm must print the default configuration
+  in toml format, that output must be eligible to be redirected to the dfm's config file
+  to override its content and live it valid config file.
+  User could use that to create a default config file.
+
+11. For subcommand 'config --set name value' add syntax parsing.
+  If the parameter is an array, the next syntax of value can be used:
+  add:element <- the prefix 'add:' and then value to add a value to the end of the array.
+  rm:element  <- the prefix 'rm:' and then value to remove element from the array.
+  rmi:2       <- the 'rmi:' prefix then an index of the value that must be removed.
+  If parameter is not an array then the error must be printed and exit code 1 must be returned.
 
 ## Documents
 
