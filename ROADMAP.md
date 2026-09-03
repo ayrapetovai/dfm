@@ -97,6 +97,10 @@
 
 ## Documents
 
+- Add information about `./justfile` to the DEVELOPMENT.md, describe how it works.
+  Make a note that all repeatable tasks must be scripted and added to `./justfile`.
+  Add information about build instruments (how they are used in the project) to the DEVELOPMENT.md: hithub-cli, yq(tomlq), just.
+
 - License: switch to GPL-3.0-only, applying to all files in the repository.
   The license text is NOT embedded into files —
   it lives in a single separate `LICENSE` file at the repository root.
