@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+# This script increments the specified part of the given semver
+# Usage: incsemver <M,m,p> X.X.X[-tail]
+
+set -euo pipefail
+if [[ $# -ne 2 ]]; then
+  echo "usage: $0 {M|m|p} VERSION" >&2
+  exit 2
+fi
+part=$1
+ver=$2
+core=${ver%%-*}
+tail=${ver#"$core"}
+IFS='.' read -r maj min pat <<<"$core"
+case $part in
+major)
+  ((maj += 1))
+  min=0
+  pat=0
+  ;;
+minor)
+  ((min += 1))
+  pat=0
+  ;;
+patch) ((pat += 1)) ;;
+*)
+  echo "error: part must be M/m/p, got '$part'" >&2
+  exit 2
+  ;;
+esac
+echo "$maj.$min.$pat$tail"
