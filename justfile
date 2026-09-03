@@ -10,14 +10,15 @@ build:
 
 # Build package for Arch Linux pacman
 package:
-    cargo aur
-    cd target/cargo-aur
-    makepkg
+    CARGO_TARGET_DIR=/tmp/dfm-target cargo aur
+    (cd ./target/cargo-aur && if [ ! find . -type f -name '*.pkg.tar.zst' 2>&1>/dev/null ]; then makepkg; fi)
+    find -L . -type f -name '*.pkg.tar.zst'
 
 # Build package and install via pacman
 install:
     just package
-    makepkg -si
+    (cd ./target/cargo-aur && makepkg -si)
+    echo "installed to $(which dfm)"
 
 # Increment version. target is one of major/minor/patch.
 incver target:
