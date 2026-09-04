@@ -48,7 +48,7 @@ use crate::DfmError;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use filetime_creation::{set_file_mtime, FileTime};
+use filetime_creation::{set_file_mtime, set_symlink_file_times, FileTime};
 use microxdg::Xdg;
 use log::{debug, error, info, trace, log_enabled};
 use regex::RegexSet;
@@ -161,7 +161,14 @@ pub(crate) fn update_sync_state(
     let sha256 = compute_sha256(source_abs)?;
     state.syncs.insert(source_rel_path, SyncTime { mtime: sync_creation, sha256 });
     let ft = FileTime::from_system_time(sync_creation);
-    set_file_mtime(target_abs, ft).map_err(|e| io_err(target_abs, e))?;
+    if target_abs.is_symlink() {
+        // `set_file_mtime` follows the link and touches the pointee — for
+        // system-owned pointees (e.g. /usr/lib/systemd/user/*.socket) that is
+        // EPERM and would abort the add. Set the mtime of the symlink itself.
+        set_symlink_file_times(target_abs, ft, ft, ft).map_err(|e| io_err(target_abs, e))?;
+    } else {
+        set_file_mtime(target_abs, ft).map_err(|e| io_err(target_abs, e))?;
+    }
     set_file_mtime(source_abs, ft).map_err(|e| io_err(source_abs, e))?;
     Ok(())
 }
