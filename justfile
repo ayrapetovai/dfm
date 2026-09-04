@@ -1,5 +1,9 @@
 # Tasks for dfm development.
 
+# Build only, no package creating.
+build:
+    cargo build
+
 # Delete build and package.
 clean:
     cargo clean
@@ -7,10 +11,6 @@ clean:
 # Run integraion tests.
 test:
     ./tests/launcher.sh
-
-# Build only, no package creating.
-build:
-    cargo build
 
 # Build package for pacman.
 package:
