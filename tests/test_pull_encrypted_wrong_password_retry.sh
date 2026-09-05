@@ -16,7 +16,7 @@ dfm init dotfiles
 # Write a helper script that returns WRONG on first call,
 # then PASSWORD on every subsequent call
 cat > "$PWD/pw_getter.sh" << 'SCRIPT'
-#!/bin/bash
+#!/usr/bin/env bash
 COUNTER_FILE="$1"
 CORRECT="$2"
 COUNT=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)

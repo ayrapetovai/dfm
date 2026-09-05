@@ -7,7 +7,7 @@ currently **220** test files (the launcher prints the exact count it found).
 
 ## Requirements
 
-- **bash**: the launcher is a bash script (`#!/usr/bin/bash`) and relies on
+- **bash**: the launcher is a bash script (`#!/usr/bin/env bash`) and relies on
   bashisms (`[[ ]]`, `local`, arrays, `export -f`, `foo=$(…)`), so it must
   be run with **bash**, not `sh`/`dash`. Run it as `./launcher.sh` or
   `bash tests/launcher.sh`, not `sh tests/launcher.sh`.

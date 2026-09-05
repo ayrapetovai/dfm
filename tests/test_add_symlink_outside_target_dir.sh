@@ -1,4 +1,3 @@
-#!/usr/bin/bash
 # Regression: `dfm add` on an explicitly-named symlink located *outside* the
 # target directory must not touch the source dir or state. Originally it wrote
 # a `.symlink` pointer outside the source directory and injected a `..`-escaping
