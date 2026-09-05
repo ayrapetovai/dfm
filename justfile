@@ -28,7 +28,9 @@ install:
 incver target:
     NV=$(./scripts/incsemver {{target}} "$(tomlq -r '.package.version' Cargo.toml)") && tomlq -i -t ".package.version = \"$NV\"" Cargo.toml
 
-# Set tag, push it to git, build applicatoin and create a release draft at github.com. Usage: just release <major|minor|patch>
-release target:
+# Set tag, push it to git, build applicatoin and create a release draft at github.com.
+# With a version part it bumps first; without one it re-releases the current
+# version (recovery after a failed tag push). Usage: just release [ <major|minor|patch> ]
+release target="":
     ./scripts/release.sh {{target}}
 
