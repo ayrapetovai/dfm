@@ -579,6 +579,7 @@ pub struct Config {
     pub diff_tool_command: Option<String>,
     pub diff_all_tool_command_target: Option<String>,
     pub diff_all_tool_command_source: Option<String>,
+    pub diff_editable_tool_command: Option<String>,
 }
 
 impl Config {
@@ -593,6 +594,7 @@ impl Config {
             diff_tool_command: settings.diff_tool_command.clone(),
             diff_all_tool_command_target: settings.diff_all_tool_command_target.clone(),
             diff_all_tool_command_source: settings.diff_all_tool_command_source.clone(),
+            diff_editable_tool_command: settings.diff_editable_tool_command.clone(),
         }
     }
 }
@@ -612,6 +614,7 @@ pub struct Settings {
     pub diff_tool_command: Option<String>,
     pub diff_all_tool_command_target: Option<String>,
     pub diff_all_tool_command_source: Option<String>,
+    pub diff_editable_tool_command: Option<String>,
 }
 
 pub fn write_config(path_to_config_file: &Path, config: &Config) -> Result<(), DfmError> {
@@ -687,6 +690,9 @@ pub fn create_default_settings() -> Settings {
         diff_tool_command: Some("vimdiff -M {target} {source}".to_owned()),
         diff_all_tool_command_target: Some("diff -u --color=always {source} {target}".to_owned()),
         diff_all_tool_command_source: Some("diff -u --color=always {target} {source}".to_owned()),
+        // No `-M`: unlike `diff_tool_command`, the editable diff must let the
+        // user write to both buffers.
+        diff_editable_tool_command: Some("vimdiff {target} {source}".to_owned()),
     }
 }
 
@@ -778,6 +784,10 @@ pub fn merge_settings(
                     .diff_all_tool_command_source
                     .clone()
                     .or_else(|| default.diff_all_tool_command_source.clone()),
+                diff_editable_tool_command: custom
+                    .diff_editable_tool_command
+                    .clone()
+                    .or_else(|| default.diff_editable_tool_command.clone()),
             }
         }
         None => Settings {
@@ -1595,6 +1605,7 @@ fn test_merge_settings() {
         diff_tool_command: Some("meld {target} {source}".to_string()),
         diff_all_tool_command_target: None,
         diff_all_tool_command_source: None,
+        diff_editable_tool_command: None,
     };
     let merged = merge_settings(&default, &Some(custom), Some(&state));
     assert_eq!(merged.source_dir, "/home/user/dotfiles");
@@ -1633,6 +1644,7 @@ fn test_merge_settings() {
         diff_tool_command: None,
         diff_all_tool_command_target: None,
         diff_all_tool_command_source: None,
+        diff_editable_tool_command: None,
     };
     let merged = merge_settings(&default, &Some(custom), None);
     assert_eq!(patterns(&merged.force_encryption_for), vec![r"\.ssh"]);

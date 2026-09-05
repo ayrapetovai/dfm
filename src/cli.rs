@@ -202,6 +202,12 @@ pub enum Command {
         /// Diff all modified files (the default when no paths are given).
         #[arg(long, short)]
         all: bool,
+
+        /// Edit both sides in the diff tool and write the result back.
+        /// Requires PATH; works on already-differing files, and every edited
+        /// side is saved to its own file.
+        #[arg(long, short = 'e', requires = "paths", conflicts_with = "all")]
+        editable: bool,
     },
 
     // must check conflicts

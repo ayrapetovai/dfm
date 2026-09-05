@@ -255,12 +255,39 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 )
             },
         ),
-        Command::Diff { paths, all } => {
+        Command::Diff {
+            paths,
+            all,
+            editable,
+        } => {
             // Whether batch (`--all`, no paths) or per-path, diff needs the
             // state file to know which files are managed.
-            let state =
-                state_opt.ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
-            diff_command(&settings, &xdg, DiffArgs { paths, all }, &state)
+            if editable {
+                // `--editable` is the only diff mode that writes: it needs a
+                // mutable state that is persisted when the whole run succeeds.
+                // clap guarantees at least one PATH alongside `--editable`.
+                let paths = paths.unwrap_or_default();
+                with_state(
+                    state_opt,
+                    state_read_error.as_ref(),
+                    path_to_state_file.as_ref(),
+                    |state| {
+                        diff_editable_command(
+                            &settings,
+                            &xdg,
+                            DiffEditableArgs {
+                                paths,
+                                dry_run: args.dry_run,
+                            },
+                            state,
+                        )
+                    },
+                )
+            } else {
+                let state =
+                    state_opt.ok_or_else(|| state_unavailable_error(state_read_error.as_ref()))?;
+                diff_command(&settings, &xdg, DiffArgs { paths, all }, &state)
+            }
         }
         Command::Status {
             all,

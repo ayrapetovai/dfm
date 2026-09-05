@@ -39,6 +39,9 @@
    and an already-encrypted managed file whose source-side path
    no longer satisfies the rule is decrypted in place during `pull`.
 
+6. Calling 'dfm merge filepath' does not merge files (tested on encrypted files).
+   But it must.
+
 5. 'status' accepts any combination of its flags in any order,
    each in short or long spelling interchangeably
    (both `-e`/`--encrypted`, `-m`/`--modified`, `-s`/`--short`, etc.).
@@ -48,24 +51,6 @@
    and no hidden priority conflict
    (the only per-flag override is `-e` overrides other filters,
    per the `status --encrypted` item).
-
-6. `diff --editable` (`-e`):
-   before anything else dfm verifies the target and source files
-   have equal content;
-   if they differ it removes any scratch copies,
-   prints an error and returns non-zero without doing any work.
-   When the contents are equal, writable temp copies are made
-   and the diff tool runs against them (the user edits them).
-   If the tool exits 0, the edited buffers are written back
-   over both the target and the source files
-   and the recorded sync timestamp is updated
-   (contents matched, edit applied cleanly).
-   If the tool exits non-zero, the edits are discarded
-   (copies removed, nothing written back, sync untouched).
-   When the edited side is an encrypted source,
-   the written-back content is encrypted again.
-   Note: `-e` is also the status `--encrypted` short flag —
-   same letter on different subcommands, so it is legal.
 
 8. Add a progress bar for the action phase of the `add`, `pull` and `sync`
    commands (the walkdir phase already has progress).

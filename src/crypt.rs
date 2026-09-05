@@ -746,6 +746,21 @@ pub fn write_encrypted_file(
     target_file_path: &Path,
     source_file_path: &Path,
 ) -> Result<(), DfmError> {
+    write_encrypted_source(settings, target_file_path, target_file_path, source_file_path)
+}
+
+/// Encrypt the plaintext of `content_path` to `source_file_path` as a dfm blob.
+/// `target_file_path` is used only as the metadata source — the recorded inner
+/// name, the file mode and the enclosing-directory modes are the target's, so
+/// the blob matches what encrypting the target itself would produce. Needed by
+/// `diff --editable`, where the edited plaintext lives in a scratch copy while
+/// the target file still carries the authoritative metadata.
+pub fn write_encrypted_source(
+    settings: &Settings,
+    content_path: &Path,
+    target_file_path: &Path,
+    source_file_path: &Path,
+) -> Result<(), DfmError> {
     // Ensure the parent directory exists (important when the source path has
     // subdirectories).
     if let Some(parent) = source_file_path.parent() {
@@ -764,10 +779,11 @@ pub fn write_encrypted_file(
 
     let password = obtain_password(settings)?;
     let prefix = serialize_metadata(&inner_name, target_file_permissions.mode(), &dirs);
+    let content_len = fs::metadata(content_path).map_err(|e| io_err(content_path, e))?.len();
     encrypt_to_new_file(
         &password,
-        || fs::File::open(target_file_path).map_err(|e| io_err(target_file_path, e)),
-        target_metadata.len(),
+        || fs::File::open(content_path).map_err(|e| io_err(content_path, e)),
+        content_len,
         &prefix,
         source_file_path,
     )

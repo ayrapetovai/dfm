@@ -207,12 +207,12 @@ After the merge tool exits successfully, `result.<file>` is copied back to both 
 Show the differences between a managed target file and its source using a diff tool.
 
 ```bash
-dfm diff [PATH...] [-a|--all]
+dfm diff [PATH...] [-a|--all] [-e|--editable]
 ```
 
 - `PATH...` — files to diff. Pass a target path or a source path; the corresponding counter-part is resolved automatically (same as `pull`).
 - Without arguments, `dfm diff` diff-s every *modified* managed file (`-a`/`--all`, the default): each modified file is diffed with the non-interactive `diff_all_tool_command_*` templates, all output is concatenated, and the whole report goes through the same pager `status` uses. Up-to-date and never-synchronized files produce nothing.
-- `dfm diff` **never modifies any file** — it only reads.
+- `dfm diff` **never modifies any file** — it only reads. The one exception is `--editable`, described below.
 
 For each path, `dfm diff` reports:
 
@@ -245,6 +245,20 @@ The `--all` batch mode (the no-argument default) is driven by two non-interactiv
 | `diff_all_tool_command_source` | `diff -u --color=always {target} {source}` | Source-modified files |
 
 In batch mode the modified side is shown as the *new* side. Encrypted sources are decrypted to a transient scratch copy (requires the password) and diffed against the plaintext target; the scratch directory is removed afterwards. Explicit path arguments always use the per-path interactive `diff_tool_command` described above, never the batch templates.
+
+#### Editable diff
+
+`dfm diff --editable PATH...` (`-e`) edits both sides of a file at once — the way to change a managed dotfile without deciding afterwards which side to copy where.
+
+- `--editable` requires at least one `PATH` and cannot be combined with `--all`.
+- It works on already-differing files too: there is no "equal content" requirement — `--editable` is exactly the way to edit a pair that has diverged.
+- The tool is the `diff_editable_tool_command` template (default `vimdiff {target} {source}` — the same tool as `diff_tool_command` but without `-M`, so both buffers are writable). It receives private, writable copies of the two sides in `.current_diff`, never the real files.
+- When the tool exits **0**, every copy it changed is written back to its own file — the target copy over the target, the source copy over the source (re-encrypted, when the source is encrypted). Each side is saved independently: a side the tool did not touch is left alone, and the two saved files may hold different content — that is the point of editing an already-diverged pair. The sync state is updated **only when the two saved files hold equal content**: a per-side edit that left them differing is written but not recorded as synchronized, so the pair keeps reporting as diverged.
+- When the tool exits **non-zero** (`:cq` in vim), the edit is discarded: the copies are removed, neither file is written and the sync state is untouched.
+- An encrypted source is decrypted into its scratch copy and re-encrypted on write-back; the plaintext never lands in the source directory.
+- `--dry-run` sets up the copies and reports what would be edited, without running the tool or writing anything.
+
+A symlink, an unmanaged, ignored or un-pulled path cannot be edited: unlike the reporting modes, `--editable` fails on them instead of printing a note.
 
 ### 2.6 `forget`
 
@@ -483,6 +497,7 @@ merge_tool_command = "vimdiff {target} {source} {result}"
 diff_tool_command = "vimdiff -M {target} {source}"
 diff_all_tool_command_target = "diff -u --color=always {source} {target}"
 diff_all_tool_command_source = "diff -u --color=always {target} {source}"
+diff_editable_tool_command = "vimdiff {target} {source}"
 ```
 
 ### Properties
@@ -498,6 +513,7 @@ diff_all_tool_command_source = "diff -u --color=always {target} {source}"
 | `diff_tool_command` | String (template) | Diff tool command with `{target}`, `{source}` placeholders (per-path `diff`). |
 | `diff_all_tool_command_target` | String (template) | `diff --all` template for target/both-modified files, with `{target}`, `{source}` placeholders. |
 | `diff_all_tool_command_source` | String (template) | `diff --all` template for source-modified files, with `{target}`, `{source}` placeholders. |
+| `diff_editable_tool_command` | String (template) | `diff --editable` tool with `{target}`, `{source}` placeholders; must be able to *write* both files. |
 The source and target directories are **not** stored in the config file — they come from the state file (`state.toml`).
 
 ### Managing the config file itself
@@ -582,7 +598,7 @@ For encrypted source files, the conflict check is performed against the encrypte
 
 ### All-or-nothing per-run semantics
 
-Each `add`, `pull`, or `merge` run is atomic **per file**, not per run:
+Each `add`, `pull`, `merge`, or `diff --editable` run is atomic **per file**, not per run:
 
 - Files already processed remain applied if a later file fails mid-run.
 - The sync state is written **only when the whole command succeeds** (state is committed at the end via `with_state`). A failed run persists no state, so a later run re-evaluates every file from scratch.

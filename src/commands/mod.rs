@@ -14,7 +14,7 @@ pub(crate) mod sync;
 
 pub(crate) use add::add_command;
 pub(crate) use config::config_command;
-pub(crate) use diff::diff_command;
+pub(crate) use diff::{diff_command, diff_editable_command};
 pub(crate) use encrypt::{encrypt_command, decrypt_command};
 pub(crate) use forget::forget_command;
 pub(crate) use ignore::ignore_command;
@@ -28,7 +28,7 @@ pub(crate) use sync::sync_command;
 
 pub(crate) use add::AddArgs;
 pub(crate) use config::ConfigArgs;
-pub(crate) use diff::DiffArgs;
+pub(crate) use diff::{DiffArgs, DiffEditableArgs};
 pub(crate) use encrypt::{EncryptArgs, DecryptArgs};
 pub(crate) use forget::ForgetArgs;
 pub(crate) use ignore::IgnoreArgs;
