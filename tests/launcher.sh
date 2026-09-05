@@ -4,11 +4,17 @@ set -euP
 
 QUIET=""
 while [ $# -gt 0 ]; do
-    case "$1" in
-        -q) QUIET="1"; shift ;;
-        --) shift; break ;;
-        *) break ;;
-    esac
+  case "$1" in
+  -q)
+    QUIET="1"
+    shift
+    ;;
+  --)
+    shift
+    break
+    ;;
+  *) break ;;
+  esac
 done
 
 TEST_FILE_TO_RUN="${1:-}"
@@ -16,19 +22,19 @@ TEST_FILE_TO_RUN="${1:-}"
 PROGRAMM_NAME_IN_SHELL="dfm"
 EXECUTABLE_NAME="dfm"
 
-TESTS_DIR=`readlink -f "$(dirname "$0")"`
+TESTS_DIR=$(readlink -f "$(dirname "$0")")
 PROJECT_ROOT=$(readlink -f "$TESTS_DIR/../")
 DEBUG_EXECUTABLE="$PROJECT_ROOT/target/debug/$EXECUTABLE_NAME"
 RELEASE_EXECUTABLE="$PROJECT_ROOT/target/release/$EXECUTABLE_NAME"
 
 EXECUTABLE=
 if [[ -f "$DEBUG_EXECUTABLE" ]]; then
-    EXECUTABLE="$DEBUG_EXECUTABLE"
+  EXECUTABLE="$DEBUG_EXECUTABLE"
 elif [[ -f "$RELEASE_EXECUTABLE" ]]; then
-    EXECUTABLE="$RELEASE_EXECUTABLE"
+  EXECUTABLE="$RELEASE_EXECUTABLE"
 else
-    echo "project is not built"
-    exit 1
+  echo "project is not built"
+  exit 1
 fi
 export EXECUTABLE
 
@@ -36,32 +42,32 @@ eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@"; }'
 export "$PROGRAMM_NAME_IN_SHELL"
 
 function write() {
-    mkdir -p "$(dirname "$2")" && echo "$1" > "$2"
+  mkdir -p "$(dirname "$2")" && echo "$1" >"$2"
 }
-export write;
+export write
 
 function assert() {
-    if ! test "$@"; then
-        echo "Assertion failed"
-        exit 1
-    fi
-    return 0
+  if ! test "$@"; then
+    echo "Assertion failed"
+    exit 1
+  fi
+  return 0
 }
 export assert
 
 function assert_succ() {
-    if ! "$@"; then
-        echo "Assertion failed"
-        exit 1
-    fi
+  if ! "$@"; then
+    echo "Assertion failed"
+    exit 1
+  fi
 }
 export assert_succ
 
 function assert_fail() {
-    if "$@"; then
-        echo "Assertion failed"
-        exit 1
-    fi
+  if "$@"; then
+    echo "Assertion failed"
+    exit 1
+  fi
 }
 export assert_fail
 
@@ -71,47 +77,47 @@ export assert_fail
 # an expected non-zero exit passes through without aborting the test.
 FAIL_OUTPUT=
 function run_fail() {
-    FAIL_OUTPUT="$("$@" </dev/null 2>&1)" && {
-        echo "Assertion failed: expected non-zero exit: $*" >&2
-        return 1
-    }
-    return 0
+  FAIL_OUTPUT="$("$@" </dev/null 2>&1)" && {
+    echo "Assertion failed: expected non-zero exit: $*" >&2
+    return 1
+  }
+  return 0
 }
 export -f run_fail
 
 # Assert that a file exists in the source directory ($PWD/dotfiles/).
 function assert_source() {
-    local file="$PWD/dotfiles/$1"
-    [ -f "$file" ] && return 0
-    echo "Assertion failed: source file $file not found"
-    exit 1
+  local file="$PWD/dotfiles/$1"
+  [ -f "$file" ] && return 0
+  echo "Assertion failed: source file $file not found"
+  exit 1
 }
 export -f assert_source
 
 # Assert that a file does NOT exist in the source directory.
 function assert_no_source() {
-    assert_fail test -f "$PWD/dotfiles/$1"
+  assert_fail test -f "$PWD/dotfiles/$1"
 }
 export -f assert_no_source
 
 # Assert that a file's content matches the expected string.
 function assert_content_eq() {
-    local file="$1"
-    local expected="$2"
-    local actual
-    actual="$(cat "$file" 2>/dev/null)"
-    if [ "$actual" = "$expected" ]; then
-        return 0
-    fi
-    echo "Assertion failed: file $file content mismatch"
-    echo "  expected: $expected"
-    echo "  actual:   $(cat "$file" 2>/dev/null || echo '<unreadable>')"
-    exit 1
+  local file="$1"
+  local expected="$2"
+  local actual
+  actual="$(cat "$file" 2>/dev/null)"
+  if [ "$actual" = "$expected" ]; then
+    return 0
+  fi
+  echo "Assertion failed: file $file content mismatch"
+  echo "  expected: $expected"
+  echo "  actual:   $(cat "$file" 2>/dev/null || echo '<unreadable>')"
+  exit 1
 }
 export -f assert_content_eq
 
 # Stub for uuid command for CI
-if ! command -v uuid > /dev/null 2>&1; then
+if ! command -v uuid >/dev/null 2>&1; then
   function uuid() {
     cat /proc/sys/kernel/random/uuid
   }
@@ -120,12 +126,12 @@ fi
 # Create a file with optional content, add it under management,
 # verify it landed in source, and echo the content for later use.
 function add_file() {
-    local name="$1"
-    local content="${2:-$(uuid)}"
-    write "$content" "$name"
-    dfm add "$name"
-    assert_source "$name"
-    echo "$content"
+  local name="$1"
+  local content="${2:-$(uuid)}"
+  write "$content" "$name"
+  dfm add "$name"
+  assert_source "$name"
+  echo "$content"
 }
 export -f add_file
 
@@ -135,12 +141,12 @@ export -f add_file
 # Usage: assert_encrypted <target_file> <expected_content>
 # Requires the test to have set `obtain_password_shell_command` and $PASSWORD.
 function assert_encrypted() {
-    local target_file="$1"
-    local expected="$2"
+  local target_file="$1"
+  local expected="$2"
 
-    rm -f "$target_file"
-    "$EXECUTABLE" decrypt "$PWD/dotfiles/${target_file}.encrypted" -o "$target_file" > /dev/null 2>&1
-    assert_content_eq "$target_file" "$expected"
+  rm -f "$target_file"
+  "$EXECUTABLE" decrypt "$PWD/dotfiles/${target_file}.encrypted" -o "$target_file" >/dev/null 2>&1
+  assert_content_eq "$target_file" "$expected"
 }
 export -f assert_encrypted
 
@@ -153,98 +159,100 @@ if [ -n "$TEST_FILE_TO_RUN" ]; then
   TEST_FILE_TO_RUN_ABS=$(readlink -f "$TEST_FILE_TO_RUN")
 fi
 
-TEST_CASES=$(find "$TESTS_DIR" -type f -name 'test*.sh' -printf "%p\n")
+TEST_CASES=$(find "$TESTS_DIR" -type f -name 'test*.sh')
 TEST_COUNT=$(echo "$TEST_CASES" | wc -l)
 if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
-    echo "running 1 test (of $TEST_COUNT)"
+  echo "running 1 test (of $TEST_COUNT)"
 else
-    echo "running $TEST_COUNT tests"
+  echo "running $TEST_COUNT tests"
 fi
 
 SUCCEEDED_COUNTER=0
 FAILED_COUNTER=0
 
 run_test() {
-    local test_file="$1"
-    # Tests must never read stdin: commands that prompt would otherwise hang
-    # the whole suite waiting for input that is never going to come.
-    #
-    # The test body runs in a subshell with errexit enabled (`set -eEu`), so a
-    # bare failing command aborts the test. The subshell must NOT be a shell
-    # conditional (`if`/`while`/`&&`/`||`): bash ignores `set -e` inside a
-    # compound command used as such a condition, turning every failing command
-    # into a silent no-op (a false pass). Callers must therefore invoke this
-    # function as a plain command with errexit off and inspect its exit status.
-    #
-    # Each test runs in its own fresh HOME so stray files, cwd changes, and
-    # environment exports from one test can never leak into the next. The
-    # directory is removed on every exit path, including test failures.
-    local test_home
-    test_home="$(mktemp -d "$TMP_ROOT/home.XXXXXX")"
-    local rc tmp=""
-    if [ -n "$QUIET" ]; then
-        ( set -eEu
-          export HOME="$test_home"
-          export XDG_DATA_HOME="$test_home/.local/share"
-          export XDG_CONFIG_HOME="$test_home/.config"
-          export XDG_CACHE_HOME="$test_home/.cache"
-          export XDG_STATE_HOME="$test_home/.local/state"
-          cd "$HOME"
-          source "$test_file"
-        ) < /dev/null > /dev/null 2>&1
-    else
-        tmp=$(mktemp)
-        ( set -eEu -x
-          export HOME="$test_home"
-          export XDG_DATA_HOME="$test_home/.local/share"
-          export XDG_CONFIG_HOME="$test_home/.config"
-          export XDG_CACHE_HOME="$test_home/.cache"
-          export XDG_STATE_HOME="$test_home/.local/state"
-          cd "$HOME"
-          source "$test_file"
-        ) < /dev/null >"$tmp" 2>&1
-    fi
-    rc=$?
-    rm -rf -- "$test_home"
-    if [ $rc -ne 0 ] && [ -n "$tmp" ]; then
-        cat "$tmp"
-    fi
-    if [ -n "$tmp" ]; then
-        rm -f "$tmp"
-    fi
-    return $rc
+  local test_file="$1"
+  # Tests must never read stdin: commands that prompt would otherwise hang
+  # the whole suite waiting for input that is never going to come.
+  #
+  # The test body runs in a subshell with errexit enabled (`set -eEu`), so a
+  # bare failing command aborts the test. The subshell must NOT be a shell
+  # conditional (`if`/`while`/`&&`/`||`): bash ignores `set -e` inside a
+  # compound command used as such a condition, turning every failing command
+  # into a silent no-op (a false pass). Callers must therefore invoke this
+  # function as a plain command with errexit off and inspect its exit status.
+  #
+  # Each test runs in its own fresh HOME so stray files, cwd changes, and
+  # environment exports from one test can never leak into the next. The
+  # directory is removed on every exit path, including test failures.
+  local test_home
+  test_home="$(mktemp -d "$TMP_ROOT/home.XXXXXX")"
+  local rc tmp=""
+  if [ -n "$QUIET" ]; then
+    (
+      set -eEu
+      export HOME="$test_home"
+      export XDG_DATA_HOME="$test_home/.local/share"
+      export XDG_CONFIG_HOME="$test_home/.config"
+      export XDG_CACHE_HOME="$test_home/.cache"
+      export XDG_STATE_HOME="$test_home/.local/state"
+      cd "$HOME"
+      source "$test_file"
+    ) </dev/null >/dev/null 2>&1
+  else
+    tmp=$(mktemp)
+    (
+      set -eEu -x
+      export HOME="$test_home"
+      export XDG_DATA_HOME="$test_home/.local/share"
+      export XDG_CONFIG_HOME="$test_home/.config"
+      export XDG_CACHE_HOME="$test_home/.cache"
+      export XDG_STATE_HOME="$test_home/.local/state"
+      cd "$HOME"
+      source "$test_file"
+    ) </dev/null >"$tmp" 2>&1
+  fi
+  rc=$?
+  rm -rf -- "$test_home"
+  if [ $rc -ne 0 ] && [ -n "$tmp" ]; then
+    cat "$tmp"
+  fi
+  if [ -n "$tmp" ]; then
+    rm -f "$tmp"
+  fi
+  return $rc
 }
 
 if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
-    test_name="$(basename $TEST_FILE_TO_RUN_ABS)"
+  test_name="$(basename $TEST_FILE_TO_RUN_ABS)"
+  set +e
+  run_test "$TEST_FILE_TO_RUN_ABS"
+  rc=$?
+  set -e
+  if [ $rc -eq 0 ]; then
+    echo "---- $test_name ✅"
+    SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
+  else
+    echo "---- $test_name ❌"
+    FAILED_COUNTER=$((FAILED_COUNTER + 1))
+  fi
+else
+  for test_case in $TEST_CASES; do
+    test_name="$(basename $test_case)"
+
+    # launch test
     set +e
-    run_test "$TEST_FILE_TO_RUN_ABS"
+    run_test "$test_case"
     rc=$?
     set -e
     if [ $rc -eq 0 ]; then
-        echo "---- $test_name ✅"
-        SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
+      echo "---- $test_name ✅"
+      SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
     else
-        echo "---- $test_name ❌"
-        FAILED_COUNTER=$((FAILED_COUNTER + 1))
+      echo "---- $test_name ❌"
+      FAILED_COUNTER=$((FAILED_COUNTER + 1))
     fi
-else
-    for test_case in $TEST_CASES; do
-        test_name="$(basename $test_case)"
-
-        # launch test
-        set +e
-        run_test "$test_case"
-        rc=$?
-        set -e
-        if [ $rc -eq 0 ]; then
-            echo "---- $test_name ✅"
-            SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
-        else
-            echo "---- $test_name ❌"
-            FAILED_COUNTER=$((FAILED_COUNTER + 1))
-        fi
-    done;
+  done
 fi
 
 echo "succeeded $SUCCEEDED_COUNTER"
