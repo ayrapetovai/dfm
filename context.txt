@@ -26,6 +26,7 @@ cargo test               # 30 unit tests (lib.rs + crypt.rs), no sealed_test dep
 bash tests/launcher.sh [-q] [test_x.sh]   # 225 shell integration tests; one test = -x trace
 cargo clippy             # must stay clean; release profile: opt-level z, lto fat, panic=abort
 just release [<major|minor|patch>]  # scripts/release.sh: with part = bump+commit+push; no arg = re-release current version (recovery after failed tag push, no incver/commit). Tag created+pushed only when absent on origin (ls-remote --tags check); gh release draft.
+just install-bin            # cargo build --release + `install -D -m 0755 target/release/dfm /usr/bin/dfm` (needs root); distinct from the pacman `install` recipe.
 ```
 
 ## Layout

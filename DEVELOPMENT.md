@@ -39,6 +39,23 @@ sudo pacman -U dfm-bin-0.0.0-1-x86_64.pkg.tar.zst
 sudo pacman -R dfm-bin
 ```
 
+### Install the binary to /usr/bin/dfm with `install`
+
+```shell
+just install-bin    # needs root: sudo just install-bin
+```
+
+Builds a release binary and installs it to `/usr/bin/dfm` with the `install`
+utility (mode 0755), without building a package:
+
+```shell
+cargo build --release
+install -D -m 0755 target/release/dfm /usr/bin/dfm
+```
+
+The man page is not installed by this task — use the pacman package
+(`just install`) if `/usr/share/man/man1/dfm.1` is needed.
+
 ## Create a release
 
 Rise version in Cargo.toml, than create tag and draft release.
