@@ -45,4 +45,6 @@ assert ! -e "$PWD/dotfiles/.current_diff"
 # still treats the pair as diverged and runs the diff tool instead of printing
 # "is synchronized".
 dfm config --set diff_tool_command "true"
-assert_fail grep -qF "secret.txt is synchronized" <<<$(dfm diff secret.txt 2>/dev/null)
+diff_out="$(dfm diff secret.txt 2>/dev/null)"
+assert_fail grep -qF "secret.txt is synchronized" <<<"$diff_out"
+

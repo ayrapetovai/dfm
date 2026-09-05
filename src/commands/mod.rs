@@ -468,7 +468,10 @@ pub(crate) fn resolve_tool_command(
 
 /// RAII guard that removes a directory on drop, so temp dirs like
 /// `.current_merge/` / `.current_diff/` are cleaned up on every exit path
-/// (including `?` returns).
+/// (including `?` returns). The guard must only be armed after the directory
+/// was created (or legitimately appointed scratch for this run), so a command
+/// that needs no scratch — e.g. a plain-text `diff --all` — never removes a
+/// pre-existing directory it did not create.
 pub(crate) struct DirGuard(PathBuf);
 
 impl Drop for DirGuard {
@@ -559,14 +562,7 @@ pub(crate) fn run_merge(
 
     info!("running merge tool: {} {:?}", prog, args);
 
-    let mut child = match std::process::Command::new(prog).args(&args).spawn() {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(DfmError::NotFound(format!("merge tool {} not found", prog)));
-        }
-        Err(e) => return Err(DfmError::Io(e)),
-    };
-    let status = child.wait().map_err(DfmError::Io)?;
+    let status = run_tool(prog, &args, "merge")?;
 
     if !status.success() || !result_path.exists() {
         let reason = if !status.success() {
@@ -590,6 +586,26 @@ pub(crate) fn run_merge(
 
     info!("merge completed for {:?}", target_abs_path);
     Ok(())
+}
+
+/// Spawn a tool with args and wait for it, mapping a missing executable to a
+/// distinct `NotFound` error (the configure-the-settings hint) and any other
+/// spawn failure to `Io`. Shared by `run_merge` and every diff mode so tool
+/// spawning stays in one place; the `tool_label` keeps the error message
+/// precise ("merge tool", "diff tool", ...).
+pub(crate) fn run_tool(
+    prog: &str,
+    args: &[String],
+    tool_label: &str,
+) -> Result<std::process::ExitStatus, DfmError> {
+    let mut child = match std::process::Command::new(prog).args(args).spawn() {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(DfmError::NotFound(format!("{} tool {} not found", tool_label, prog)));
+        }
+        Err(e) => return Err(DfmError::Io(e)),
+    };
+    child.wait().map_err(DfmError::Io)
 }
 
 // Pager

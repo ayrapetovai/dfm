@@ -50,7 +50,8 @@ assert_content_eq "$PWD/dotfiles/file.txt" "source side"
 # synchronized: the read-only mode still treats the pair as diverged and runs
 # the diff tool instead of printing "is synchronized".
 dfm config --set diff_tool_command "true"
-assert_fail grep -qF "file.txt is synchronized" <<<$(dfm diff file.txt 2>/dev/null)
+diff_out="$(dfm diff file.txt 2>/dev/null)"
+assert_fail grep -qF "file.txt is synchronized" <<<"$diff_out"
 
 # Editing both copies to the same content synchronizes the pair again, so the
 # read-only `diff` mode reports it as synchronized afterwards.

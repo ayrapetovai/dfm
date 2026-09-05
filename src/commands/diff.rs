@@ -9,7 +9,7 @@ use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
 use super::{
-    resolve_tool_command, split_command, DirGuard, create_private_temp_dir,
+    resolve_tool_command, split_command, run_tool, DirGuard, create_private_temp_dir,
     state_key_for, source_rel_to_target_abs, resolve_source_variant,
     read_symlink_pointer, get_sync_time, SourceVariant, cli_path_to_abs,
     print_paged, write_stdout, update_sync_state, msg_dry_run,
@@ -285,7 +285,6 @@ fn run_diff(
     // The scratch dir is only needed when the source is encrypted (to hold the
     // decrypted `{source}`); plain diffs must not write into the source dir.
     let mut scratch = Scratch::new(source_dir_abs_path);
-    let _guard = DirGuard(scratch.dir.clone());
 
     let source_arg = match &decrypted_source {
         Some(bytes) => write_scratch_source(&mut scratch, target_abs, bytes)?,
@@ -296,15 +295,7 @@ fn run_diff(
 
     info!("running diff tool: {} {:?}", prog, args);
 
-    let mut child = match Command::new(&prog).args(&args).spawn() {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(DfmError::NotFound(format!("diff tool {} not found", prog)));
-        }
-        Err(e) => return Err(DfmError::Io(e)),
-    };
-
-    let status = child.wait().map_err(DfmError::Io)?;
+    let status = run_tool(prog.as_str(), &args, "diff")?;
     if !status.success() {
         debug!("diff tool exited with status {}", status);
     }
@@ -330,7 +321,6 @@ fn diff_all(
     // diffed, so `diff --all` also works on read-only source dirs (the plain
     // `{source}` is passed straight through).
     let mut scratch = Scratch::new(&source_dir_abs);
-    let _guard = DirGuard(scratch.dir.clone());
 
     // Stream each diff to stdout when it is not a terminal so bulk output
     // (e.g. redirected to a file) is never buffered in memory; on a terminal,
@@ -366,10 +356,21 @@ fn diff_all(
         let source_abs = remove_dots_from_path(&source_dir_abs.join(source_rel));
         let target_abs = remove_dots_from_path(&target_dir_abs.join(&target_rel));
 
-        // Both sides must be present for a diff; anything else (unpulled,
-        // stale) produces nothing.
-        if !target_abs.exists() || !source_abs.exists() {
-            continue;
+        // Both sides must be present and readable for a diff. A side that
+        // blocks reading (e.g. a permission error) is reported like the
+        // per-path mode does; anything merely missing (unpulled, stale)
+        // produces nothing.
+        match (path_exists(&target_abs), path_exists(&source_abs)) {
+            (Ok(true), Ok(true)) => {}
+            (Err(e), _) => {
+                warn_unreadable(&target_abs, &e);
+                continue;
+            }
+            (_, Err(e)) => {
+                warn_unreadable(&source_abs, &e);
+                continue;
+            }
+            _ => continue,
         }
 
         match compare_files(
@@ -407,27 +408,38 @@ fn diff_all(
 }
 
 /// The `.current_diff` scratch directory inside the source directory, created
-/// on first use: a diff that needs no scratch (every source plain) leaves the
-/// source directory untouched and works when it is read-only.
+/// on first use and removed again when the owning command finishes. A diff
+/// that needs no scratch (every source plain, or `--dry-run`) never touches
+/// the source directory and works when it is read-only, and never removes a
+/// pre-existing directory it did not create: a stale `.current_diff` (left
+/// behind by a killed tool) is dropped on first use instead.
 struct Scratch {
     dir: PathBuf,
     ready: bool,
+    guard: Option<DirGuard>,
 }
 
 impl Scratch {
     fn new(source_dir_abs: &Path) -> Self {
-        Scratch { dir: source_dir_abs.join(".current_diff"), ready: false }
+        Scratch {
+            dir: source_dir_abs.join(".current_diff"),
+            ready: false,
+            guard: None,
+        }
     }
 
-    /// The scratch directory, created with mode 0700 on the first call. A
-    /// stale directory (left behind by a killed tool) is dropped first.
+    /// The scratch directory, created with mode 0700 on the first call.
     fn dir(&mut self) -> Result<&Path, DfmError> {
         if !self.ready {
             if self.dir.exists() {
+                debug!("removing stale diff scratch directory {:?}", self.dir);
                 fs::remove_dir_all(&self.dir).map_err(|e| io_err(&self.dir, e))?;
             }
             create_private_temp_dir(&self.dir)?;
             self.ready = true;
+            // Arm the guard only now that the directory is this run's scratch,
+            // so dropping the `Scratch` removes exactly what this run created.
+            self.guard = Some(DirGuard(self.dir.clone()));
         }
         Ok(&self.dir)
     }
@@ -512,9 +524,12 @@ fn run_diff_capture(
     };
 
     let outcome = child.wait_with_output().map_err(DfmError::Io)?;
-    if let Ok(chunk) = String::from_utf8(outcome.stdout) {
-        sink.write(&chunk)?;
-    }
+    debug!("diff tool exited with status {}", outcome.status);
+    // Diff output is appended as text but may be non-UTF-8 (binary files,
+    // non-UTF-8 locales); lossy conversion still forwards every byte so no
+    // difference goes unseen.
+    let chunk = String::from_utf8_lossy(&outcome.stdout);
+    sink.write(&chunk)?;
     Ok(())
 }
 
@@ -577,10 +592,10 @@ pub fn diff_editable_command(
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
     let target_ignore_regex = load_ignore_regex(&calc_local_ignore_file(xdg)?)?;
 
-    // The guard is armed before any work so the copies are removed on every
-    // exit path, including the "contents differ" error.
+    // `Scratch` owns its cleanup and only creates the scratch dir when an
+    // editable pair actually copies files, so an early error or `--dry-run`
+    // leaves the source directory untouched.
     let mut scratch = Scratch::new(&source_dir_abs_path);
-    let _guard = DirGuard(scratch.dir.clone());
 
     for path in &paths {
         let (target_abs, source_abs) = match resolve_pair(
@@ -616,6 +631,11 @@ fn edit_one_pair(
     source_abs: &Path,
     dry_run: bool,
 ) -> Result<(), DfmError> {
+    if dry_run {
+        info!("would edit {:?} with the diff tool (dry run)", target_abs);
+        return Ok(());
+    }
+
     let source_is_encrypted = source_abs
         .to_string_lossy()
         .ends_with(&settings.encrypted_postfix);
@@ -633,11 +653,6 @@ fn edit_one_pair(
     // would leave the tool unable to save the edit.
     make_owner_writable(&target_copy)?;
     make_owner_writable(&source_copy)?;
-
-    if dry_run {
-        info!("would edit {:?} with the diff tool (dry run)", target_abs);
-        return Ok(());
-    }
 
     // Each copy knows its own original fingerprint: the sides may already
     // differ, so a side counts as edited only relative to its own content.
@@ -687,15 +702,7 @@ fn run_editable_tool(
 
     info!("running editable diff tool: {} {:?}", prog, args);
 
-    let mut child = match Command::new(&prog).args(&args).spawn() {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(DfmError::NotFound(format!("diff tool {} not found", prog)));
-        }
-        Err(e) => return Err(DfmError::Io(e)),
-    };
-
-    let status = child.wait().map_err(DfmError::Io)?;
+    let status = run_tool(prog.as_str(), &args, "diff")?;
     if !status.success() {
         return Err(DfmError::Other(format!(
             "diff tool exited with status {}, {:?} was not changed", status, target_abs

@@ -211,7 +211,7 @@ dfm diff [PATH...] [-a|--all] [-e|--editable]
 ```
 
 - `PATH...` — files to diff. Pass a target path or a source path; the corresponding counter-part is resolved automatically (same as `pull`).
-- Without arguments, `dfm diff` diff-s every *modified* managed file (`-a`/`--all`, the default): each modified file is diffed with the non-interactive `diff_all_tool_command_*` templates, all output is concatenated, and the whole report goes through the same pager `status` uses. Up-to-date and never-synchronized files produce nothing.
+- Without arguments, `dfm diff` diff-s every *modified* managed file (`-a`/`--all`, the default): each modified file is diffed with the non-interactive `diff_all_tool_command_*` templates, all output is concatenated, and the whole report goes through the same pager `status` uses. Up-to-date and never-synchronized files produce nothing. A `--all` given together with explicit `PATH`s is ignored — explicit paths always use the per-path mode.
 - `dfm diff` **never modifies any file** — it only reads. The one exception is `--editable`, described below.
 
 For each path, `dfm diff` reports:
