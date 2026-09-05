@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "dfm"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "argon2",
  "chacha20poly1305",

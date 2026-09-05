@@ -2,7 +2,7 @@
 description = "dot-file manager"
 authors = ["ayrapetovai"]
 name = "dfm"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 readme = "README.md"
 license = "Unlicense"
@@ -10,10 +10,11 @@ documentation = "https://github.com/ayrapetovai/dfm/blob/main/README.md"
 homepage = "https://github.com/ayrapetovai/dfm.git"
 repository = "https://github.com/ayrapetovai/dfm.git"
 
+[package.metadata.aur]
+files = [["target/release/dfm.1", "/usr/share/man/man1/dfm.1"]]
+
 [dependencies]
 microxdg = "0.2.0"
-clap = { version = "4.6.4", features = ["cargo", "derive"] }
-serde = { version = "1.0.229", features = ["derive"] }
 serde_regex = "1.2.0"
 toml = "1.1.3"
 envmnt = "0.10.4"
@@ -31,9 +32,20 @@ argon2 = "0.5"
 chacha20poly1305 = "0.10"
 rand = "0.9"
 
+[dependencies.clap]
+version = "4.6.4"
+features = ["cargo", "derive"]
+
+[dependencies.serde]
+version = "1.0.229"
+features = ["derive"]
+
 [build-dependencies]
-clap = { version = "4.6.4", features = ["cargo", "derive"] }
 clap_mangen = "0.3.0"
+
+[build-dependencies.clap]
+version = "4.6.4"
+features = ["cargo", "derive"]
 
 [profile.dev.package.argon2]
 opt-level = 3
@@ -59,7 +71,3 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = true
-
-[package.metadata.aur]
-files = [["target/release/dfm.1", "/usr/share/man/man1/dfm.1"]]
-
