@@ -48,13 +48,5 @@
    Multiple path arguments keep the old `All up-to-date.` message.
    `--porcelain`/`--short` output is unchanged.
 
-## Documents
-
-- License: switch to GPL-3.0-only, applying to all files in the repository.
-  The license text is NOT embedded into files —
-  it lives in a single separate `LICENSE` file at the repository root.
-  `Cargo.toml` `license` and packaging (AUR) metadata
-  are updated in the same commit.
-
 ## Considerations
 - what if source file belongs to the user other than puller?
