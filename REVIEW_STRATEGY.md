@@ -17,7 +17,7 @@ Review source code and integrations tests for:
 - the program's binary being built as release dos not contain debug info, is self contained, is optimised, encryption library is build for production.
 - During handling big amount of files of files of big size, no data is accumulated in memory, no memory leaks.
 - Check the commit history, try to define the trajectory of evaluation of the code base. Try to find sing of useless bloating. How to make it shorter.
-- What comments can be made more concise? What comments could be deleted?
+- Comments must be efficient for AI understanding and analysis, reduce there count and size.
 
 Step throw these points several times one-by-one.
 Write a result of the review into file REVIEW.md.

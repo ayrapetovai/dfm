@@ -56,11 +56,5 @@
   `Cargo.toml` `license` and packaging (AUR) metadata
   are updated in the same commit.
 
-- Shrink README.md and context.txt: define a per-section max-size budget
-  (in lines) for each file, then trim each section
-  so that both files fit within their budgets.
-  The budgets are agreed before trimming,
-  and fitting them is the verifiable outcome.
-
 ## Considerations
 - what if source file belongs to the user other than puller?
