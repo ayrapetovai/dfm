@@ -375,24 +375,29 @@ pub fn sync_command(
 
     let total_tasks = tasks.len();
     let mut completed_tasks = 0usize;
+    // Action-phase progress bar: stdout, terminal-only, on by default.
+    let mut progress = ProgressBar::new();
+    let mut steps_done = 0usize;
 
     for task in tasks {
         info!("{}", describe_sync_task(&task));
-        if dry_run {
-            continue;
-        }
-        match execute_sync_task(&task, settings, state, &source_dir_abs_path) {
-            Ok(completed) => {
-                if completed {
-                    completed_tasks += 1;
+        if !dry_run {
+            match execute_sync_task(&task, settings, state, &source_dir_abs_path) {
+                Ok(completed) => {
+                    if completed {
+                        completed_tasks += 1;
+                    }
+                }
+                Err(e) => {
+                    error!("{}", msg_tasks_failure(completed_tasks, total_tasks));
+                    return Err(e);
                 }
             }
-            Err(e) => {
-                error!("{}", msg_tasks_failure(completed_tasks, total_tasks));
-                return Err(e);
-            }
         }
+        steps_done += 1;
+        progress.set(steps_done, total_tasks);
     }
+    progress.clear();
 
     Ok(())
 }

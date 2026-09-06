@@ -615,31 +615,36 @@ pub fn add_command(
 
     let total_tasks = tasks.len();
     let mut completed_tasks = 0usize;
+    // Action-phase progress bar: stdout, terminal-only, on by default.
+    let mut progress = ProgressBar::new();
+    let mut steps_done = 0usize;
 
     for task in tasks {
         // Print what each task would do even under --dry-run.
         info!("{}", describe_add_task(&task));
-        if dry_run {
-            continue;
-        }
-        match execute_add_task(
-            &task,
-            settings,
-            state,
-            &target_dir_abs_path,
-            &source_dir_abs_path,
-        ) {
-            Ok(completed) => {
-                if completed {
-                    completed_tasks += 1;
+        if !dry_run {
+            match execute_add_task(
+                &task,
+                settings,
+                state,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+            ) {
+                Ok(completed) => {
+                    if completed {
+                        completed_tasks += 1;
+                    }
+                }
+                Err(e) => {
+                    error!("{}", msg_tasks_failure(completed_tasks, total_tasks));
+                    return Err(e);
                 }
             }
-            Err(e) => {
-                error!("{}", msg_tasks_failure(completed_tasks, total_tasks));
-                return Err(e);
-            }
         }
+        steps_done += 1;
+        progress.set(steps_done, total_tasks);
     }
+    progress.clear();
 
     prune_matched_ignore_patterns(xdg, &patterns_to_remove, dry_run)?;
 

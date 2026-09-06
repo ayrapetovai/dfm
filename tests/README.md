@@ -3,7 +3,7 @@
 These are **shell integration tests** for the `dfm` binary. Each file in this
 directory named `test*.sh` is one test case; the harness discovers them
 automatically, so adding a new `test_*.sh` file is enough to run it. There are
-currently **232** test files (the launcher prints the exact count it found).
+currently **233** test files (the launcher prints the exact count it found).
 
 ## Requirements
 

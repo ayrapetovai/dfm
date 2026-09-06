@@ -9,7 +9,7 @@ use log::{debug, info};
 use regex::RegexSet;
 
 use super::{
-    cli_path_in_scope, list_directory, matches_source_ignore_regex, print_paged, report_progress,
+    cli_path_in_scope, list_directory, matches_source_ignore_regex, print_paged,
     source_rel_to_target_abs, state_key_for, write_stdout,
 };
 use crate::DfmError;
@@ -213,9 +213,9 @@ pub fn status_command(
     let mut entries: Vec<StatusEntry> = Vec::new();
     let mut state_keys: HashSet<String> = HashSet::new();
 
-    let mut progress = ProgressLine::new();
+    let mut progress = ProgressBar::new();
     for (i, (source_rel, sync_time)) in state.syncs.iter().enumerate() {
-        report_progress(&mut progress, i + 1, state.syncs.len());
+        progress.set(i + 1, state.syncs.len());
         state_keys.insert(source_rel.clone());
 
         let source_abs = source_dir_abs.join(source_rel);
@@ -391,7 +391,7 @@ pub fn status_command(
         fs::canonicalize(&source_dir_abs).unwrap_or_else(|_| source_dir_abs.clone());
 
     for (i, target_abs) in traversed_target.iter().enumerate() {
-        report_progress(&mut progress, i + 1, traversed_target.len());
+        progress.set(i + 1, traversed_target.len());
         // Skip files inside the source directory — normalize via canonicalize
         // to avoid path-comparison edge cases (symlinks, double slashes, etc.)
         if let Ok(canon_target) = fs::canonicalize(target_abs) {

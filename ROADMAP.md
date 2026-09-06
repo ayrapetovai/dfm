@@ -32,22 +32,6 @@
    and an already-encrypted managed file whose source-side path
    no longer satisfies the rule is decrypted in place during `pull`.
 
-8. Add a progress bar for the action phase of the `add`, `pull` and `sync`
-   commands (the walkdir phase already has progress).
-   One step = one processed file
-   (each planned task advances the counter;
-   the total is the number of planned tasks).
-   The bar is printed to stdout and only when stdout is a TTY —
-   it is suppressed when output is redirected or piped,
-   and it is enabled by default regardless of `-v`/`-n`.
-
-9. When `dfm status <path>` is given exactly one PATH argument
-   and there is nothing else to report,
-   print `<path> is up-to-date.` — the path as typed (file or directory) —
-   to stdout, instead of `All up-to-date.`.
-   Multiple path arguments keep the old `All up-to-date.` message.
-   `--porcelain`/`--short` output is unchanged.
-
 ## Documents
 
 - Add information about `./justfile` to the DEVELOPMENT.md, describe how it works.

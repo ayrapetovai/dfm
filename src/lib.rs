@@ -4,7 +4,7 @@ pub mod crypt;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, IsTerminal, Read};
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
@@ -1104,6 +1104,104 @@ impl Drop for ProgressLine {
     fn drop(&mut self) {
         self.clear();
     }
+}
+
+// Action-phase progress bar
+
+/// Renders a self-overwriting progress bar on stdout.
+///
+/// Where `ProgressLine` is the analysis/walkdir heartbeat on stderr (throttled
+/// to large batches and suppressed at higher verbosity), this bar reports the
+/// action phase — one step per planned task — and is always drawn when stdout
+/// is a terminal: verbosity and `--dry-run` do not disable it. When stdout is
+/// redirected or piped it stays inactive and prints nothing.
+pub struct ProgressBar {
+    last_len: usize,
+    /// A progress line has been drawn and must be erased by `clear`.
+    drawn: bool,
+    /// stdout is a terminal; only then is the bar rendered.
+    enabled: bool,
+}
+
+impl ProgressBar {
+    /// Create a bar that renders only when stdout is a terminal.
+    pub fn new() -> ProgressBar {
+        ProgressBar {
+            last_len: 0,
+            drawn: false,
+            enabled: std::io::stdout().is_terminal(),
+        }
+    }
+
+    /// Advance the bar to `done` of `total` planned tasks, overwriting the
+    /// previous frame in place. No-op when stdout is not a terminal or when
+    /// `total` is zero.
+    pub fn set(&mut self, done: usize, total: usize) {
+        if !self.enabled || total == 0 {
+            return;
+        }
+        let text = Self::render(done, total);
+        self.write(&text);
+    }
+
+    /// Erase the progress bar if one is currently shown.
+    pub fn clear(&mut self) {
+        if self.enabled && self.drawn {
+            use std::io::Write;
+            let mut stdout = std::io::stdout();
+            let _ = write!(stdout, "\r{}", " ".repeat(self.last_len));
+            let _ = write!(stdout, "\r");
+            let _ = stdout.flush();
+            self.drawn = false;
+        }
+        self.last_len = 0;
+    }
+
+    /// Format `done`/`total` as a bar frame, e.g. `[######------] 6/10`.
+    fn render(done: usize, total: usize) -> String {
+        const BAR_WIDTH: usize = 20;
+        let filled = if total == 0 {
+            0
+        } else {
+            done.saturating_mul(BAR_WIDTH).div_ceil(total)
+        };
+        let bar = "#".repeat(filled) + &"-".repeat(BAR_WIDTH - filled);
+        format!("[{}] {}/{}", bar, done, total)
+    }
+
+    fn write(&mut self, text: &str) {
+        use std::io::Write;
+        let mut stdout = std::io::stdout();
+        let _ = write!(stdout, "\r{}", text);
+        if text.len() < self.last_len {
+            let _ = write!(stdout, "{}", " ".repeat(self.last_len - text.len()));
+        }
+        let _ = stdout.flush();
+        self.last_len = text.len();
+        self.drawn = true;
+    }
+}
+
+impl Default for ProgressBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ProgressBar {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+#[test]
+fn test_progress_bar_render() {
+    assert_eq!(ProgressBar::render(0, 10), "[--------------------] 0/10");
+    assert_eq!(ProgressBar::render(5, 10), "[##########----------] 5/10");
+    assert_eq!(ProgressBar::render(10, 10), "[####################] 10/10");
+    assert_eq!(ProgressBar::render(0, 0), "[--------------------] 0/0");
+    // A partial task fills a whole cell (rounding up).
+    assert_eq!(ProgressBar::render(1, 21), "[#-------------------] 1/21");
 }
 
 #[derive(Debug)]
