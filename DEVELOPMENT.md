@@ -12,11 +12,20 @@ cargo install cargo-aur
 
 ### Generate the man page
 
-`build.rs` renders `dfm.1` from the CLI definition (via `clap_mangen`) into
-`target/<profile>/dfm.1` on every build — no separate step needed. Since
-`cargo aur` first runs `cargo build --release`, the man page lands in
-`target/release/dfm.1`, which `[package.metadata.aur] files` packs into the
-release tarball and the PKGBUILD installs to `/usr/share/man/man1/dfm.1`.
+`build.rs` renders `dfm.1` on every build — no separate step needed. It is a
+hybrid page: `clap_mangen` generates the CLI reference (NAME, SYNOPSIS,
+OPTIONS, VERSION) from `src/cli.rs`, while `build/man.rs` (a dependency-free
+`README.md` → roff converter, `#[path]`-included by the build script) supplies
+the prose sections (DESCRIPTION plus every `##` section below it). The output
+lands in `target/<profile>/dfm.1` under the effective `target-dir` (the repo
+redirects it to `/tmp/dfm-target`). Since `cargo aur` first runs
+`cargo build --release`, the man page lands in `target/release/dfm.1`, which
+`[package.metadata.aur] files` packs into the release tarball and the PKGBUILD
+installs to `/usr/share/man/man1/dfm.1`.
+
+`build.rs` re-runs when any of `build.rs`, `build/man.rs`, `src/cli.rs`, or
+`README.md` changes. To inspect the rendered page run
+`groff -man -t -Tutf8 target/<profile>/dfm.1` (or `man -l`).
 
 ### Create a package from sources
 
