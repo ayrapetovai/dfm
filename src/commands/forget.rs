@@ -5,13 +5,14 @@ use std::path::{Path, PathBuf};
 
 use log::{debug, error, info, warn};
 
-use dfm::*;
+use super::{
+    SourceVariant, cli_path_in_scope, cli_path_to_abs, get_sync_time, list_directory_or_error,
+    msg_dry_run, msg_nothing_to_do, read_symlink_pointer, report_progress, require_force,
+    resolve_source_variant, source_rel_to_target_rel, state_key_for,
+};
 use crate::DfmError;
+use dfm::*;
 use microxdg::Xdg;
-use super::{require_force, get_sync_time, read_symlink_pointer,
-            resolve_source_variant, source_rel_to_target_rel, SourceVariant,
-            state_key_for, list_directory_or_error, cli_path_to_abs, cli_path_in_scope,
-            msg_dry_run, msg_nothing_to_do, report_progress};
 
 /// Typed, per-command arguments for `forget` (built by the dispatcher).
 pub struct ForgetArgs {
@@ -53,21 +54,33 @@ fn handle_target_symlink(
     tasks: &mut Vec<ForgetTask>,
 ) -> Result<bool, DfmError> {
     let target_abs_path = remove_dots_from_path(&target_dir_abs_path.join(target_path));
-    let target_symlink_pointee_path = fs::read_link(&target_abs_path)
-        .map_err(|e| io_err(&target_abs_path, e))?;
+    let target_symlink_pointee_path =
+        fs::read_link(&target_abs_path).map_err(|e| io_err(&target_abs_path, e))?;
 
-    debug!("target symlink {:?}\n\tpoints to {:?}", target_abs_path, target_symlink_pointee_path);
+    debug!(
+        "target symlink {:?}\n\tpoints to {:?}",
+        target_abs_path, target_symlink_pointee_path
+    );
     if target_symlink_pointee_path.starts_with(source_dir_abs_path) {
-        info!("target symlink {:?}\n\tpoints into source directory, removing", target_abs_path);
+        info!(
+            "target symlink {:?}\n\tpoints into source directory, removing",
+            target_abs_path
+        );
         tasks.push(ForgetTask::Delete(target_abs_path.clone()));
     }
 
     let source_symlink_file_abs_path = filepath_in_source_dir(
-        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path,
-        &target_abs_path, Some(&settings.symlink_postfix)
+        &settings.dot_prefix,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        &target_abs_path,
+        Some(&settings.symlink_postfix),
     );
     if !source_symlink_file_abs_path.exists() {
-        debug!("symlink {:?}\n\tdoes not have source symlink file {:?}, skipping...", target_abs_path, source_symlink_file_abs_path);
+        debug!(
+            "symlink {:?}\n\tdoes not have source symlink file {:?}, skipping...",
+            target_abs_path, source_symlink_file_abs_path
+        );
         return Ok(false);
     }
 
@@ -101,7 +114,10 @@ fn handle_missing_target(
 
     let target_abs_path = remove_dots_from_path(&target_dir_abs_path.join(target_path));
     let Some((_variant, source_abs_path)) = resolve_source_variant(
-        settings, target_dir_abs_path, source_dir_abs_path, &target_abs_path,
+        settings,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        &target_abs_path,
     ) else {
         info!("source for {:?} does not exist, skipping...", target_path);
         return Ok(false);
@@ -122,7 +138,10 @@ fn handle_source_path(
     force: bool,
     tasks: &mut Vec<ForgetTask>,
 ) -> Result<(), DfmError> {
-    if !target_abs_path.to_string_lossy().ends_with(&settings.symlink_postfix) {
+    if !target_abs_path
+        .to_string_lossy()
+        .ends_with(&settings.symlink_postfix)
+    {
         info!("source {:?} will be removed", target_abs_path);
         tasks.push(ForgetTask::Delete(target_abs_path.to_path_buf()));
         return Ok(());
@@ -130,18 +149,22 @@ fn handle_source_path(
 
     // A source symlink pointer file — remove it unless the target symlink
     // it manages still exists and points elsewhere.
-    let source_rel_str = file_path_relative_to(target_abs_path, source_dir_abs_path).to_string_lossy().into_owned();
+    let source_rel_str = file_path_relative_to(target_abs_path, source_dir_abs_path)
+        .to_string_lossy()
+        .into_owned();
     let target_rel_str = source_rel_to_target_rel(
-        &source_rel_str, &settings.dot_prefix,
-        &settings.symlink_postfix, &settings.encrypted_postfix,
+        &source_rel_str,
+        &settings.dot_prefix,
+        &settings.symlink_postfix,
+        &settings.encrypted_postfix,
     );
     let target_symlink_abs_path = target_dir_abs_path.join(&target_rel_str);
     if !target_symlink_abs_path.exists() {
         return Ok(());
     }
 
-    let target_symlink_pointee_path = fs::read_link(&target_symlink_abs_path)
-        .map_err(|e| io_err(&target_symlink_abs_path, e))?;
+    let target_symlink_pointee_path =
+        fs::read_link(&target_symlink_abs_path).map_err(|e| io_err(&target_symlink_abs_path, e))?;
     handle_symlink_pointer(
         &target_symlink_abs_path,
         &target_symlink_pointee_path,
@@ -200,45 +223,71 @@ fn handle_target_file(
     error_messages: &mut Vec<String>,
 ) -> Result<(), DfmError> {
     let Some((variant, source_abs_path)) = resolve_source_variant(
-        settings, target_dir_abs_path, source_dir_abs_path, target_abs_path,
+        settings,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        target_abs_path,
     ) else {
-        info!("source for {:?} does not exist, skipping...", target_abs_path);
+        info!(
+            "source for {:?} does not exist, skipping...",
+            target_abs_path
+        );
         return Ok(());
     };
     // A regular target file is never backed by a symlink pointer; treat an
     // orphan pointer as "no source".
     if variant == SourceVariant::Symlink {
-        info!("source for {:?} does not exist, skipping...", target_abs_path);
+        info!(
+            "source for {:?} does not exist, skipping...",
+            target_abs_path
+        );
         return Ok(());
     }
 
     // A directory in the source is a container of managed files, not a file
     // itself. Forgetting its target forgets the whole subtree.
     if source_abs_path.is_dir() {
-        info!("source {:?} is a directory, removing its whole subtree", source_abs_path);
+        info!(
+            "source {:?} is a directory, removing its whole subtree",
+            source_abs_path
+        );
         tasks.push(ForgetTask::Delete(source_abs_path.clone()));
         return Ok(());
     }
 
     let sync_time_opt = get_sync_time(state, &source_abs_path, source_dir_abs_path);
-    let cmp = compare_files(&settings.encrypted_postfix, target_abs_path, &source_abs_path, sync_time_opt)?;
+    let cmp = compare_files(
+        &settings.encrypted_postfix,
+        target_abs_path,
+        &source_abs_path,
+        sync_time_opt,
+    )?;
 
     if cmp == CompareByTimestamp::SourceModified {
         if force {
             info!("source {:?} was modified, removing source", source_abs_path);
             tasks.push(ForgetTask::Delete(source_abs_path.clone()));
         } else {
-            warn!("source {:?} was modified, use --force to remove", source_abs_path);
+            warn!(
+                "source {:?} was modified, use --force to remove",
+                source_abs_path
+            );
             error_messages.push("source was modified".into());
         }
         return Ok(());
     }
     if cmp == CompareByTimestamp::BothModified {
         if force {
-            info!("source {:?} and target {:?} were both modified, removing source", source_abs_path, target_abs_path);
+            info!(
+                "source {:?} and target {:?} were both modified, removing source",
+                source_abs_path, target_abs_path
+            );
             tasks.push(ForgetTask::Delete(source_abs_path.clone()));
         } else {
-            warn!("source {:?} and target {:?} were both modified, use --force to remove", source_abs_path, target_abs_path);
+            warn!(
+                "source {:?} and target {:?} were both modified, use --force to remove",
+                source_abs_path, target_abs_path
+            );
             error_messages.push("source and target were modified".into());
         }
         return Ok(());
@@ -248,7 +297,10 @@ fn handle_target_file(
             info!("target {:?} was modified, removing source", target_abs_path);
             tasks.push(ForgetTask::Delete(source_abs_path.clone()));
         } else {
-            warn!("target {:?} was modified, use --force to remove", target_abs_path);
+            warn!(
+                "target {:?} was modified, use --force to remove",
+                target_abs_path
+            );
             error_messages.push("target was modified".into());
         }
         return Ok(());
@@ -259,10 +311,22 @@ fn handle_target_file(
     Ok(())
 }
 
-pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &mut StateObject) -> Result<(), DfmError> {
-    let ForgetArgs { ref paths, ref force, dry_run } = args;
+pub fn forget_command(
+    settings: &Settings,
+    xdg: &Xdg,
+    args: ForgetArgs,
+    state: &mut StateObject,
+) -> Result<(), DfmError> {
+    let ForgetArgs {
+        ref paths,
+        ref force,
+        dry_run,
+    } = args;
 
-    debug!("forget paths {:?}, force {}, dry-run {}", paths, force, dry_run);
+    debug!(
+        "forget paths {:?}, force {}, dry-run {}",
+        paths, force, dry_run
+    );
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
@@ -270,10 +334,11 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
     // Relative CLI paths are anchored at the current working directory (normal
     // shell semantics) and may not resolve out of the managed tree.
     let paths = match paths {
-        Some(p) => p.iter()
+        Some(p) => p
+            .iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
             .collect::<Result<Vec<_>, _>>()?,
-        None => vec![target_dir_abs_path.clone()]
+        None => vec![target_dir_abs_path.clone()],
     };
 
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
@@ -302,7 +367,12 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         // symlink with no pointer file falls through to pointee processing.
         if target_path.is_symlink() {
             let symlink_handled = match handle_target_symlink(
-                settings, &target_dir_abs_path, &source_dir_abs_path, target_path, *force, &mut tasks,
+                settings,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+                target_path,
+                *force,
+                &mut tasks,
             ) {
                 Ok(v) => v,
                 Err(e) if e.is_permission_denied() => {
@@ -333,14 +403,19 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
                     let resolves_to_nothing = if lexical_abs.starts_with(&source_dir_abs_path) {
                         let source_rel = state_key_for(&lexical_abs, &source_dir_abs_path);
                         let target_rel_str = source_rel_to_target_rel(
-                            &source_rel, &settings.dot_prefix,
-                            &settings.symlink_postfix, &settings.encrypted_postfix,
+                            &source_rel,
+                            &settings.dot_prefix,
+                            &settings.symlink_postfix,
+                            &settings.encrypted_postfix,
                         );
                         !target_dir_abs_path.join(&target_rel_str).exists()
                     } else {
                         !handle_missing_target(
-                            settings, &target_dir_abs_path, &source_dir_abs_path,
-                            target_path, &mut tasks,
+                            settings,
+                            &target_dir_abs_path,
+                            &source_dir_abs_path,
+                            target_path,
+                            &mut tasks,
                         )?
                     };
                     if resolves_to_nothing {
@@ -353,7 +428,12 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
 
         if target_abs_path.starts_with(&source_dir_abs_path) {
             match handle_source_path(
-                settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path, *force, &mut tasks,
+                settings,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+                &target_abs_path,
+                *force,
+                &mut tasks,
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
@@ -363,8 +443,14 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
             }
         } else if target_abs_path.starts_with(&target_dir_abs_path) {
             match handle_target_file(
-                settings, &target_dir_abs_path, &source_dir_abs_path, &target_abs_path,
-                *force, state, &mut tasks, &mut error_messages,
+                settings,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+                &target_abs_path,
+                *force,
+                state,
+                &mut tasks,
+                &mut error_messages,
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
@@ -373,17 +459,24 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
                 Err(e) => return Err(e),
             }
         } else {
-            warn!("target {:?}\n\tresides outside the target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
+            warn!(
+                "target {:?}\n\tresides outside the target directory {:?}, skipping...",
+                target_abs_path, target_dir_abs_path
+            );
         }
     }
     progress.clear();
 
     if !missing_paths.is_empty() {
         if missing_paths.len() == 1 {
-            return Err(DfmError::NotFound(format!("{} does not exist", missing_paths[0])));
+            return Err(DfmError::NotFound(format!(
+                "{} does not exist",
+                missing_paths[0]
+            )));
         }
         return Err(DfmError::NotFound(format!(
-            "paths do not exist: {}", missing_paths.join(", ")
+            "paths do not exist: {}",
+            missing_paths.join(", ")
         )));
     }
 
@@ -393,17 +486,19 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
         match task {
             ForgetTask::Delete(source_abs) => {
                 processed_keys.insert(source_to_state_key(source_abs, &source_dir_abs_path));
-            },
+            }
             ForgetTask::RemoveState(key) => {
                 processed_keys.insert(key.clone());
-            },
+            }
         }
     }
 
     // Process state entries not covered by the traversal (orphaned / unpulled).
     // Only run when no explicit paths were given ("forget all" mode).
     let orphan_keys: Vec<String> = if forget_all {
-        state.syncs.keys()
+        state
+            .syncs
+            .keys()
             .filter(|k| !processed_keys.contains(k.as_str()))
             .cloned()
             .collect()
@@ -459,7 +554,9 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
     // Phase 1: Delete source files (best-effort, never abort mid-phase)
     let mut delete_errors: Vec<(String, String)> = Vec::new();
     for task in &tasks {
-        let ForgetTask::Delete(source_file) = task else { continue; };
+        let ForgetTask::Delete(source_file) = task else {
+            continue;
+        };
         info!("delete {:?}", source_file);
         if dry_run {
             continue;
@@ -486,17 +583,21 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
                 // state entry that lives at that source path or beneath it.
                 let key = source_to_state_key(source_file, &source_dir_abs_path);
                 let key_prefix = format!("{}/", key);
-                state.syncs.retain(|k, _| k != &key && !k.starts_with(&key_prefix));
-            },
+                state
+                    .syncs
+                    .retain(|k, _| k != &key && !k.starts_with(&key_prefix));
+            }
             ForgetTask::RemoveState(key) => {
                 state.syncs.remove(key);
-            },
+            }
         }
     }
 
     // Phase 3: Clean up empty parent directories (best-effort)
     for task in &tasks {
-        let ForgetTask::Delete(source_file) = task else { continue; };
+        let ForgetTask::Delete(source_file) = task else {
+            continue;
+        };
         if dry_run {
             continue;
         }
@@ -522,12 +623,19 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
     }
 
     if !delete_errors.is_empty() {
-        error!("some source files could not be deleted: {:?}", delete_errors);
-        let summary: String = delete_errors.iter()
+        error!(
+            "some source files could not be deleted: {:?}",
+            delete_errors
+        );
+        let summary: String = delete_errors
+            .iter()
             .map(|(path, err)| format!("{}: {}", path, err))
             .collect::<Vec<_>>()
             .join("; ");
-        return Err(DfmError::Other(format!("failed to delete source files: {}", summary)));
+        return Err(DfmError::Other(format!(
+            "failed to delete source files: {}",
+            summary
+        )));
     }
 
     Ok(())

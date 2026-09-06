@@ -4,15 +4,14 @@ use std::path::{Path, PathBuf};
 use log::{debug, error, info, warn};
 use regex::RegexSet;
 
-use dfm::*;
-use crate::DfmError;
-use microxdg::Xdg;
 use super::{
-    sync_file_copy, read_symlink_pointer, resolve_source_variant,
-    update_sync_state, get_sync_time, SourceVariant,
-    list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
-    is_ignored, cli_path_in_scope,
+    SourceVariant, cli_path_in_scope, get_sync_time, is_ignored, list_directory_or_error,
+    msg_dry_run, msg_nothing_to_do, msg_tasks_failure, read_symlink_pointer, report_progress,
+    resolve_source_variant, sync_file_copy, update_sync_state,
 };
+use crate::DfmError;
+use dfm::*;
+use microxdg::Xdg;
 
 /// Typed, per-command arguments for `sync` (built by the dispatcher).
 pub struct SyncArgs {
@@ -44,13 +43,23 @@ enum SyncTask {
 fn describe_sync_task(task: &SyncTask) -> String {
     match task {
         SyncTask::Add(target, source) => format!("copy target {:?} to source {:?}", target, source),
-        SyncTask::Pull(target, source) => format!("copy source {:?} to target {:?}", source, target),
-        SyncTask::AddEncrypted(target, source) =>
-            format!("copy encrypted target {:?} to source {:?}", target, source),
-        SyncTask::PullEncrypted(target, source) =>
-            format!("decrypt source {:?} to target {:?}", source, target),
-        SyncTask::UpdatePointer { source_symlink, points_to, .. } =>
-            format!("directing source symlink file {:?} to the pointee {:?}", source_symlink, points_to),
+        SyncTask::Pull(target, source) => {
+            format!("copy source {:?} to target {:?}", source, target)
+        }
+        SyncTask::AddEncrypted(target, source) => {
+            format!("copy encrypted target {:?} to source {:?}", target, source)
+        }
+        SyncTask::PullEncrypted(target, source) => {
+            format!("decrypt source {:?} to target {:?}", source, target)
+        }
+        SyncTask::UpdatePointer {
+            source_symlink,
+            points_to,
+            ..
+        } => format!(
+            "directing source symlink file {:?} to the pointee {:?}",
+            source_symlink, points_to
+        ),
     }
 }
 
@@ -74,17 +83,26 @@ fn handle_symlink(
         return Ok(());
     }
 
-    let Some((SourceVariant::Symlink, source_symlink_file)) =
-        resolve_source_variant(settings, target_dir_abs_path, source_dir_abs_path, target_path)
-    else {
-        debug!("target symlink {:?} has no managed source pointer, skipping", target_path);
+    let Some((SourceVariant::Symlink, source_symlink_file)) = resolve_source_variant(
+        settings,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        target_path,
+    ) else {
+        debug!(
+            "target symlink {:?} has no managed source pointer, skipping",
+            target_path
+        );
         return Ok(());
     };
 
     // Only files with a sync record are eligible for sync; never-synced
     // symlinks (e.g. created after the last sync) are left untouched.
     if get_sync_time(state, &source_symlink_file, source_dir_abs_path).is_none() {
-        debug!("source symlink file {:?} has no sync record, skipping", source_symlink_file);
+        debug!(
+            "source symlink file {:?} has no sync record, skipping",
+            source_symlink_file
+        );
         return Ok(());
     }
 
@@ -92,11 +110,16 @@ fn handle_symlink(
     let target_pointee_str = target_pointee.to_string_lossy().into_owned();
     let source_content = read_symlink_pointer(&source_symlink_file)?;
     if source_content == target_pointee_str {
-        debug!("target symlink {:?} and source pointer agree, up to date", target_path);
+        debug!(
+            "target symlink {:?} and source pointer agree, up to date",
+            target_path
+        );
         return Ok(());
     }
-    info!("target symlink {:?} points to {:?},\n\tpointer must be updated to {:?}",
-        target_path, source_content, target_pointee_str);
+    info!(
+        "target symlink {:?} points to {:?},\n\tpointer must be updated to {:?}",
+        target_path, source_content, target_pointee_str
+    );
     tasks.push(SyncTask::UpdatePointer {
         source_symlink: source_symlink_file,
         target_path: target_path.to_path_buf(),
@@ -133,7 +156,10 @@ fn handle_regular_file(
         return Ok(());
     }
     if internal_dfm_paths.contains(&target_abs_path) {
-        debug!("target {:?} is an internal dfm file, skipping", target_abs_path);
+        debug!(
+            "target {:?} is an internal dfm file, skipping",
+            target_abs_path
+        );
         return Ok(());
     }
 
@@ -145,84 +171,125 @@ fn handle_regular_file(
         return Ok(());
     }
 
-    let Some((source_variant, source_abs_path)) =
-        resolve_source_variant(settings, target_dir_abs_path, source_dir_abs_path, &target_abs_path)
-    else {
+    let Some((source_variant, source_abs_path)) = resolve_source_variant(
+        settings,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        &target_abs_path,
+    ) else {
         // Unmanaged target: no source side exists. sync never adds.
-        debug!("target {:?} has no source, skipping (unmanaged)", target_abs_path);
+        debug!(
+            "target {:?} has no source, skipping (unmanaged)",
+            target_abs_path
+        );
         return Ok(());
     };
 
     // sync only processes files that have a sync record; a never-synced
     // file is left untouched (it is a candidate for add/pull instead).
     let Some(sync_time) = get_sync_time(state, &source_abs_path, source_dir_abs_path) else {
-        debug!("source {:?} has no sync record, skipping (never-synced)", source_abs_path);
+        debug!(
+            "source {:?} has no sync record, skipping (never-synced)",
+            source_abs_path
+        );
         return Ok(());
     };
 
-    let cmp = compare_files(&settings.encrypted_postfix, &target_abs_path, &source_abs_path, Some(sync_time))?;
+    let cmp = compare_files(
+        &settings.encrypted_postfix,
+        &target_abs_path,
+        &source_abs_path,
+        Some(sync_time),
+    )?;
 
     match cmp {
         CompareByTimestamp::NonModified => {
-            debug!("target {:?} and source {:?} are synchronized", target_abs_path, source_abs_path);
-        },
-        CompareByTimestamp::SourceModified => {
-            match source_variant {
-                SourceVariant::Encrypted => {
-                    info!("only encrypted source {:?} was modified, decrypting to target", source_abs_path);
-                    tasks.push(SyncTask::PullEncrypted(target_abs_path, source_abs_path));
-                },
-                _ => {
-                    info!("only source {:?} was modified, copying to target", source_abs_path);
-                    tasks.push(SyncTask::Pull(target_abs_path, source_abs_path));
-                },
+            debug!(
+                "target {:?} and source {:?} are synchronized",
+                target_abs_path, source_abs_path
+            );
+        }
+        CompareByTimestamp::SourceModified => match source_variant {
+            SourceVariant::Encrypted => {
+                info!(
+                    "only encrypted source {:?} was modified, decrypting to target",
+                    source_abs_path
+                );
+                tasks.push(SyncTask::PullEncrypted(target_abs_path, source_abs_path));
+            }
+            _ => {
+                info!(
+                    "only source {:?} was modified, copying to target",
+                    source_abs_path
+                );
+                tasks.push(SyncTask::Pull(target_abs_path, source_abs_path));
             }
         },
-        CompareByTimestamp::TargetModified => {
-            match source_variant {
-                SourceVariant::Encrypted => {
-                    info!("only target {:?} was modified, encrypting to source", target_abs_path);
-                    tasks.push(SyncTask::AddEncrypted(target_abs_path, source_abs_path));
-                },
-                _ => {
-                    info!("only target {:?} was modified, copying to source", target_abs_path);
-                    tasks.push(SyncTask::Add(target_abs_path, source_abs_path));
-                },
+        CompareByTimestamp::TargetModified => match source_variant {
+            SourceVariant::Encrypted => {
+                info!(
+                    "only target {:?} was modified, encrypting to source",
+                    target_abs_path
+                );
+                tasks.push(SyncTask::AddEncrypted(target_abs_path, source_abs_path));
+            }
+            _ => {
+                info!(
+                    "only target {:?} was modified, copying to source",
+                    target_abs_path
+                );
+                tasks.push(SyncTask::Add(target_abs_path, source_abs_path));
             }
         },
         CompareByTimestamp::BothModified => {
-            info!("target {:?} and source {:?} were both modified, conflict", target_abs_path, source_abs_path);
+            info!(
+                "target {:?} and source {:?} were both modified, conflict",
+                target_abs_path, source_abs_path
+            );
             *conflict_detected = true;
             conflict_paths.push(target_path.to_string_lossy().into_owned());
-        },
+        }
         CompareByTimestamp::NeverSynchronized => {
             // Unreachable in practice: a sync record exists by construction above.
-            debug!("target {:?} and source {:?} were never synchronized, skipping", target_abs_path, source_abs_path);
-        },
+            debug!(
+                "target {:?} and source {:?} were never synchronized, skipping",
+                target_abs_path, source_abs_path
+            );
+        }
     }
     Ok(())
 }
 
-pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut StateObject) -> Result<(), DfmError> {
-    let SyncArgs { ref paths, ref force, dry_run } = args;
+pub fn sync_command(
+    settings: &Settings,
+    xdg: &Xdg,
+    args: SyncArgs,
+    state: &mut StateObject,
+) -> Result<(), DfmError> {
+    let SyncArgs {
+        ref paths,
+        ref force,
+        dry_run,
+    } = args;
 
     debug!("sync paths {:?}, force {}", paths, force);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
-    let internal_dfm_paths: Vec<PathBuf> = [
-        calc_state_file_path(xdg),
-        calc_local_ignore_file(xdg),
-    ].into_iter().filter_map(|r| r.ok()).collect();
+    let internal_dfm_paths: Vec<PathBuf> = [calc_state_file_path(xdg), calc_local_ignore_file(xdg)]
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .collect();
 
     // Relative CLI paths are anchored at the current working directory (normal
     // shell semantics) and may not resolve out of the managed tree, same as
     // add/pull.
     let paths = match paths {
-        Some(p) => p.iter()
+        Some(p) => p
+            .iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
             .collect::<Result<Vec<_>, _>>()?,
-        None => vec![target_dir_abs_path.clone()]
+        None => vec![target_dir_abs_path.clone()],
     };
 
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
@@ -246,15 +313,26 @@ pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut 
 
         let handle = if target_path.is_symlink() {
             handle_symlink(
-                settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
-                &target_ignore_regex, state,
+                settings,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+                target_path,
+                &target_ignore_regex,
+                state,
                 &mut tasks,
             )
         } else {
             handle_regular_file(
-                settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
-                &target_ignore_regex, &internal_dfm_paths,
-                state, &mut tasks, &mut conflict_detected, &mut conflict_paths,
+                settings,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+                target_path,
+                &target_ignore_regex,
+                &internal_dfm_paths,
+                state,
+                &mut tasks,
+                &mut conflict_detected,
+                &mut conflict_paths,
             )
         };
 
@@ -278,8 +356,10 @@ pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut 
                 "sync conflicts detected: no files were modified".to_string(),
             ));
         }
-        warn!("conflicts detected: {}; proceeding with --force on non-conflicting files",
-            conflict_paths.join(", "));
+        warn!(
+            "conflicts detected: {}; proceeding with --force on non-conflicting files",
+            conflict_paths.join(", ")
+        );
     }
 
     if tasks.is_empty() {
@@ -328,7 +408,13 @@ fn execute_sync_task(
 ) -> Result<bool, DfmError> {
     match task {
         SyncTask::Add(target_file, source_file) => {
-            match sync_file_copy(target_file, source_file, source_file, state, source_dir_abs_path) {
+            match sync_file_copy(
+                target_file,
+                source_file,
+                source_file,
+                state,
+                source_dir_abs_path,
+            ) {
                 Ok(()) => Ok(true),
                 Err(e) if e.is_permission_denied() => {
                     warn_unreadable(target_file, &e);
@@ -336,9 +422,15 @@ fn execute_sync_task(
                 }
                 Err(e) => Err(e),
             }
-        },
+        }
         SyncTask::Pull(target_file, source_file) => {
-            match sync_file_copy(source_file, target_file, source_file, state, source_dir_abs_path) {
+            match sync_file_copy(
+                source_file,
+                target_file,
+                source_file,
+                state,
+                source_dir_abs_path,
+            ) {
                 Ok(()) => Ok(true),
                 Err(e) if e.is_permission_denied() => {
                     warn_unreadable(target_file, &e);
@@ -346,7 +438,7 @@ fn execute_sync_task(
                 }
                 Err(e) => Err(e),
             }
-        },
+        }
         SyncTask::AddEncrypted(target_file, source_file) => {
             match dfm::crypt::write_encrypted_file(settings, target_file, source_file) {
                 Ok(()) => {}
@@ -358,7 +450,7 @@ fn execute_sync_task(
             }
             update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
             Ok(true)
-        },
+        }
         SyncTask::PullEncrypted(target_file, source_file) => {
             match dfm::crypt::read_encrypted_file(settings, source_file, target_file) {
                 Ok(()) => {}
@@ -370,13 +462,22 @@ fn execute_sync_task(
             }
             update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
             Ok(true)
-        },
-        SyncTask::UpdatePointer { source_symlink, target_path, points_to } => {
-            let source_parent = source_symlink.parent()
-                .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_symlink)))?;
+        }
+        SyncTask::UpdatePointer {
+            source_symlink,
+            target_path,
+            points_to,
+        } => {
+            let source_parent = source_symlink.parent().ok_or_else(|| {
+                DfmError::Other(format!(
+                    "cannot resolve parent directory of {:?}",
+                    source_symlink
+                ))
+            })?;
             let result = (|| -> Result<(), DfmError> {
                 fs::create_dir_all(source_parent).map_err(|e| io_err(source_parent, e))?;
-                fs::write(source_symlink, points_to.as_bytes()).map_err(|e| io_err(source_symlink, e))?;
+                fs::write(source_symlink, points_to.as_bytes())
+                    .map_err(|e| io_err(source_symlink, e))?;
                 // Refresh the sync record so the pointer's recorded mtime/hash
                 // reflects what was just written (add does the same on symlink
                 // creation); without it the state entry stays stale forever.
@@ -391,6 +492,6 @@ fn execute_sync_task(
                 }
                 Err(e) => Err(e),
             }
-        },
+        }
     }
 }

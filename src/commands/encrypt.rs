@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use dfm::*;
 use crate::DfmError;
+use dfm::*;
 
 /// Typed arguments for the standalone `encrypt` command.
 pub struct EncryptArgs {

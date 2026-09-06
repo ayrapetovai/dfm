@@ -2,7 +2,7 @@
 description = "dot-file manager"
 authors = ["ayrapetovai"]
 name = "dfm"
-version = "0.4.5"
+version = "0.4.6"
 edition = "2024"
 readme = "README.md"
 license = "Unlicense"

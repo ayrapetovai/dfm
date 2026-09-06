@@ -5,16 +5,15 @@ use std::process::{Command, Stdio};
 
 use log::{debug, info};
 
-use dfm::*;
-use crate::DfmError;
-use microxdg::Xdg;
 use super::{
-    resolve_tool_command, split_command, run_tool, DirGuard, create_private_temp_dir,
-    state_key_for, source_rel_to_target_abs, resolve_source_variant,
-    read_symlink_pointer, get_sync_time, SourceVariant, cli_path_to_abs,
-    matches_source_ignore_regex,
-    print_paged, write_stdout, update_sync_state, msg_dry_run,
+    DirGuard, SourceVariant, cli_path_to_abs, create_private_temp_dir, get_sync_time,
+    matches_source_ignore_regex, msg_dry_run, print_paged, read_symlink_pointer,
+    resolve_source_variant, resolve_tool_command, run_tool, source_rel_to_target_abs,
+    split_command, state_key_for, update_sync_state, write_stdout,
 };
+use crate::DfmError;
+use dfm::*;
+use microxdg::Xdg;
 
 /// Typed, per-command arguments for `diff` (built by the dispatcher).
 pub struct DiffArgs {
@@ -49,8 +48,12 @@ pub fn diff_command(
 
     for path in &paths {
         match diff_one_path(
-            settings, state, &target_dir_abs_path, &source_dir_abs_path,
-            &target_ignore_regex, path,
+            settings,
+            state,
+            &target_dir_abs_path,
+            &source_dir_abs_path,
+            &target_ignore_regex,
+            path,
         ) {
             Ok(()) => {}
             Err(e) if e.is_permission_denied() => {
@@ -67,9 +70,18 @@ pub fn diff_command(
 /// nothing to diff. `diff` prints the non-pair cases and succeeds; `diff
 /// --editable` turns them into errors.
 enum Resolution {
-    Pair { target_abs: PathBuf, source_abs: PathBuf },
-    TargetSymlink { target_abs: PathBuf, label: String },
-    SourcePointer { target_label: String, source_abs: PathBuf },
+    Pair {
+        target_abs: PathBuf,
+        source_abs: PathBuf,
+    },
+    TargetSymlink {
+        target_abs: PathBuf,
+        label: String,
+    },
+    SourcePointer {
+        target_label: String,
+        source_abs: PathBuf,
+    },
     Unavailable(String),
 }
 
@@ -101,35 +113,54 @@ fn resolve_pair(
             }));
         }
         if let Some(pattern) = check_path_matches_regex_component_wise(
-            target_ignore_regex, &PathBuf::from(&target_rel),
+            target_ignore_regex,
+            &PathBuf::from(&target_rel),
         ) {
-            return Ok(Resolution::Unavailable(format!("{} is ignored by {}", user_path_str, pattern)));
+            return Ok(Resolution::Unavailable(format!(
+                "{} is ignored by {}",
+                user_path_str, pattern
+            )));
         }
         if !path_exists(&target_abs)? {
-            return Ok(Resolution::Unavailable(format!("{} is not pulled", target_abs.display())));
+            return Ok(Resolution::Unavailable(format!(
+                "{} is not pulled",
+                target_abs.display()
+            )));
         }
         if target_abs.is_symlink() {
             let label = target_abs.to_string_lossy().into_owned();
             return Ok(Resolution::TargetSymlink { target_abs, label });
         }
-        return Ok(Resolution::Pair { target_abs, source_abs });
+        return Ok(Resolution::Pair {
+            target_abs,
+            source_abs,
+        });
     }
 
     // Provided path is a target path — find the source.
     let target_abs = path_abs;
     if !target_abs.starts_with(target_dir_abs_path) {
-        return Ok(Resolution::Unavailable(format!("{} is not managed", user_path_str)));
+        return Ok(Resolution::Unavailable(format!(
+            "{} is not managed",
+            user_path_str
+        )));
     }
     let target_rel = file_path_relative_to(&target_abs, target_dir_abs_path);
-    if let Some(pattern) = check_path_matches_regex_component_wise(
-        target_ignore_regex, &target_rel,
-    ) {
-        return Ok(Resolution::Unavailable(format!("{} is ignored by {}", user_path_str, pattern)));
+    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &target_rel)
+    {
+        return Ok(Resolution::Unavailable(format!(
+            "{} is ignored by {}",
+            user_path_str, pattern
+        )));
     }
     if !path_exists(&target_abs)? {
         let has_source = resolve_source_variant(
-            settings, target_dir_abs_path, source_dir_abs_path, &target_abs,
-        ).is_some();
+            settings,
+            target_dir_abs_path,
+            source_dir_abs_path,
+            &target_abs,
+        )
+        .is_some();
         return Ok(Resolution::Unavailable(if has_source {
             format!("{} is not pulled", user_path_str)
         } else {
@@ -142,9 +173,15 @@ fn resolve_pair(
     }
 
     let Some((variant, source_abs)) = resolve_source_variant(
-        settings, target_dir_abs_path, source_dir_abs_path, &target_abs,
+        settings,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        &target_abs,
     ) else {
-        return Ok(Resolution::Unavailable(format!("{} is not managed", user_path_str)));
+        return Ok(Resolution::Unavailable(format!(
+            "{} is not managed",
+            user_path_str
+        )));
     };
     if variant == SourceVariant::Symlink {
         // The source is a symlink pointer but the target is a regular file —
@@ -154,7 +191,10 @@ fn resolve_pair(
             source_abs,
         });
     }
-    Ok(Resolution::Pair { target_abs, source_abs })
+    Ok(Resolution::Pair {
+        target_abs,
+        source_abs,
+    })
 }
 
 /// Report the diff of a single user-provided path: run the diff tool for a
@@ -168,18 +208,41 @@ fn diff_one_path(
     user_path: &Path,
 ) -> Result<(), DfmError> {
     match resolve_pair(
-        settings, target_dir_abs_path, source_dir_abs_path, target_ignore_regex, user_path,
+        settings,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        target_ignore_regex,
+        user_path,
     )? {
-        Resolution::Pair { target_abs, source_abs } => diff_regular(
-            settings, state, source_dir_abs_path, &target_abs, &source_abs,
+        Resolution::Pair {
+            target_abs,
+            source_abs,
+        } => diff_regular(
+            settings,
+            state,
+            source_dir_abs_path,
+            &target_abs,
+            &source_abs,
             &user_path.to_string_lossy(),
         ),
         Resolution::TargetSymlink { target_abs, label } => print_symlink_pointees(
-            settings, target_dir_abs_path, source_dir_abs_path, &target_abs, &label,
+            settings,
+            target_dir_abs_path,
+            source_dir_abs_path,
+            &target_abs,
+            &label,
         ),
-        Resolution::SourcePointer { target_label, source_abs } => {
+        Resolution::SourcePointer {
+            target_label,
+            source_abs,
+        } => {
             let pointer = read_symlink_pointer(&source_abs)?;
-            println!("{} has source symlink pointer {} pointing to {}", target_label, source_abs.display(), pointer);
+            println!(
+                "{} has source symlink pointer {} pointing to {}",
+                target_label,
+                source_abs.display(),
+                pointer
+            );
             Ok(())
         }
         Resolution::Unavailable(message) => {
@@ -210,9 +273,18 @@ fn print_symlink_pointees(
     symlink_label: &str,
 ) -> Result<(), DfmError> {
     let target_pointee = fs::read_link(target_abs).map_err(|e| io_err(target_abs, e))?;
-    println!("{} is a symlink pointing to {}", symlink_label, target_pointee.display());
+    println!(
+        "{} is a symlink pointing to {}",
+        symlink_label,
+        target_pointee.display()
+    );
 
-    match resolve_source_variant(settings, target_dir_abs_path, source_dir_abs_path, target_abs) {
+    match resolve_source_variant(
+        settings,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        target_abs,
+    ) {
         Some((SourceVariant::Symlink, source_abs)) => {
             let pointer = read_symlink_pointer(&source_abs)?;
             println!("{} points to {}", source_abs.display(), pointer);
@@ -240,7 +312,10 @@ fn diff_regular(
 ) -> Result<(), DfmError> {
     let sync_time_opt = get_sync_time(state, source_abs, source_dir_abs_path);
     let cmp = compare_files(
-        &settings.encrypted_postfix, target_abs, source_abs, sync_time_opt,
+        &settings.encrypted_postfix,
+        target_abs,
+        source_abs,
+        sync_time_opt,
     )?;
     if cmp == CompareByTimestamp::NonModified {
         println!("{} is synchronized", user_path_str);
@@ -260,7 +335,13 @@ fn diff_regular(
             println!("{} is synchronized", user_path_str);
             return Ok(());
         }
-        run_diff(settings, source_dir_abs_path, target_abs, source_abs, Some(decrypted))
+        run_diff(
+            settings,
+            source_dir_abs_path,
+            target_abs,
+            source_abs,
+            Some(decrypted),
+        )
     } else if compute_sha256(target_abs)? != compute_sha256(source_abs)? {
         run_diff(settings, source_dir_abs_path, target_abs, source_abs, None)
     } else {
@@ -293,7 +374,12 @@ fn run_diff(
         None => source_abs.to_path_buf(),
     };
 
-    let (prog, args) = build_diff_program(&settings.diff_tool_command, "diff_tool_command", target_abs, &source_arg)?;
+    let (prog, args) = build_diff_program(
+        &settings.diff_tool_command,
+        "diff_tool_command",
+        target_abs,
+        &source_arg,
+    )?;
 
     info!("running diff tool: {} {:?}", prog, args);
 
@@ -308,11 +394,7 @@ fn run_diff(
 /// paths are given). For each modified entry the matching non-interactive diff
 /// template runs with its stdout captured, all files' diffs are concatenated,
 /// and the whole report goes through the same pager `status` uses.
-fn diff_all(
-    settings: &Settings,
-    xdg: &Xdg,
-    state: &StateObject,
-) -> Result<(), DfmError> {
+fn diff_all(settings: &Settings, xdg: &Xdg, state: &StateObject) -> Result<(), DfmError> {
     let (target_dir_abs, source_dir_abs) = calc_working_dir_paths(settings)?;
 
     let target_ignore_regex = load_ignore_regex(&calc_local_ignore_file(xdg)?)?;
@@ -348,7 +430,12 @@ fn diff_all(
         );
 
         // Ignored on either side is not offered for diffing.
-        if check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_rel)).is_some() {
+        if check_path_matches_regex_component_wise(
+            &target_ignore_regex,
+            &PathBuf::from(&target_rel),
+        )
+        .is_some()
+        {
             continue;
         }
         if matches_source_ignore_regex(&source_ignore_regex, source_rel, settings).is_some() {
@@ -382,7 +469,13 @@ fn diff_all(
             Some(sync_time),
         )? {
             CompareByTimestamp::TargetModified | CompareByTimestamp::BothModified => {
-                let source_arg = prepare_source(settings, &mut scratch, &target_abs, &source_abs, is_encrypted)?;
+                let source_arg = prepare_source(
+                    settings,
+                    &mut scratch,
+                    &target_abs,
+                    &source_abs,
+                    is_encrypted,
+                )?;
                 run_diff_capture(
                     &settings.diff_all_tool_command_target,
                     "diff_all_tool_command_target",
@@ -392,7 +485,13 @@ fn diff_all(
                 )?;
             }
             CompareByTimestamp::SourceModified => {
-                let source_arg = prepare_source(settings, &mut scratch, &target_abs, &source_abs, is_encrypted)?;
+                let source_arg = prepare_source(
+                    settings,
+                    &mut scratch,
+                    &target_abs,
+                    &source_abs,
+                    is_encrypted,
+                )?;
                 run_diff_capture(
                     &settings.diff_all_tool_command_source,
                     "diff_all_tool_command_source",
@@ -602,21 +701,38 @@ pub fn diff_editable_command(
 
     for path in &paths {
         let (target_abs, source_abs) = match resolve_pair(
-            settings, &target_dir_abs_path, &source_dir_abs_path, &target_ignore_regex, path,
+            settings,
+            &target_dir_abs_path,
+            &source_dir_abs_path,
+            &target_ignore_regex,
+            path,
         )? {
-            Resolution::Pair { target_abs, source_abs } => (target_abs, source_abs),
+            Resolution::Pair {
+                target_abs,
+                source_abs,
+            } => (target_abs, source_abs),
             Resolution::TargetSymlink { label, .. } => {
-                return Err(DfmError::InvalidInput(format!("{} is a symlink and cannot be edited", label)));
+                return Err(DfmError::InvalidInput(format!(
+                    "{} is a symlink and cannot be edited",
+                    label
+                )));
             }
             Resolution::SourcePointer { target_label, .. } => {
                 return Err(DfmError::InvalidInput(format!(
-                    "{} is managed as a symlink and cannot be edited", target_label
+                    "{} is managed as a symlink and cannot be edited",
+                    target_label
                 )));
             }
             Resolution::Unavailable(message) => return Err(DfmError::InvalidInput(message)),
         };
         edit_one_pair(
-            settings, state, &source_dir_abs_path, &mut scratch, &target_abs, &source_abs, dry_run,
+            settings,
+            state,
+            &source_dir_abs_path,
+            &mut scratch,
+            &target_abs,
+            &source_abs,
+            dry_run,
         )?;
     }
     Ok(())
@@ -672,8 +788,13 @@ fn edit_one_pair(
     }
 
     write_back_edits(
-        settings, target_abs, source_abs, &target_copy, &source_copy,
-        target_edited, source_edited,
+        settings,
+        target_abs,
+        source_abs,
+        &target_copy,
+        &source_copy,
+        target_edited,
+        source_edited,
     )?;
 
     // Synchronization is only honest when the saved files hold equal content:
@@ -700,7 +821,10 @@ fn run_editable_tool(
     source_copy: &Path,
 ) -> Result<(), DfmError> {
     let (prog, args) = build_diff_program(
-        &settings.diff_editable_tool_command, "diff_editable_tool_command", target_copy, source_copy,
+        &settings.diff_editable_tool_command,
+        "diff_editable_tool_command",
+        target_copy,
+        source_copy,
     )?;
 
     info!("running editable diff tool: {} {:?}", prog, args);
@@ -708,7 +832,8 @@ fn run_editable_tool(
     let status = run_tool(prog.as_str(), &args, "diff")?;
     if !status.success() {
         return Err(DfmError::Other(format!(
-            "diff tool exited with status {}, {:?} was not changed", status, target_abs
+            "diff tool exited with status {}, {:?} was not changed",
+            status, target_abs
         )));
     }
     Ok(())
@@ -758,7 +883,9 @@ fn copy_keeping_permissions(from: &Path, to: &Path) -> Result<(), DfmError> {
 /// Grant the owner read+write on a scratch copy.
 fn make_owner_writable(path: &Path) -> Result<(), DfmError> {
     use std::os::unix::fs::PermissionsExt;
-    let mut permissions = fs::metadata(path).map_err(|e| io_err(path, e))?.permissions();
+    let mut permissions = fs::metadata(path)
+        .map_err(|e| io_err(path, e))?
+        .permissions();
     permissions.set_mode(permissions.mode() | 0o600);
     fs::set_permissions(path, permissions).map_err(|e| io_err(path, e))
 }
@@ -777,9 +904,12 @@ fn build_diff_program(
     let prog = prog.ok_or_else(|| DfmError::Other("diff command is empty".into()))?;
     let target_str = target_abs.to_string_lossy();
     let source_str = source_arg.to_string_lossy();
-    let args: Vec<String> = args.iter().map(|a| {
-        a.replace("{target}", target_str.as_ref())
-         .replace("{source}", source_str.as_ref())
-    }).collect();
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| {
+            a.replace("{target}", target_str.as_ref())
+                .replace("{source}", source_str.as_ref())
+        })
+        .collect();
     Ok((prog.to_string(), args))
 }

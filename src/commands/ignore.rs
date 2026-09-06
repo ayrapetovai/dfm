@@ -1,8 +1,8 @@
+use log::{debug, info};
+use regex::Regex;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use log::{debug, info};
-use regex::Regex;
 
 /// Ensure that FILE (opened in append mode) starts writing on a fresh line —
 /// if the file is non-empty and does not end with `\n`, write one first.
@@ -21,9 +21,12 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
     Ok(())
 }
 
-use dfm::*;
+use super::{
+    cli_path_in_scope, matches_source_ignore_regex, msg_dry_run, msg_nothing_to_do,
+    prune_ignore_file,
+};
 use crate::DfmError;
-use super::{msg_dry_run, msg_nothing_to_do, prune_ignore_file, cli_path_in_scope, matches_source_ignore_regex};
+use dfm::*;
 use microxdg::Xdg;
 
 /// Typed, per-command arguments for `ignore` (built by the dispatcher).
@@ -35,9 +38,17 @@ pub struct IgnoreArgs {
 }
 
 pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Result<(), DfmError> {
-    let IgnoreArgs { ref paths, ref patterns, ref remove, dry_run } = args;
+    let IgnoreArgs {
+        ref paths,
+        ref patterns,
+        ref remove,
+        dry_run,
+    } = args;
 
-    debug!("ignore paths {:?}, patterns {:?}, remove {:?}, dry-run {}", paths, patterns, remove, dry_run);
+    debug!(
+        "ignore paths {:?}, patterns {:?}, remove {:?}, dry-run {}",
+        paths, patterns, remove, dry_run
+    );
 
     // Mutually exclusive with `paths`/`patterns` (enforced by the clap
     // ArgGroup), so no other input can be pending here.
@@ -56,7 +67,8 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
     // Relative CLI paths are anchored at the current working directory (normal
     // shell semantics).
     let traversed_paths: Vec<PathBuf> = match paths {
-        Some(p) => p.iter()
+        Some(p) => p
+            .iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
             .collect::<Result<Vec<_>, _>>()?,
         None => empty_paths.clone(),
@@ -89,23 +101,34 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
             // prefix stripped (e.g. source `dot_my.log` -> target `.my.log`
             // stored as `^my\.log$`). `decode_source_rel_path` maps component
             // by component so a literal `dot_`-prefixed name is not corrupted.
-            let canonical = decode_source_rel_path(&rel_path.to_string_lossy(), &settings.dot_prefix, false)
-                .to_string_lossy()
-                .into_owned();
+            let canonical =
+                decode_source_rel_path(&rel_path.to_string_lossy(), &settings.dot_prefix, false)
+                    .to_string_lossy()
+                    .into_owned();
             let canonical_line = format!("^{}$", regex::escape(&canonical));
-            let matched = matches_source_ignore_regex(&source_ignore_regex, &rel_path.to_string_lossy(), settings);
+            let matched = matches_source_ignore_regex(
+                &source_ignore_regex,
+                &rel_path.to_string_lossy(),
+                settings,
+            );
             if let Some(matched) = matched {
                 if matched == canonical_line {
                     info!("source path {:?} is ignored already", path);
                 } else {
-                    info!("source path {:?} is ignored already, migrating entry {:?} to {:?}", path, matched, canonical_line);
+                    info!(
+                        "source path {:?} is ignored already, migrating entry {:?} to {:?}",
+                        path, matched, canonical_line
+                    );
                     if !dry_run {
                         migrate_ignore_line(&source_ignore_file_path, &matched, &canonical_line)?;
                     }
                 }
                 continue;
             } else {
-                debug!("adding path {:?} to source ignore file {:?}", path, source_ignore_file_path);
+                debug!(
+                    "adding path {:?} to source ignore file {:?}",
+                    path, source_ignore_file_path
+                );
                 source_ignore_lines.push(canonical_line);
                 continue;
             }
@@ -120,7 +143,10 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
                 info!("target path {:?} is ignored already", path);
                 continue;
             } else {
-                debug!("adding path {:?} to target ignore file {:?}", path, local_ignore_file_path);
+                debug!(
+                    "adding path {:?} to target ignore file {:?}",
+                    path, local_ignore_file_path
+                );
                 // Ignore records are matched against paths relative to the
                 // target directory root.
                 target_ignore_paths.push(rel_path);
@@ -130,7 +156,8 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
 
         if canonicalize_failed {
             return Err(DfmError::InvalidInput(format!(
-                "path {:?} does not exist", path
+                "path {:?} does not exist",
+                path
             )));
         }
 
@@ -139,7 +166,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
 
     let mut target_ignore_regexps = vec![];
 
-    if let Some(patterns_args) = patterns  {
+    if let Some(patterns_args) = patterns {
         for pattern in patterns_args {
             if let Err(e) = Regex::new(pattern) {
                 return Err(DfmError::other(format!("invalid regex pattern: {}", e)));
@@ -150,9 +177,9 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
         }
     }
 
-    if target_ignore_paths.is_empty() &&
-        source_ignore_lines.is_empty() &&
-        target_ignore_regexps.is_empty()
+    if target_ignore_paths.is_empty()
+        && source_ignore_lines.is_empty()
+        && target_ignore_regexps.is_empty()
     {
         info!("{}", msg_nothing_to_do());
         return Ok(());
@@ -162,7 +189,10 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
         info!("{}", msg_dry_run());
     }
 
-    debug!("adding ignore records to local ignore file {:?}", local_ignore_file_path);
+    debug!(
+        "adding ignore records to local ignore file {:?}",
+        local_ignore_file_path
+    );
 
     if !target_ignore_paths.is_empty() {
         if !dry_run {
@@ -215,7 +245,10 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
             Some(open_or_create_file(&source_ignore_file_path)?)
         };
         for ignore_line in source_ignore_lines {
-            info!("add path {:?} to {:?}", ignore_line, source_ignore_file_path);
+            info!(
+                "add path {:?} to {:?}",
+                ignore_line, source_ignore_file_path
+            );
             if let Some(source_ignore_file) = source_ignore_file.as_mut()
                 && let Err(e) = writeln!(source_ignore_file, "{}", ignore_line)
             {
@@ -253,16 +286,26 @@ fn migrate_ignore_line(ignore_file_path: &PathBuf, old: &str, new: &str) -> Resu
 fn remove_ignore_records(xdg: &Xdg, records: &[String], dry_run: bool) -> Result<(), DfmError> {
     let ignore_file_path = calc_local_ignore_file(xdg)?;
 
-    let removed = prune_ignore_file(&ignore_file_path, |t| {
-        records.iter().any(|r| r.as_str() == t || regex::escape(r.as_str()) == t)
-    }, dry_run)?;
+    let removed = prune_ignore_file(
+        &ignore_file_path,
+        |t| {
+            records
+                .iter()
+                .any(|r| r.as_str() == t || regex::escape(r.as_str()) == t)
+        },
+        dry_run,
+    )?;
 
     if removed.is_empty() {
         info!("no matching records found in ignore file");
         return Ok(());
     }
 
-    info!("removed {} record(s) from {:?}: {:?}",
-          removed.len(), ignore_file_path, removed);
+    info!(
+        "removed {} record(s) from {:?}: {:?}",
+        removed.len(),
+        ignore_file_path,
+        removed
+    );
     Ok(())
 }

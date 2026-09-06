@@ -85,10 +85,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
             // paths, `..`, `.`, empty strings and nested paths would escape
             // the source directory or recurse forever, so reject them.
             let mut components = std::path::Path::new(&pointer_content).components();
-            let is_single_component = matches!(
-                components.next(),
-                Some(std::path::Component::Normal(_))
-            ) && components.next().is_none();
+            let is_single_component =
+                matches!(components.next(), Some(std::path::Component::Normal(_)))
+                    && components.next().is_none();
             if !is_single_component {
                 return Err(DfmError::InvalidData(format!(
                     "invalid {} pointer value {:?} in {:?}: expected a single directory name or \".\"",
@@ -98,8 +97,12 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
             source_directory_pointer = source_directory_pointer.join(&pointer_content);
             trace!("searching .dfm_root in {:?}", source_directory_pointer);
         }
-        let pointer_parent = source_directory_pointer.parent()
-            .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_directory_pointer)))?;
+        let pointer_parent = source_directory_pointer.parent().ok_or_else(|| {
+            DfmError::Other(format!(
+                "cannot resolve parent directory of {:?}",
+                source_directory_pointer
+            ))
+        })?;
         fs::canonicalize(pointer_parent).map_err(|e| io_err(pointer_parent, e))?
     } else {
         tasks.push(InitTask::CreateSourceRootFile(
@@ -181,8 +184,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         }
         match task {
             InitTask::CreateSourceRootFile(path) => {
-                let parent = path.parent()
-                    .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", path)))?;
+                let parent = path.parent().ok_or_else(|| {
+                    DfmError::Other(format!("cannot resolve parent directory of {:?}", path))
+                })?;
                 fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
                 fs::write(&path, ".").map_err(|e| io_err(&path, e))?;
             }
@@ -196,9 +200,14 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                     ".current_diff",
                 ];
 
-                let source_ignore_parent = source_ignore_file_path.parent()
-                    .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_ignore_file_path)))?;
-                fs::create_dir_all(source_ignore_parent).map_err(|e| io_err(source_ignore_parent, e))?;
+                let source_ignore_parent = source_ignore_file_path.parent().ok_or_else(|| {
+                    DfmError::Other(format!(
+                        "cannot resolve parent directory of {:?}",
+                        source_ignore_file_path
+                    ))
+                })?;
+                fs::create_dir_all(source_ignore_parent)
+                    .map_err(|e| io_err(source_ignore_parent, e))?;
                 let mut source_ignore_file = open_or_create_file(&source_ignore_file_path)?;
 
                 for ignore_file_record in ignore_file_records {
@@ -212,8 +221,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                 }
             }
             InitTask::CreateStateFile(path, target_dir, source_dir) => {
-                let parent = path.parent()
-                    .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", path)))?;
+                let parent = path.parent().ok_or_else(|| {
+                    DfmError::Other(format!("cannot resolve parent directory of {:?}", path))
+                })?;
                 fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
 
                 let empty_state = StateObject::new(target_dir, source_dir);

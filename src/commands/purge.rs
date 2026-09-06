@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 
 use log::{debug, info};
 
-use dfm::*;
-use crate::DfmError;
-use microxdg::Xdg;
 use super::{msg_dry_run, source_rel_to_target_abs};
+use crate::DfmError;
+use dfm::*;
+use microxdg::Xdg;
 
 /// Typed, per-command arguments for `purge` (built by the dispatcher).
 pub struct PurgeArgs {
@@ -16,7 +16,12 @@ pub struct PurgeArgs {
     pub force: bool,
 }
 
-pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_config_file: &Option<PathBuf>) -> Result<(), DfmError> {
+pub fn purge_command(
+    settings: &Settings,
+    xdg: &Xdg,
+    args: PurgeArgs,
+    path_to_config_file: &Option<PathBuf>,
+) -> Result<(), DfmError> {
     let PurgeArgs {
         dry_run,
         ref keep_source,
@@ -27,19 +32,32 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
     let state_directory_path = match calc_state_directory_path(xdg) {
         Ok(path) => Some(path),
         Err(e) => {
-            info!("state directory path could not be resolved: {}; skipping state directory", e);
+            info!(
+                "state directory path could not be resolved: {}; skipping state directory",
+                e
+            );
             None
         }
     };
     let (target_dir_abs_path, source_dir_abs_path) = match calc_working_dir_paths(settings) {
         Ok((target, source)) => (Some(target), Some(source)),
         Err(e) => {
-            info!("working directory paths could not be resolved: {}; skipping source and target directories", e);
+            info!(
+                "working directory paths could not be resolved: {}; skipping source and target directories",
+                e
+            );
             (None, None)
         }
     };
-    debug!("purge path to config {:?}, state {:?}, source {:?} keep_source {}, keep_config_file {}, force {}",
-        path_to_config_file, state_directory_path, source_dir_abs_path, keep_source, keep_config_file, force);
+    debug!(
+        "purge path to config {:?}, state {:?}, source {:?} keep_source {}, keep_config_file {}, force {}",
+        path_to_config_file,
+        state_directory_path,
+        source_dir_abs_path,
+        keep_source,
+        keep_config_file,
+        force
+    );
 
     if dry_run {
         info!("{}", msg_dry_run());
@@ -52,18 +70,25 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
     if !*keep_source
         && !*force
         && !dry_run
-        && let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
-            (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path(xdg))
+        && let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) = (
+            &source_dir_abs_path,
+            &target_dir_abs_path,
+            calc_state_file_path(xdg),
+        )
         && let Ok(state) = read_state(&state_path)
     {
         let mut un_pulled = vec![];
         let mut un_pushed = vec![];
         for (rel_path, sync_time) in &state.syncs {
-            let (target_rel, target_abs) = source_rel_to_target_abs(rel_path, target_dir_abs_path, settings);
+            let (target_rel, target_abs) =
+                source_rel_to_target_abs(rel_path, target_dir_abs_path, settings);
             if let Ok(meta) = fs::symlink_metadata(&target_abs)
                 && meta.file_type().is_symlink()
             {
-                debug!("purge: managed symlink {:?} is preserved by replacement; skipping safety check", target_abs);
+                debug!(
+                    "purge: managed symlink {:?} is preserved by replacement; skipping safety check",
+                    target_abs
+                );
                 continue;
             }
 
@@ -72,30 +97,53 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
             // restoring a file to identical content with a newer mtime is not
             // a change, and a content change with a preserved mtime is.
             let source_path = PathBuf::from(source_dir_abs_path).join(rel_path);
-            let cmp = match compare_files(&settings.encrypted_postfix, &target_abs, &source_path, Some(sync_time)) {
+            let cmp = match compare_files(
+                &settings.encrypted_postfix,
+                &target_abs,
+                &source_path,
+                Some(sync_time),
+            ) {
                 Ok(cmp) => cmp,
                 Err(e) => {
-                    debug!("purge: cannot compare {:?} and {:?}: {}; skipping safety check", target_abs, source_path, e);
+                    debug!(
+                        "purge: cannot compare {:?} and {:?}: {}; skipping safety check",
+                        target_abs, source_path, e
+                    );
                     continue;
                 }
             };
-            if matches!(cmp, CompareByTimestamp::SourceModified | CompareByTimestamp::BothModified) {
+            if matches!(
+                cmp,
+                CompareByTimestamp::SourceModified | CompareByTimestamp::BothModified
+            ) {
                 un_pulled.push(rel_path.clone());
             }
-            if matches!(cmp, CompareByTimestamp::TargetModified | CompareByTimestamp::BothModified) {
+            if matches!(
+                cmp,
+                CompareByTimestamp::TargetModified | CompareByTimestamp::BothModified
+            ) {
                 un_pushed.push(target_rel);
             }
         }
 
         let mut msgs = vec![];
         if !un_pulled.is_empty() {
-            msgs.push(format!("source directory contains files with un-pulled changes: {:?}", un_pulled));
+            msgs.push(format!(
+                "source directory contains files with un-pulled changes: {:?}",
+                un_pulled
+            ));
         }
         if !un_pushed.is_empty() {
-            msgs.push(format!("target directory contains files with un-pushed changes: {:?}", un_pushed));
+            msgs.push(format!(
+                "target directory contains files with un-pushed changes: {:?}",
+                un_pushed
+            ));
         }
         if !msgs.is_empty() {
-            return Err(DfmError::Other(format!("{}; use --force to purge", msgs.join("; "))));
+            return Err(DfmError::Other(format!(
+                "{}; use --force to purge",
+                msgs.join("; ")
+            )));
         }
     }
 
@@ -104,12 +152,15 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
     if !keep_config_file {
         match path_to_config_file {
             None => info!("config file path could not be resolved; skipping"),
-            Some(path_to_config_file) if !path_to_config_file.exists() => info!("config file does not exist"),
+            Some(path_to_config_file) if !path_to_config_file.exists() => {
+                info!("config file does not exist")
+            }
             Some(path_to_config_file) => {
-                if !dry_run
-                    && let Err(e) = fs::remove_file(path_to_config_file)
-                {
-                    errors.push(format!("failed to remove config {:?}: {}", path_to_config_file, e));
+                if !dry_run && let Err(e) = fs::remove_file(path_to_config_file) {
+                    errors.push(format!(
+                        "failed to remove config {:?}: {}",
+                        path_to_config_file, e
+                    ));
                 }
                 info!("config removed {:?}", path_to_config_file);
 
@@ -129,10 +180,11 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
                     && let Some(config_dir) = path_to_config_file.parent()
                     && config_dir.exists()
                 {
-                    if !dry_run
-                        && let Err(e) = fs::remove_dir_all(config_dir)
-                    {
-                        errors.push(format!("failed to remove config directory {:?}: {}", config_dir, e));
+                    if !dry_run && let Err(e) = fs::remove_dir_all(config_dir) {
+                        errors.push(format!(
+                            "failed to remove config directory {:?}: {}",
+                            config_dir, e
+                        ));
                     }
                     info!("config directory removed {:?}", config_dir);
                 }
@@ -144,22 +196,35 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
     // removing the source directory does not leave dangling symlinks or lose
     // the files they point to. Runs before the source directory removal.
     if !*keep_source
-        && let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) =
-            (&source_dir_abs_path, &target_dir_abs_path, calc_state_file_path(xdg))
+        && let (Some(source_dir_abs_path), Some(target_dir_abs_path), Ok(state_path)) = (
+            &source_dir_abs_path,
+            &target_dir_abs_path,
+            calc_state_file_path(xdg),
+        )
         && let Ok(state) = read_state(&state_path)
     {
-        replace_managed_symlinks(settings, target_dir_abs_path, source_dir_abs_path, &state, dry_run, &mut errors);
+        replace_managed_symlinks(
+            settings,
+            target_dir_abs_path,
+            source_dir_abs_path,
+            &state,
+            dry_run,
+            &mut errors,
+        );
     }
 
     if !keep_source {
         match &source_dir_abs_path {
             None => info!("source directory path could not be resolved; skipping"),
-            Some(source_dir_abs_path) if !source_dir_abs_path.exists() => info!("source does not exist"),
+            Some(source_dir_abs_path) if !source_dir_abs_path.exists() => {
+                info!("source does not exist")
+            }
             Some(source_dir_abs_path) => {
-                if !dry_run
-                    && let Err(e) = fs::remove_dir_all(source_dir_abs_path)
-                {
-                    errors.push(format!("failed to remove source {:?}: {}", source_dir_abs_path, e));
+                if !dry_run && let Err(e) = fs::remove_dir_all(source_dir_abs_path) {
+                    errors.push(format!(
+                        "failed to remove source {:?}: {}",
+                        source_dir_abs_path, e
+                    ));
                 }
                 info!("source removed {:?}", source_dir_abs_path);
             }
@@ -168,12 +233,15 @@ pub fn purge_command(settings: &Settings, xdg: &Xdg, args: PurgeArgs, path_to_co
 
     match &state_directory_path {
         None => info!("state directory path could not be resolved; skipping"),
-        Some(state_directory_path) if !state_directory_path.exists() => info!("state directory does not exist"),
+        Some(state_directory_path) if !state_directory_path.exists() => {
+            info!("state directory does not exist")
+        }
         Some(state_directory_path) => {
-            if !dry_run
-                && let Err(e) = fs::remove_dir_all(state_directory_path)
-            {
-                errors.push(format!("failed to remove state {:?}: {}", state_directory_path, e));
+            if !dry_run && let Err(e) = fs::remove_dir_all(state_directory_path) {
+                errors.push(format!(
+                    "failed to remove state {:?}: {}",
+                    state_directory_path, e
+                ));
             }
             info!("state removed {:?}", state_directory_path);
         }
@@ -215,26 +283,42 @@ fn replace_managed_symlinks(
         let pointee_abs = if pointee.is_absolute() {
             remove_dots_from_path(&pointee)
         } else {
-            let joined = target_abs.parent().unwrap_or(target_dir_abs_path).join(&pointee);
+            let joined = target_abs
+                .parent()
+                .unwrap_or(target_dir_abs_path)
+                .join(&pointee);
             remove_dots_from_path(&joined)
         };
 
         if !pointee_abs.starts_with(source_dir_abs_path) {
-            info!("target symlink {:?} points outside the source directory; leaving as is", target_abs);
+            info!(
+                "target symlink {:?} points outside the source directory; leaving as is",
+                target_abs
+            );
             continue;
         }
 
         if dry_run {
-            info!("would replace target symlink {:?} with its pointee {:?}", target_abs, pointee_abs);
+            info!(
+                "would replace target symlink {:?} with its pointee {:?}",
+                target_abs, pointee_abs
+            );
             continue;
         }
 
         if let Err(e) = fs::remove_file(&target_abs) {
-            errors.push(format!("failed to remove target symlink {:?}: {}", target_abs, e));
+            errors.push(format!(
+                "failed to remove target symlink {:?}: {}",
+                target_abs, e
+            ));
             continue;
         }
 
-        let copy_result = if pointee_abs.to_str().unwrap_or("").ends_with(&settings.encrypted_postfix) {
+        let copy_result = if pointee_abs
+            .to_str()
+            .unwrap_or("")
+            .ends_with(&settings.encrypted_postfix)
+        {
             dfm::crypt::read_encrypted_file(settings, &pointee_abs, &target_abs)
         } else {
             fs::copy(&pointee_abs, &target_abs)
@@ -242,7 +326,10 @@ fn replace_managed_symlinks(
                 .map(|_| ())
         };
         if let Err(e) = copy_result {
-            errors.push(format!("failed to replace target symlink {:?} with {:?}: {}", target_abs, pointee_abs, e));
+            errors.push(format!(
+                "failed to replace target symlink {:?} with {:?}: {}",
+                target_abs, pointee_abs, e
+            ));
             continue;
         }
 
@@ -250,6 +337,9 @@ fn replace_managed_symlinks(
             let _ = fs::set_permissions(&target_abs, meta.permissions());
         }
 
-        info!("replaced target symlink {:?} with its pointee {:?}", target_abs, pointee_abs);
+        info!(
+            "replaced target symlink {:?} with its pointee {:?}",
+            target_abs, pointee_abs
+        );
     }
 }

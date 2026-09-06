@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use log::{debug, warn};
 
-use dfm::*;
 use crate::DfmError;
+use dfm::*;
 
 /// Typed, per-command arguments for `config` (built by the dispatcher).
 pub struct ConfigArgs {
@@ -32,14 +32,14 @@ pub fn config_command(args: ConfigArgs, path_to_config_file: &PathBuf) -> Result
         return Ok(());
     }
 
-    if let Some(param_name ) = get {
+    if let Some(param_name) = get {
         match read_property_from_config(path_to_config_file, param_name) {
             Ok(Some(v)) => {
                 println!("{}", v);
-            },
+            }
             Ok(None) => {
                 warn!("parameter {} is not found", param_name);
-            },
+            }
             Err(e) => {
                 return Err(e);
             }

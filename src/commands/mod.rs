@@ -15,7 +15,7 @@ pub(crate) mod sync;
 pub(crate) use add::add_command;
 pub(crate) use config::config_command;
 pub(crate) use diff::{diff_command, diff_editable_command};
-pub(crate) use encrypt::{encrypt_command, decrypt_command};
+pub(crate) use encrypt::{decrypt_command, encrypt_command};
 pub(crate) use forget::forget_command;
 pub(crate) use ignore::ignore_command;
 pub(crate) use init::init_command;
@@ -29,7 +29,7 @@ pub(crate) use sync::sync_command;
 pub(crate) use add::AddArgs;
 pub(crate) use config::ConfigArgs;
 pub(crate) use diff::{DiffArgs, DiffEditableArgs};
-pub(crate) use encrypt::{EncryptArgs, DecryptArgs};
+pub(crate) use encrypt::{DecryptArgs, EncryptArgs};
 pub(crate) use forget::ForgetArgs;
 pub(crate) use ignore::IgnoreArgs;
 pub(crate) use init::InitArgs;
@@ -40,18 +40,18 @@ pub(crate) use purge::PurgeArgs;
 pub(crate) use status::StatusArgs;
 pub(crate) use sync::SyncArgs;
 
-use std::fs;
-use std::env;
-use std::io::{IsTerminal, Write};
-use std::process::Stdio;
 use crate::DfmError;
+use filetime_creation::{FileTime, set_file_mtime, set_symlink_file_times};
+use log::{debug, error, info, log_enabled, trace};
+use microxdg::Xdg;
+use regex::RegexSet;
+use std::env;
+use std::fs;
+use std::io::{IsTerminal, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::SystemTime;
-use filetime_creation::{set_file_mtime, set_symlink_file_times, FileTime};
-use microxdg::Xdg;
-use log::{debug, error, info, trace, log_enabled};
-use regex::RegexSet;
 
 use dfm::*;
 
@@ -91,7 +91,10 @@ pub(crate) fn source_rel_to_target_abs(
         &settings.symlink_postfix,
         &settings.encrypted_postfix,
     );
-    (target_rel.clone(), remove_dots_from_path(&target_dir_abs.join(&target_rel)))
+    (
+        target_rel.clone(),
+        remove_dots_from_path(&target_dir_abs.join(&target_rel)),
+    )
 }
 
 /// Resolve a user-provided CLI path argument to an absolute path. Relative
@@ -140,11 +143,7 @@ pub(crate) fn get_sync_time<'a>(
 }
 
 /// Remove the sync entry for a file, computing the state key from its absolute path.
-pub(crate) fn remove_sync_state(
-    state: &mut StateObject,
-    path: &Path,
-    source_dir: &Path,
-) {
+pub(crate) fn remove_sync_state(state: &mut StateObject, path: &Path, source_dir: &Path) {
     state.syncs.remove(state_key_for(path, source_dir).as_str());
 }
 
@@ -159,7 +158,13 @@ pub(crate) fn update_sync_state(
     let sync_creation = SystemTime::now();
     let source_rel_path = state_key_for(source_abs, source_dir_abs);
     let sha256 = compute_sha256(source_abs)?;
-    state.syncs.insert(source_rel_path, SyncTime { mtime: sync_creation, sha256 });
+    state.syncs.insert(
+        source_rel_path,
+        SyncTime {
+            mtime: sync_creation,
+            sha256,
+        },
+    );
     let ft = FileTime::from_system_time(sync_creation);
     if target_abs.is_symlink() {
         // `set_file_mtime` follows the link and touches the pointee — for
@@ -182,9 +187,10 @@ pub(crate) fn list_directory_or_error(
 ) -> Result<Vec<PathBuf>, DfmError> {
     let ListDirectories { found, errors, .. } = list_directory(paths, rel_base, filter)?;
     if !errors.is_empty() {
-        return Err(DfmError::InvalidData(
-            format!("failed to process some subdirectories or files {}: {:?}", context, errors)
-        ));
+        return Err(DfmError::InvalidData(format!(
+            "failed to process some subdirectories or files {}: {:?}",
+            context, errors
+        )));
     }
     Ok(found)
 }
@@ -230,11 +236,15 @@ pub(crate) fn msg_tasks_failure(completed: usize, total: usize) -> String {
 pub(crate) fn read_symlink_pointer(pointer_file: &Path) -> Result<String, DfmError> {
     Ok(fs::read_to_string(pointer_file)
         .map_err(|e| io_err(pointer_file, e))?
-        .trim().to_string())
+        .trim()
+        .to_string())
 }
 
 /// Whether a symlink pointer file's (trimmed) content equals the pointee path.
-pub(crate) fn symlink_pointer_matches(pointer_file: &Path, pointee: &str) -> Result<bool, DfmError> {
+pub(crate) fn symlink_pointer_matches(
+    pointer_file: &Path,
+    pointee: &str,
+) -> Result<bool, DfmError> {
     Ok(read_symlink_pointer(pointer_file)? == pointee)
 }
 
@@ -262,20 +272,30 @@ pub(crate) fn resolve_source_variant(
     target_abs_path: &Path,
 ) -> Option<(SourceVariant, PathBuf)> {
     let encrypted = filepath_in_source_dir(
-        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path,
+        &settings.dot_prefix,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        target_abs_path,
         Some(&settings.encrypted_postfix),
     );
     if encrypted.exists() {
         return Some((SourceVariant::Encrypted, encrypted));
     }
     let plain = filepath_in_source_dir(
-        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path, None,
+        &settings.dot_prefix,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        target_abs_path,
+        None,
     );
     if plain.exists() {
         return Some((SourceVariant::Plain, plain));
     }
     let symlink = filepath_in_source_dir(
-        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path,
+        &settings.dot_prefix,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        target_abs_path,
         Some(&settings.symlink_postfix),
     );
     if symlink.exists() {
@@ -294,12 +314,13 @@ pub(crate) fn matches_source_ignore_regex(
     source_rel: &str,
     settings: &Settings,
 ) -> Option<String> {
-    check_path_matches_regex_component_wise(source_ignore_regex, &PathBuf::from(source_rel)).or_else(|| {
-        let canonical = decode_source_rel_path(source_rel, &settings.dot_prefix, false)
-            .to_string_lossy()
-            .into_owned();
-        check_path_matches_regex_component_wise(source_ignore_regex, &PathBuf::from(canonical))
-    })
+    check_path_matches_regex_component_wise(source_ignore_regex, &PathBuf::from(source_rel))
+        .or_else(|| {
+            let canonical = decode_source_rel_path(source_rel, &settings.dot_prefix, false)
+                .to_string_lossy()
+                .into_owned();
+            check_path_matches_regex_component_wise(source_ignore_regex, &PathBuf::from(canonical))
+        })
 }
 
 // Shared --dry-run / --force helpers
@@ -403,15 +424,22 @@ pub(crate) fn handle_ignore_or_override(
     ignored_log_target: &Path,
     ignore_file_path: &Path,
 ) -> IgnoreHandling {
-    let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, rel_path) else {
+    let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, rel_path)
+    else {
         return IgnoreHandling::NotIgnored;
     };
     if force {
-        info!("target {:?} is ignored, --force overrides, will remove /{}/ from ignore file", ignored_log_target, pattern);
+        info!(
+            "target {:?} is ignored, --force overrides, will remove /{}/ from ignore file",
+            ignored_log_target, pattern
+        );
         patterns_to_remove.push(pattern);
         IgnoreHandling::Override
     } else {
-        info!("target {:?} is ignored by regex /{}/ in file {:?}", ignored_log_target, pattern, ignore_file_path);
+        info!(
+            "target {:?} is ignored by regex /{}/ in file {:?}",
+            ignored_log_target, pattern, ignore_file_path
+        );
         IgnoreHandling::Skip
     }
 }
@@ -448,7 +476,12 @@ pub(crate) fn sync_file_copy(
     let permissions = from.metadata().map_err(|e| io_err(from, e))?.permissions();
     trace!("copy permissions {:o}", permissions.mode());
     if let Err(e) = fs::set_permissions(to, permissions.clone()) {
-        error!("failed to set permissions {:?} to {:?}: {}", permissions.mode(), to, e);
+        error!(
+            "failed to set permissions {:?} to {:?}: {}",
+            permissions.mode(),
+            to,
+            e
+        );
     }
 
     // `source_file_in_source_dir` is always the source-dir file.  The
@@ -456,7 +489,11 @@ pub(crate) fn sync_file_copy(
     // must be passed as `target_abs` so `update_sync_state` sets its mtime.
     // In pull: from == source_file_in_source_dir, to = the target file.
     // In add:  to   == source_file_in_source_dir, from = the target file.
-    let other = if source_file_in_source_dir == from { to } else { from };
+    let other = if source_file_in_source_dir == from {
+        to
+    } else {
+        from
+    };
     update_sync_state(state, source_file_in_source_dir, other, source_dir_abs_path)?;
 
     if log_enabled!(log::Level::Trace) {
@@ -464,8 +501,10 @@ pub(crate) fn sync_file_copy(
         let to_meta = to.metadata().map_err(|e| io_err(to, e))?;
         let to_modified = to_meta.modified().map_err(|e| io_err(to, e))?;
         let from_modified = from_meta.modified().map_err(|e| io_err(from, e))?;
-        trace!("final state:\n from: mtime={:?}\n to: mtime={:?}",
-             to_modified, from_modified);
+        trace!(
+            "final state:\n from: mtime={:?}\n to: mtime={:?}",
+            to_modified, from_modified
+        );
     }
 
     Ok(())
@@ -562,13 +601,16 @@ pub(crate) fn run_merge(
     let target_path = merge_dir.join(format!("target.{}", file_name));
     let source_path = merge_dir.join(format!("source.{}", file_name));
     let result_path = merge_dir.join(format!("result.{}", file_name));
-    fs::copy(target_abs_path, &target_path).map_err(|e| io_copy_err(target_abs_path, &target_path, e))?;
+    fs::copy(target_abs_path, &target_path)
+        .map_err(|e| io_copy_err(target_abs_path, &target_path, e))?;
     if source_is_encrypted {
         dfm::crypt::read_encrypted_file(settings, source_abs_path, &source_path)?;
     } else {
-        fs::copy(source_abs_path, &source_path).map_err(|e| io_copy_err(source_abs_path, &source_path, e))?;
+        fs::copy(source_abs_path, &source_path)
+            .map_err(|e| io_copy_err(source_abs_path, &source_path, e))?;
     }
-    let command = resolve_tool_command(&settings.merge_tool_command, "merge", "merge_tool_command")?;
+    let command =
+        resolve_tool_command(&settings.merge_tool_command, "merge", "merge_tool_command")?;
 
     // Parse command template: first token is the program, rest are arguments
     // with {target}, {source} and {result} replaced by actual temp file paths.
@@ -577,12 +619,14 @@ pub(crate) fn run_merge(
     let target_str = target_path.to_string_lossy();
     let source_str = source_path.to_string_lossy();
     let result_str = result_path.to_string_lossy();
-    let args: Vec<String> = args.iter().map(|a| {
-
-        a.replace("{target}", target_str.as_ref())
-         .replace("{source}", source_str.as_ref())
-         .replace("{result}", result_str.as_ref())
-    }).collect();
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| {
+            a.replace("{target}", target_str.as_ref())
+                .replace("{source}", source_str.as_ref())
+                .replace("{result}", result_str.as_ref())
+        })
+        .collect();
 
     info!("running merge tool: {} {:?}", prog, args);
 
@@ -592,7 +636,10 @@ pub(crate) fn run_merge(
         let reason = if !status.success() {
             format!("merge tool exited with status {}", status)
         } else {
-            format!("merge tool exited successfully but did not create {:?}", result_path)
+            format!(
+                "merge tool exited successfully but did not create {:?}",
+                result_path
+            )
         };
         return Err(DfmError::Other(reason));
     }
@@ -601,9 +648,11 @@ pub(crate) fn run_merge(
     if source_is_encrypted {
         dfm::crypt::write_encrypted_file(settings, &result_path, source_abs_path)?;
     } else {
-        fs::copy(&result_path, source_abs_path).map_err(|e| io_copy_err(&result_path, source_abs_path, e))?;
+        fs::copy(&result_path, source_abs_path)
+            .map_err(|e| io_copy_err(&result_path, source_abs_path, e))?;
     }
-    fs::copy(&result_path, target_abs_path).map_err(|e| io_copy_err(&result_path, target_abs_path, e))?;
+    fs::copy(&result_path, target_abs_path)
+        .map_err(|e| io_copy_err(&result_path, target_abs_path, e))?;
 
     // Update sync state and mtimes
     update_sync_state(state, source_abs_path, target_abs_path, source_dir_abs_path)?;
@@ -625,7 +674,10 @@ pub(crate) fn run_tool(
     let mut child = match std::process::Command::new(prog).args(args).spawn() {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(DfmError::NotFound(format!("{} tool {} not found", tool_label, prog)));
+            return Err(DfmError::NotFound(format!(
+                "{} tool {} not found",
+                tool_label, prog
+            )));
         }
         Err(e) => return Err(DfmError::Io(e)),
     };

@@ -1514,10 +1514,7 @@ fn resolve_set_value(
                 )));
             }
             Regex::new(operand).map_err(|e| {
-                DfmError::InvalidInput(format!(
-                    "invalid regex added to `{}`: {}",
-                    param_name, e
-                ))
+                DfmError::InvalidInput(format!("invalid regex added to `{}`: {}", param_name, e))
             })?;
             elements.push(operand.to_owned());
         }
@@ -1533,10 +1530,7 @@ fn resolve_set_value(
         }
         "rmi" => {
             let index: usize = operand.parse().map_err(|_| {
-                DfmError::InvalidInput(format!(
-                    "invalid index for `{}`: {}",
-                    param_name, operand
-                ))
+                DfmError::InvalidInput(format!("invalid index for `{}`: {}", param_name, operand))
             })?;
             if index >= elements.len() {
                 return Err(DfmError::InvalidInput(format!(
@@ -1574,10 +1568,7 @@ pub fn write_property_to_config(
     let new_value = resolve_set_value(param_name, param_new_value, &config)?;
     // Rebuild the file with the whole table so the other properties survive.
     let mut config = config;
-    config.insert(
-        param_name.to_owned(),
-        new_value,
-    );
+    config.insert(param_name.to_owned(), new_value);
     let new_content = toml::to_string_pretty(&config)?;
     atomic_write(path_to_config_file, new_content)
 }

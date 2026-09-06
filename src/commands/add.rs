@@ -1,19 +1,20 @@
+use crate::DfmError;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
-use crate::DfmError;
 use std::path::{Path, PathBuf};
 
 use log::{debug, error, info, warn};
 use regex::RegexSet;
 
+use super::{
+    IgnoreHandling, cli_path_in_scope, cli_path_to_abs, get_sync_time, handle_ignore_or_override,
+    list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure,
+    prune_matched_ignore_patterns, remove_sync_state, report_progress, require_force,
+    symlink_pointer_matches, sync_file_copy, update_sync_state,
+};
 use dfm::*;
 use microxdg::Xdg;
-use super::{sync_file_copy, require_force, symlink_pointer_matches,
-            update_sync_state, remove_sync_state, get_sync_time,
-            list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure, report_progress,
-            prune_matched_ignore_patterns, handle_ignore_or_override, IgnoreHandling, cli_path_to_abs,
-            cli_path_in_scope};
 
 /// Typed, pre-resolved arguments for the `add` command (built by the
 /// dispatcher from the matching clap subcommand).
@@ -39,11 +40,18 @@ enum AddTask {
 fn describe_add_task(task: &AddTask) -> String {
     match task {
         AddTask::Copy(target, source) => format!("copy target {:?} to source {:?}", target, source),
-        AddTask::CopyEncryptedFile(target, source) => format!("copy encrypted target {:?} to source {:?}", target, source),
-        AddTask::CreateSymlinkFilePointer(source_symlink, _target, points_to) =>
-            format!("directing source symlink file {:?} to the pointee of the target symlink {:?}", source_symlink, points_to),
+        AddTask::CopyEncryptedFile(target, source) => {
+            format!("copy encrypted target {:?} to source {:?}", target, source)
+        }
+        AddTask::CreateSymlinkFilePointer(source_symlink, _target, points_to) => format!(
+            "directing source symlink file {:?} to the pointee of the target symlink {:?}",
+            source_symlink, points_to
+        ),
         AddTask::CopyAndSymlink(target, source) => {
-            format!("copy target {:?} to source {:?} and replace target with symlink", target, source)
+            format!(
+                "copy target {:?} to source {:?} and replace target with symlink",
+                target, source
+            )
         }
         AddTask::UpdateSync(source, _target) => format!("recording sync state for {:?}", source),
     }
@@ -68,7 +76,10 @@ fn handle_target_symlink(
     explicitly_named: bool,
 ) -> Result<(), DfmError> {
     if encrypt {
-        error_messages.push(format!("Target {:?} is a symlink, encryption is impossible", target_path));
+        error_messages.push(format!(
+            "Target {:?} is a symlink, encryption is impossible",
+            target_path
+        ));
         return Ok(());
     }
 
@@ -82,33 +93,47 @@ fn handle_target_symlink(
         fs::canonicalize(target_symlink_abs_path_raw.parent().get_or_insert(&root))
             .map_err(|e| io_err(target_symlink_abs_path_raw.parent().get_or_insert(&root), e))?
     };
-    target_symlink_abs_path.push(target_symlink_abs_path_raw.file_name()
-        .ok_or_else(|| DfmError::InvalidInput("path has no file name".into()))?);
+    target_symlink_abs_path.push(
+        target_symlink_abs_path_raw
+            .file_name()
+            .ok_or_else(|| DfmError::InvalidInput("path has no file name".into()))?,
+    );
 
     // A symlink outside the target directory would compute a `..`-escaping
     // source path (its pointer file would be written outside the source dir and
     // the state key would poison state.toml), so it is skipped like
     // `handle_target_file` skips out-of-target files.
     if target_symlink_abs_path.starts_with(source_dir_abs_path) {
-        info!("target symlink {:?} resides in source directory, ignoring", target_symlink_abs_path);
+        info!(
+            "target symlink {:?} resides in source directory, ignoring",
+            target_symlink_abs_path
+        );
         return Ok(());
     }
 
     if !target_symlink_abs_path.starts_with(target_dir_abs_path) {
-        info!("target symlink {:?} does not reside in target directory {:?}, skipping...", target_symlink_abs_path, target_dir_abs_path);
+        info!(
+            "target symlink {:?} does not reside in target directory {:?}, skipping...",
+            target_symlink_abs_path, target_dir_abs_path
+        );
         return Ok(());
     }
 
     let symlink_rel = file_path_relative_to(&target_symlink_abs_path, target_dir_abs_path);
     if handle_ignore_or_override(
-        target_ignore_regex, &symlink_rel, force,
-        patterns_to_remove, &target_symlink_abs_path, target_ignore_file_path,
-    ) == IgnoreHandling::Skip {
+        target_ignore_regex,
+        &symlink_rel,
+        force,
+        patterns_to_remove,
+        &target_symlink_abs_path,
+        target_ignore_file_path,
+    ) == IgnoreHandling::Skip
+    {
         return Ok(());
     }
 
-    let target_symlink_pointee_rel_path = fs::read_link(&target_symlink_abs_path)
-        .map_err(|e| io_err(&target_symlink_abs_path, e))?;
+    let target_symlink_pointee_rel_path =
+        fs::read_link(&target_symlink_abs_path).map_err(|e| io_err(&target_symlink_abs_path, e))?;
     let target_symlink_pointee_abs_path = match fs::canonicalize(&target_symlink_pointee_rel_path) {
         Ok(p) => p,
         // A dangling symlink discovered during traversal must not abort the
@@ -128,14 +153,22 @@ fn handle_target_symlink(
             )));
         }
     };
-    debug!("target symlink {:?}\n\tpoints to {:?}", target_symlink_abs_path, target_symlink_pointee_abs_path);
+    debug!(
+        "target symlink {:?}\n\tpoints to {:?}",
+        target_symlink_abs_path, target_symlink_pointee_abs_path
+    );
 
     let source_symlink_file_abs_path = filepath_in_source_dir(
-        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path,
-        &target_symlink_abs_path, Some(&settings.symlink_postfix),
+        &settings.dot_prefix,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        &target_symlink_abs_path,
+        Some(&settings.symlink_postfix),
     );
     let source_symlink_file_exists = source_symlink_file_abs_path.exists();
-    let target_pointee_rel_str = target_symlink_pointee_rel_path.to_string_lossy().into_owned();
+    let target_pointee_rel_str = target_symlink_pointee_rel_path
+        .to_string_lossy()
+        .into_owned();
     let source_symlink_file_points_to_right_target = if source_symlink_file_exists {
         symlink_pointer_matches(&source_symlink_file_abs_path, &target_pointee_rel_str)
             .unwrap_or(false)
@@ -145,23 +178,45 @@ fn handle_target_symlink(
 
     if force || (source_symlink_file_exists && !source_symlink_file_points_to_right_target) {
         if !source_symlink_file_points_to_right_target {
-            debug!("source symlink file points to the wrong file, must be {:?}", target_symlink_pointee_rel_path);
+            debug!(
+                "source symlink file points to the wrong file, must be {:?}",
+                target_symlink_pointee_rel_path
+            );
         }
-        tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_pointee_rel_str.clone()));
+        tasks.push(AddTask::CreateSymlinkFilePointer(
+            source_symlink_file_abs_path.clone(),
+            target_symlink_abs_path.clone(),
+            target_pointee_rel_str.clone(),
+        ));
     } else if source_symlink_file_points_to_right_target {
-        debug!("for target symlink {:?},\n\tsource symlink file {:?} already exists, skipping...", target_symlink_abs_path, source_symlink_file_abs_path);
+        debug!(
+            "for target symlink {:?},\n\tsource symlink file {:?} already exists, skipping...",
+            target_symlink_abs_path, source_symlink_file_abs_path
+        );
     } else if !target_symlink_pointee_abs_path.starts_with(source_dir_abs_path) {
-        debug!("for target symlink {:?},\n\tdoes not have a source symlink file {:?}", target_symlink_abs_path, source_symlink_file_abs_path);
-        tasks.push(AddTask::CreateSymlinkFilePointer(source_symlink_file_abs_path.clone(), target_symlink_abs_path.clone(), target_pointee_rel_str));
+        debug!(
+            "for target symlink {:?},\n\tdoes not have a source symlink file {:?}",
+            target_symlink_abs_path, source_symlink_file_abs_path
+        );
+        tasks.push(AddTask::CreateSymlinkFilePointer(
+            source_symlink_file_abs_path.clone(),
+            target_symlink_abs_path.clone(),
+            target_pointee_rel_str,
+        ));
     } else {
-        debug!("target symlink {:?}\n\tpointee is managed as {:?}", source_symlink_file_abs_path, target_symlink_pointee_abs_path);
+        debug!(
+            "target symlink {:?}\n\tpointee is managed as {:?}",
+            source_symlink_file_abs_path, target_symlink_pointee_abs_path
+        );
     }
 
     // Do NOT fall through to pointee processing — when walking the target
     // directory the pointee is discovered independently, and re-processing it
     // here would produce duplicate output for files already in state.
-    debug!("target symlink {:?} points to {:?}, skipping pointee",
-           target_symlink_abs_path, target_symlink_pointee_abs_path);
+    debug!(
+        "target symlink {:?} points to {:?}, skipping pointee",
+        target_symlink_abs_path, target_symlink_pointee_abs_path
+    );
     Ok(())
 }
 
@@ -190,12 +245,18 @@ fn handle_target_file(
     let target_abs_path = fs::canonicalize(target_path).map_err(|e| io_err(target_path, e))?;
 
     if target_abs_path.starts_with(source_dir_abs_path) {
-        info!("target {:?} resides in source directory, ignoring", target_abs_path);
+        info!(
+            "target {:?} resides in source directory, ignoring",
+            target_abs_path
+        );
         return Ok(());
     }
 
     if !target_abs_path.starts_with(target_dir_abs_path) {
-        info!("target {:?} does not reside in target directory {:?}, skipping...", target_abs_path, target_dir_abs_path);
+        info!(
+            "target {:?} does not reside in target directory {:?}, skipping...",
+            target_abs_path, target_dir_abs_path
+        );
         return Ok(());
     }
 
@@ -204,69 +265,109 @@ fn handle_target_file(
     // self-referential conflicts. The config file is ordinary user data and
     // is managed like any other dotfile.
     if internal_dfm_paths.contains(&target_abs_path) {
-        debug!("target {:?} is an internal dfm file, skipping", target_abs_path);
+        debug!(
+            "target {:?} is an internal dfm file, skipping",
+            target_abs_path
+        );
         return Ok(());
     }
 
     let target_rel = file_path_relative_to(&target_abs_path, target_dir_abs_path);
     if handle_ignore_or_override(
-        target_ignore_regex, &target_rel, force,
-        patterns_to_remove, &target_abs_path, target_ignore_file_path,
-    ) == IgnoreHandling::Skip {
+        target_ignore_regex,
+        &target_rel,
+        force,
+        patterns_to_remove,
+        &target_abs_path,
+        target_ignore_file_path,
+    ) == IgnoreHandling::Skip
+    {
         return Ok(());
     }
 
-    let encrypt = if let Some(pattern) = check_path_matches_regex_substring(encryption_regex_set, &target_abs_path) {
-        debug!("target {:?} is forced to be encrypted by regex /{}/ from config file", target_abs_path, pattern);
+    let encrypt = if let Some(pattern) =
+        check_path_matches_regex_substring(encryption_regex_set, &target_abs_path)
+    {
+        debug!(
+            "target {:?} is forced to be encrypted by regex /{}/ from config file",
+            target_abs_path, pattern
+        );
         true
     } else {
         encrypt_flag
     };
 
-    let encrypted_source_abs_path = filepath_in_source_dir(&settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, &target_abs_path, Some(&settings.encrypted_postfix));
-    let regular_source_abs_path = filepath_in_source_dir(&settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, &target_abs_path, None);
+    let encrypted_source_abs_path = filepath_in_source_dir(
+        &settings.dot_prefix,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        &target_abs_path,
+        Some(&settings.encrypted_postfix),
+    );
+    let regular_source_abs_path = filepath_in_source_dir(
+        &settings.dot_prefix,
+        target_dir_abs_path,
+        source_dir_abs_path,
+        &target_abs_path,
+        None,
+    );
 
     let (source_is_encrypted, source_abs_path) = if encrypted_source_abs_path.exists() || encrypt {
         if regular_source_abs_path.exists() {
             // Converting from plain to encrypted. The plain source will be
             // deleted after encryption, so check if it has un-synced changes.
             let sync_time_opt = get_sync_time(state, &regular_source_abs_path, source_dir_abs_path);
-            let cmp = compare_files(&settings.encrypted_postfix, &target_abs_path, &regular_source_abs_path, sync_time_opt)?;
+            let cmp = compare_files(
+                &settings.encrypted_postfix,
+                &target_abs_path,
+                &regular_source_abs_path,
+                sync_time_opt,
+            )?;
 
             match cmp {
                 CompareByTimestamp::BothModified => {
                     *conflict_detected = true;
                     if !force {
-                        warn!("both target {:?} and plain source {:?} were modified, encryption would delete plain source changes",
-                            target_abs_path, regular_source_abs_path);
+                        warn!(
+                            "both target {:?} and plain source {:?} were modified, encryption would delete plain source changes",
+                            target_abs_path, regular_source_abs_path
+                        );
                         return Ok(());
                     }
-                },
+                }
                 CompareByTimestamp::SourceModified => {
                     *conflict_detected = true;
                     if !force {
-                        warn!("plain source {:?} was modified, encryption would discard those changes", regular_source_abs_path);
+                        warn!(
+                            "plain source {:?} was modified, encryption would discard those changes",
+                            regular_source_abs_path
+                        );
                         return Ok(());
                     }
-                },
+                }
                 CompareByTimestamp::NonModified => {
                     // safe to replace
-                },
+                }
                 CompareByTimestamp::TargetModified => {
                     // target is truth for add, safe to replace
-                },
+                }
                 CompareByTimestamp::NeverSynchronized => {
                     let content_equal = {
-                        let t = fs::read(&target_abs_path).map_err(|e| io_err(&target_abs_path, e))?;
-                        let s = fs::read(&regular_source_abs_path).map_err(|e| io_err(&regular_source_abs_path, e))?;
+                        let t =
+                            fs::read(&target_abs_path).map_err(|e| io_err(&target_abs_path, e))?;
+                        let s = fs::read(&regular_source_abs_path)
+                            .map_err(|e| io_err(&regular_source_abs_path, e))?;
                         t == s
                     };
                     if !(content_equal || force) {
-                        warn!("plain source {:?}\n\tand target {:?}\n\tare different and were never synchronized.", regular_source_abs_path, target_abs_path);
+                        warn!(
+                            "plain source {:?}\n\tand target {:?}\n\tare different and were never synchronized.",
+                            regular_source_abs_path, target_abs_path
+                        );
                         warn!("Use --force to replace plain source with encrypted source");
                         return Ok(());
                     }
-                },
+                }
             }
         }
         (true, encrypted_source_abs_path)
@@ -277,34 +378,46 @@ fn handle_target_file(
     // check if a conflict could take place
     if source_abs_path.exists() {
         let sync_time_opt = get_sync_time(state, &source_abs_path, source_dir_abs_path);
-        let cmp = compare_files(&settings.encrypted_postfix, &target_abs_path, &source_abs_path, sync_time_opt)?;
+        let cmp = compare_files(
+            &settings.encrypted_postfix,
+            &target_abs_path,
+            &source_abs_path,
+            sync_time_opt,
+        )?;
 
         match cmp {
             CompareByTimestamp::BothModified => {
                 *conflict_detected = true;
                 if !force {
-                    warn!("both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
-                        target_abs_path, source_abs_path);
+                    warn!(
+                        "both target {:?} and source {:?} were modified independently, `add` on this target will overwrite source",
+                        target_abs_path, source_abs_path
+                    );
                     return Ok(());
                 }
-            },
+            }
             CompareByTimestamp::SourceModified => {
                 *conflict_detected = true;
                 if !force {
-                    warn!("source {:?} was modified, `add`ing the target {:?} will overwrite changes in source",
-                        source_abs_path, target_abs_path);
+                    warn!(
+                        "source {:?} was modified, `add`ing the target {:?} will overwrite changes in source",
+                        source_abs_path, target_abs_path
+                    );
                     return Ok(());
                 }
-            },
+            }
             CompareByTimestamp::NonModified => {
                 debug!("neither target nor source were modified");
                 if !force {
                     return Ok(());
                 }
-            },
+            }
             CompareByTimestamp::TargetModified => {
-                info!("only target {:?} was modified, no conflicts", target_abs_path);
-            },
+                info!(
+                    "only target {:?} was modified, no conflicts",
+                    target_abs_path
+                );
+            }
             CompareByTimestamp::NeverSynchronized => {
                 let content_equal = {
                     let t = fs::read(&target_abs_path).map_err(|e| io_err(&target_abs_path, e))?;
@@ -313,15 +426,21 @@ fn handle_target_file(
                 };
                 if content_equal {
                     debug!("target and source are identical, recording sync state");
-                    tasks.push(AddTask::UpdateSync(source_abs_path.clone(), target_abs_path.clone()));
+                    tasks.push(AddTask::UpdateSync(
+                        source_abs_path.clone(),
+                        target_abs_path.clone(),
+                    ));
                     return Ok(());
                 }
                 *conflict_detected = true;
                 if !force {
-                    warn!("target {:?}\n\tand source {:?}\n\tare different and were never synchronized. Use --force to overwrite", target_abs_path, source_abs_path);
+                    warn!(
+                        "target {:?}\n\tand source {:?}\n\tare different and were never synchronized. Use --force to overwrite",
+                        target_abs_path, source_abs_path
+                    );
                     return Ok(());
                 }
-            },
+            }
         }
 
         debug!("no conflict detected for target {:?}", target_abs_path);
@@ -330,7 +449,10 @@ fn handle_target_file(
     }
 
     if symlink && (encrypt || source_is_encrypted) {
-        error_messages.push(format!("Target {:?} is encrypted but --symlink was requested", target_abs_path));
+        error_messages.push(format!(
+            "Target {:?} is encrypted but --symlink was requested",
+            target_abs_path
+        ));
     } else if encrypt || source_is_encrypted {
         tasks.push(AddTask::CopyEncryptedFile(target_abs_path, source_abs_path));
     } else if symlink {
@@ -341,13 +463,29 @@ fn handle_target_file(
     Ok(())
 }
 
-pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut StateObject) -> Result<(), DfmError> {
-    let AddArgs { ref paths, ref force, ref symlink, ref encrypt, dry_run } = args;
+pub fn add_command(
+    settings: &Settings,
+    xdg: &Xdg,
+    args: AddArgs,
+    state: &mut StateObject,
+) -> Result<(), DfmError> {
+    let AddArgs {
+        ref paths,
+        ref force,
+        ref symlink,
+        ref encrypt,
+        dry_run,
+    } = args;
 
-    debug!("add paths {:?}, force {}, symlink {}, encrypt {}", paths, force, symlink, encrypt);
+    debug!(
+        "add paths {:?}, force {}, symlink {}, encrypt {}",
+        paths, force, symlink, encrypt
+    );
 
     if *symlink && *encrypt {
-        return Err(DfmError::other("--symlink and --encrypt are mutually exclusive"));
+        return Err(DfmError::other(
+            "--symlink and --encrypt are mutually exclusive",
+        ));
     }
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
@@ -355,18 +493,19 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
     // Compute internal dfm file paths so they can be excluded from traversal.
     // These files (state, target-ignore) are rewritten by dfm during sync
     // runs — managing them via `add` would create self-referential conflicts.
-    let internal_dfm_paths: Vec<PathBuf> = [
-        calc_state_file_path(xdg),
-        calc_local_ignore_file(xdg),
-    ].into_iter().filter_map(|r| r.ok()).collect();
+    let internal_dfm_paths: Vec<PathBuf> = [calc_state_file_path(xdg), calc_local_ignore_file(xdg)]
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .collect();
 
     // Relative CLI paths are anchored at the current working directory (normal
     // shell semantics) and may not resolve out of the managed tree.
     let paths = match paths {
-        Some(p) => p.iter()
+        Some(p) => p
+            .iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
             .collect::<Result<Vec<_>, _>>()?,
-        None => vec![target_dir_abs_path.clone()]
+        None => vec![target_dir_abs_path.clone()],
     };
 
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
@@ -374,7 +513,10 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
     // Compiled once per command, not per file: building force-encryption
     // patterns inside the traversal loop was O(files × patterns) compaction work.
     let encryption_regex_set = RegexSet::new(
-        settings.force_encryption_for.iter().map(|r| r.as_str().to_owned())
+        settings
+            .force_encryption_for
+            .iter()
+            .map(|r| r.as_str().to_owned()),
     )?;
 
     let traversed_paths = list_directory_or_error(
@@ -401,9 +543,18 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         if target_path.is_symlink() {
             let explicitly_named = paths.iter().any(|p| p == target_path);
             match handle_target_symlink(
-                settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
-                &target_ignore_regex, &target_ignore_file_path,
-                *encrypt, *force, &mut tasks, &mut error_messages, &mut patterns_to_remove, explicitly_named,
+                settings,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+                target_path,
+                &target_ignore_regex,
+                &target_ignore_file_path,
+                *encrypt,
+                *force,
+                &mut tasks,
+                &mut error_messages,
+                &mut patterns_to_remove,
+                explicitly_named,
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
@@ -413,11 +564,22 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
             }
         } else {
             match handle_target_file(
-                settings, &target_dir_abs_path, &source_dir_abs_path, target_path,
-                &target_ignore_regex, &target_ignore_file_path,
-                &internal_dfm_paths, &encryption_regex_set,
-                *symlink, *encrypt, *force, state,
-                &mut tasks, &mut error_messages, &mut conflict_detected, &mut patterns_to_remove,
+                settings,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+                target_path,
+                &target_ignore_regex,
+                &target_ignore_file_path,
+                &internal_dfm_paths,
+                &encryption_regex_set,
+                *symlink,
+                *encrypt,
+                *force,
+                state,
+                &mut tasks,
+                &mut error_messages,
+                &mut conflict_detected,
+                &mut patterns_to_remove,
             ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
@@ -460,7 +622,13 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         if dry_run {
             continue;
         }
-        match execute_add_task(&task, settings, state, &target_dir_abs_path, &source_dir_abs_path) {
+        match execute_add_task(
+            &task,
+            settings,
+            state,
+            &target_dir_abs_path,
+            &source_dir_abs_path,
+        ) {
             Ok(completed) => {
                 if completed {
                     completed_tasks += 1;
@@ -490,7 +658,13 @@ fn execute_add_task(
 ) -> Result<bool, DfmError> {
     match task {
         AddTask::Copy(target_file, source_file) => {
-            match sync_file_copy(target_file, source_file, source_file, state, source_dir_abs_path) {
+            match sync_file_copy(
+                target_file,
+                source_file,
+                source_file,
+                state,
+                source_dir_abs_path,
+            ) {
                 Ok(()) => Ok(true),
                 Err(e) if e.is_permission_denied() => {
                     warn_unreadable(target_file, &e);
@@ -498,9 +672,15 @@ fn execute_add_task(
                 }
                 Err(e) => Err(e),
             }
-        },
+        }
         AddTask::CopyAndSymlink(target_file, source_file) => {
-            match sync_file_copy(target_file, source_file, source_file, state, source_dir_abs_path) {
+            match sync_file_copy(
+                target_file,
+                source_file,
+                source_file,
+                state,
+                source_dir_abs_path,
+            ) {
                 Ok(()) => {}
                 Err(e) if e.is_permission_denied() => {
                     warn_unreadable(target_file, &e);
@@ -511,12 +691,14 @@ fn execute_add_task(
 
             // 2. Move the original target aside instead of deleting it, so the
             //    content is preserved if creating the symlink fails.
-            let target_parent = target_file.parent()
+            let target_parent = target_file
+                .parent()
                 .ok_or_else(|| DfmError::other("target file has no parent directory"))?
                 .to_path_buf();
             let backup_file = target_parent.join(format!(
                 ".{}.dfm-backup",
-                target_file.file_name()
+                target_file
+                    .file_name()
                     .ok_or_else(|| DfmError::other("target file has no file name"))?
                     .to_string_lossy(),
             ));
@@ -527,16 +709,17 @@ fn execute_add_task(
             if let Err(e) = symlink::symlink_file(&link_target, target_file) {
                 // Restore the original file over the (failed) symlink creation
                 // attempt, then report both failures.
-                fs::rename(&backup_file, target_file)
-                    .map_err(|restore_err| DfmError::Other(format!(
+                fs::rename(&backup_file, target_file).map_err(|restore_err| {
+                    DfmError::Other(format!(
                         "symlink {:?} creation failed: {}; restore of backup {:?} also failed: {}",
                         target_file, e, backup_file, restore_err,
-                    )))?;
+                    ))
+                })?;
                 return Err(io_err(target_file, e));
             }
             fs::remove_file(&backup_file).map_err(|e| io_err(&backup_file, e))?;
             Ok(true)
-        },
+        }
         AddTask::CopyEncryptedFile(target_file, source_file) => {
             match dfm::crypt::write_encrypted_file(settings, target_file, source_file) {
                 Ok(()) => {}
@@ -551,8 +734,11 @@ fn execute_add_task(
 
             // If a plain source exists, remove it — replaced by the encrypted version
             let plain_source = filepath_in_source_dir(
-                &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path,
-                target_file, None,
+                &settings.dot_prefix,
+                target_dir_abs_path,
+                source_dir_abs_path,
+                target_file,
+                None,
             );
             if plain_source.exists() {
                 fs::remove_file(&plain_source).map_err(|e| io_err(&plain_source, e))?;
@@ -560,27 +746,33 @@ fn execute_add_task(
                 remove_sync_state(state, &plain_source, source_dir_abs_path);
             }
             Ok(true)
-        },
+        }
         AddTask::CreateSymlinkFilePointer(source_symlink, target_abs, points_to) => {
             // The source symlink pointer file may live in a directory that does
             // not exist in the source tree yet (e.g. when the symlink is the
             // only thing under a directory). Create it, like every other add
             // operation does, before opening the pointer file.
-            let source_parent = source_symlink.parent()
-                .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_symlink)))?;
+            let source_parent = source_symlink.parent().ok_or_else(|| {
+                DfmError::Other(format!(
+                    "cannot resolve parent directory of {:?}",
+                    source_symlink
+                ))
+            })?;
             fs::create_dir_all(source_parent).map_err(|e| io_err(source_parent, e))?;
 
             // open if exists or create, if it doesn't
-            let mut symlink_file = File::create(source_symlink).map_err(|e| io_err(source_symlink, e))?;
-            symlink_file.write_all(points_to.as_bytes())
+            let mut symlink_file =
+                File::create(source_symlink).map_err(|e| io_err(source_symlink, e))?;
+            symlink_file
+                .write_all(points_to.as_bytes())
                 .map_err(|e| io_err(source_symlink, e))?;
 
             update_sync_state(state, source_symlink, target_abs, source_dir_abs_path)?;
             Ok(true)
-        },
+        }
         AddTask::UpdateSync(source_file, target_file) => {
             update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
             Ok(true)
-        },
+        }
     }
 }

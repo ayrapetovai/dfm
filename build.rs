@@ -34,5 +34,3 @@ fn main() {
 fn env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("build env var {name} missing"))
 }
-
-

@@ -8,10 +8,13 @@ use colored::Colorize;
 use log::{debug, info};
 use regex::RegexSet;
 
-use dfm::*;
+use super::{
+    cli_path_in_scope, list_directory, matches_source_ignore_regex, print_paged, report_progress,
+    source_rel_to_target_abs, state_key_for, write_stdout,
+};
 use crate::DfmError;
+use dfm::*;
 use microxdg::Xdg;
-use super::{list_directory, report_progress, state_key_for, source_rel_to_target_abs, cli_path_in_scope, print_paged, write_stdout, matches_source_ignore_regex};
 
 /// Typed, per-command arguments for `status` (built by the dispatcher).
 pub struct StatusArgs {
@@ -55,7 +58,10 @@ enum StatusCode {
 
 impl StatusCode {
     fn is_modified(self) -> bool {
-        matches!(self, StatusCode::BothModified | StatusCode::TargetModified | StatusCode::SourceModified)
+        matches!(
+            self,
+            StatusCode::BothModified | StatusCode::TargetModified | StatusCode::SourceModified
+        )
     }
 
     fn is_managed(self) -> bool {
@@ -160,7 +166,12 @@ fn resolve_status_paths(
     }
 }
 
-pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &StateObject) -> Result<(), DfmError> {
+pub fn status_command(
+    settings: &Settings,
+    xdg: &Xdg,
+    args: StatusArgs,
+    state: &StateObject,
+) -> Result<(), DfmError> {
     let StatusArgs {
         ref all,
         ref short,
@@ -190,7 +201,8 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
     // Restrict the report to the requested paths (absolute or relative to the
     // target directory). With no paths, the whole target dir is analyzed.
-    let requested_roots = resolve_status_paths(paths.as_ref(), &target_dir_abs, &source_dir_abs, settings)?;
+    let requested_roots =
+        resolve_status_paths(paths.as_ref(), &target_dir_abs, &source_dir_abs, settings)?;
 
     // Paths to dfm's own internal files (skip in unmanaged detection). The
     // config file is NOT internal here: it is ordinary user data, managed and
@@ -220,11 +232,17 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         // Keep `state_keys` fully populated (it drives Phase-2 classification),
         // but only emit entries for paths within the requested scope.
-        if !requested_roots.iter().any(|root| target_abs.starts_with(root)) {
+        if !requested_roots
+            .iter()
+            .any(|root| target_abs.starts_with(root))
+        {
             continue;
         }
 
-        debug!("status: state entry {:?} → target {:?}", source_rel, target_abs);
+        debug!(
+            "status: state entry {:?} → target {:?}",
+            source_rel, target_abs
+        );
 
         // Check if this is a managed symlink (state key ends with symlink_postfix)
         let is_managed_symlink = source_rel.ends_with(&settings.symlink_postfix);
@@ -232,8 +250,15 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         let is_encrypted = source_rel.ends_with(&settings.encrypted_postfix);
 
         // Check ignore patterns
-        if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_rel)) {
-            let code = if is_managed_symlink { StatusCode::IgnoredSymlink } else { StatusCode::Ignored };
+        if let Some(pattern) = check_path_matches_regex_component_wise(
+            &target_ignore_regex,
+            &PathBuf::from(&target_rel),
+        ) {
+            let code = if is_managed_symlink {
+                StatusCode::IgnoredSymlink
+            } else {
+                StatusCode::Ignored
+            };
             entries.push(StatusEntry {
                 code,
                 path: target_rel.clone(),
@@ -245,8 +270,14 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         // Source-side patterns classify the same way: the entry stays out of
         // the pullable groups (a removed target copy is not "Unpulled").
-        if let Some(pattern) = matches_source_ignore_regex(&source_ignore_regex, source_rel, settings) {
-            let code = if is_managed_symlink { StatusCode::IgnoredSymlink } else { StatusCode::Ignored };
+        if let Some(pattern) =
+            matches_source_ignore_regex(&source_ignore_regex, source_rel, settings)
+        {
+            let code = if is_managed_symlink {
+                StatusCode::IgnoredSymlink
+            } else {
+                StatusCode::Ignored
+            };
             entries.push(StatusEntry {
                 code,
                 path: target_rel.clone(),
@@ -264,7 +295,10 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             // Managed symlink: present if source pointer file exists
             if !source_exists {
                 state_keys.remove(source_rel);
-                debug!("status: stale state entry {:?}, source symlink missing", source_rel);
+                debug!(
+                    "status: stale state entry {:?}, source symlink missing",
+                    source_rel
+                );
                 continue;
             }
             let code = if target_exists {
@@ -272,7 +306,12 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             } else {
                 StatusCode::Unpulled
             };
-            entries.push(StatusEntry { code, path: target_rel.clone(), matched_pattern: None, encrypted: is_encrypted });
+            entries.push(StatusEntry {
+                code,
+                path: target_rel.clone(),
+                matched_pattern: None,
+                encrypted: is_encrypted,
+            });
             continue;
         }
 
@@ -284,7 +323,12 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             debug!("status: stale state entry {:?}, source missing", source_rel);
             continue;
         } else if target_exists && source_exists {
-            let cmp = match compare_files(&settings.encrypted_postfix, &target_abs, &source_abs, Some(sync_time)) {
+            let cmp = match compare_files(
+                &settings.encrypted_postfix,
+                &target_abs,
+                &source_abs,
+                Some(sync_time),
+            ) {
                 Ok(cmp) => cmp,
                 Err(e) if e.is_permission_denied() => {
                     warn_unreadable(&target_abs, &e);
@@ -294,14 +338,23 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
             };
             match cmp {
                 CompareByTimestamp::BothModified => (StatusCode::BothModified, target_rel.clone()),
-                CompareByTimestamp::TargetModified => (StatusCode::TargetModified, target_rel.clone()),
-                CompareByTimestamp::SourceModified => (StatusCode::SourceModified, target_rel.clone()),
+                CompareByTimestamp::TargetModified => {
+                    (StatusCode::TargetModified, target_rel.clone())
+                }
+                CompareByTimestamp::SourceModified => {
+                    (StatusCode::SourceModified, target_rel.clone())
+                }
                 CompareByTimestamp::NonModified => (StatusCode::UpToDate, target_rel.clone()),
-                CompareByTimestamp::NeverSynchronized => (StatusCode::NeverSynchronized, target_rel.clone()),
+                CompareByTimestamp::NeverSynchronized => {
+                    (StatusCode::NeverSynchronized, target_rel.clone())
+                }
             }
         } else {
             state_keys.remove(source_rel);
-            debug!("status: stale state entry {:?}, both sides missing", source_rel);
+            debug!(
+                "status: stale state entry {:?}, both sides missing",
+                source_rel
+            );
             continue;
         };
 
@@ -315,12 +368,15 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     progress.clear();
 
     // Phase 2 — Walk target directory for unmanaged files
-    let ListDirectories { found: traversed_target, errors: traversal_errors, pruned: pruned_dirs } =
-        list_directory(
-            &requested_roots,
-            &target_dir_abs,
-            Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
-        )?;
+    let ListDirectories {
+        found: traversed_target,
+        errors: traversal_errors,
+        pruned: pruned_dirs,
+    } = list_directory(
+        &requested_roots,
+        &target_dir_abs,
+        Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
+    )?;
     if !traversal_errors.is_empty() {
         return Err(DfmError::InvalidData(format!(
             "failed to process some subdirectories or files in target directory for status: {:?}",
@@ -331,7 +387,8 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // Phase 3 builds its own list from traversed_target + pruned dirs + entries
 
     // Pre-compute canonical source dir for robust path comparison
-    let canon_source_dir = fs::canonicalize(&source_dir_abs).unwrap_or_else(|_| source_dir_abs.clone());
+    let canon_source_dir =
+        fs::canonicalize(&source_dir_abs).unwrap_or_else(|_| source_dir_abs.clone());
 
     for (i, target_abs) in traversed_target.iter().enumerate() {
         report_progress(&mut progress, i + 1, traversed_target.len());
@@ -368,13 +425,28 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         if target_abs.is_symlink() {
             classify_target_symlink(
-                settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
-                target_abs, &rel_str, &state_keys, *all, show_ignored, &mut entries,
+                settings,
+                &target_dir_abs,
+                &source_dir_abs,
+                &target_ignore_regex,
+                target_abs,
+                &rel_str,
+                &state_keys,
+                *all,
+                show_ignored,
+                &mut entries,
             );
         } else {
             classify_target_file(
-                settings, &target_dir_abs, &source_dir_abs, &target_ignore_regex,
-                target_abs, &rel_str, &state_keys, show_ignored, &mut entries,
+                settings,
+                &target_dir_abs,
+                &source_dir_abs,
+                &target_ignore_regex,
+                target_abs,
+                &rel_str,
+                &state_keys,
+                show_ignored,
+                &mut entries,
             );
         }
     }
@@ -409,7 +481,11 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         // Phase 2, so its `traversed_target` and pruned dirs can be reused.
         // Only a scoped `--unused-patterns` needs a fresh full-tree walk.
         let (unused_walk, unused_pruned): (Vec<PathBuf>, Vec<String>) = if scoped {
-            let ListDirectories { found, errors, pruned } = list_directory(
+            let ListDirectories {
+                found,
+                errors,
+                pruned,
+            } = list_directory(
                 std::slice::from_ref(&target_dir_abs),
                 &target_dir_abs,
                 Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
@@ -497,35 +573,43 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // meaning for the unscoped report; other flags keep priority.
     let explicit_paths = paths.is_some();
 
-    let filtered: Vec<&StatusEntry> = entries.iter().filter(|e| {
-        // `-e` overrides all other filters: report only the encrypted set, in
-        // whatever status category each entry belongs to.
-        if *encrypted {
-            return e.encrypted;
-        }
-        // Base visibility, independent of which filter flags are set: ignored
-        // entries stay hidden unless `--all`, `--ignored`, or an explicit
-        // scope asks for them; up-to-date entries stay hidden unless `--all`
-        // or `--managed` asks for them.
-        if !*all && !*ignored && !explicit_paths && e.code.is_ignored() { return false; }
-        if !*all && !*managed && e.code.is_up_to_date() { return false; }
+    let filtered: Vec<&StatusEntry> = entries
+        .iter()
+        .filter(|e| {
+            // `-e` overrides all other filters: report only the encrypted set, in
+            // whatever status category each entry belongs to.
+            if *encrypted {
+                return e.encrypted;
+            }
+            // Base visibility, independent of which filter flags are set: ignored
+            // entries stay hidden unless `--all`, `--ignored`, or an explicit
+            // scope asks for them; up-to-date entries stay hidden unless `--all`
+            // or `--managed` asks for them.
+            if !*all && !*ignored && !explicit_paths && e.code.is_ignored() {
+                return false;
+            }
+            if !*all && !*managed && e.code.is_up_to_date() {
+                return false;
+            }
 
-        // With no filter flag the default report shows every visible entry.
-        // Combining filter flags is additive: each enabled flag contributes
-        // its own set and the report shows the union — `--managed --unmanaged`
-        // shows both blocks — with no priority between the flags.
-        let any_category_filter = *conflicted || *modified || *unmanaged
-            || *managed || *unpulled || *ignored;
-        if !any_category_filter {
-            return true;
-        }
-        (*conflicted && e.code == StatusCode::BothModified)
-            || (*modified && e.code.is_modified())
-            || (*unmanaged && (e.code == StatusCode::Unmanaged || e.code == StatusCode::UnmanagedSymlink))
-            || (*managed && e.code.is_managed())
-            || (*unpulled && e.code == StatusCode::Unpulled)
-            || (*ignored && e.code.is_ignored())
-    }).collect();
+            // With no filter flag the default report shows every visible entry.
+            // Combining filter flags is additive: each enabled flag contributes
+            // its own set and the report shows the union — `--managed --unmanaged`
+            // shows both blocks — with no priority between the flags.
+            let any_category_filter =
+                *conflicted || *modified || *unmanaged || *managed || *unpulled || *ignored;
+            if !any_category_filter {
+                return true;
+            }
+            (*conflicted && e.code == StatusCode::BothModified)
+                || (*modified && e.code.is_modified())
+                || (*unmanaged
+                    && (e.code == StatusCode::Unmanaged || e.code == StatusCode::UnmanagedSymlink))
+                || (*managed && e.code.is_managed())
+                || (*unpulled && e.code == StatusCode::Unpulled)
+                || (*ignored && e.code.is_ignored())
+        })
+        .collect();
 
     // Output
     let git_info = get_git_info(&source_dir_abs);
@@ -534,8 +618,8 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     // block belongs only to the unfiltered report (and to the dedicated
     // --unused-patterns mode). --all only unhides categories — it keeps the
     // block; scoped PATHS already suppress it via empty `stale_patterns`.
-    let restrictive_filter = *conflicted || *modified || *unmanaged
-        || *managed || *unpulled || *encrypted || *ignored;
+    let restrictive_filter =
+        *conflicted || *modified || *unmanaged || *managed || *unpulled || *encrypted || *ignored;
     let report_stale: &[String] = if restrictive_filter {
         &[]
     } else {
@@ -566,7 +650,16 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
         // Show the Unpulled block when explicitly requested (`--unpulled`) or
         // when `--all` unhides every category.
         let show_unpulled = *unpulled || *all;
-        let output = format_default(&filtered, &entries, report_stale, git_info.as_deref(), &target_dir_abs, &source_dir_abs, has_managed, show_unpulled);
+        let output = format_default(
+            &filtered,
+            &entries,
+            report_stale,
+            git_info.as_deref(),
+            &target_dir_abs,
+            &source_dir_abs,
+            has_managed,
+            show_unpulled,
+        );
         print_paged(&output)?;
         Ok(())
     }
@@ -593,8 +686,11 @@ fn classify_target_symlink(
 ) {
     // Managed via a source symlink pointer file in state.
     let pointer_path = filepath_in_source_dir(
-        &settings.dot_prefix, target_dir_abs, source_dir_abs,
-        target_abs, Some(&settings.symlink_postfix),
+        &settings.dot_prefix,
+        target_dir_abs,
+        source_dir_abs,
+        target_abs,
+        Some(&settings.symlink_postfix),
     );
     let pointer_rel = file_path_relative_to(&pointer_path, source_dir_abs);
     let pointer_rel = remove_dots_from_path(&pointer_rel);
@@ -607,7 +703,10 @@ fn classify_target_symlink(
     let pointee_in_state = fs::read_link(target_abs)
         .ok()
         .and_then(|link_target| {
-            let abs = target_abs.parent().unwrap_or(std::path::Path::new(".")).join(&link_target);
+            let abs = target_abs
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(&link_target);
             fs::canonicalize(&abs).ok()
         })
         .map(|pointee_abs| {
@@ -639,7 +738,9 @@ fn classify_target_symlink(
         return;
     }
 
-    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(rel_str)) {
+    if let Some(pattern) =
+        check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(rel_str))
+    {
         if show_ignored {
             entries.push(StatusEntry {
                 code: StatusCode::IgnoredSymlink,
@@ -675,8 +776,11 @@ fn classify_target_file(
 ) {
     // Already in state (plain, encrypted, or symlink variant) — covered by Phase 1.
     let source_abs = filepath_in_source_dir(
-        &settings.dot_prefix, target_dir_abs, source_dir_abs,
-        target_abs, None,
+        &settings.dot_prefix,
+        target_dir_abs,
+        source_dir_abs,
+        target_abs,
+        None,
     );
     let source_rel_str = state_key_for(&source_abs, source_dir_abs);
 
@@ -690,7 +794,9 @@ fn classify_target_file(
         return;
     }
 
-    if let Some(pattern) = check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(rel_str)) {
+    if let Some(pattern) =
+        check_path_matches_regex_component_wise(target_ignore_regex, &PathBuf::from(rel_str))
+    {
         if show_ignored {
             entries.push(StatusEntry {
                 code: StatusCode::Ignored,
@@ -758,9 +864,7 @@ fn collapse_shared_dirs(
         // severed by a blocked path. Fold only full-coverage gaps.
         let Some(collapsed_dir) = ancestor_counts
             .into_iter()
-            .filter(|(prefix, count)| {
-                *count >= 2 && !is_blocked(prefix, blocked)
-            })
+            .filter(|(prefix, count)| *count >= 2 && !is_blocked(prefix, blocked))
             .max_by_key(|(prefix, _)| prefix.matches('/').count())
             .map(|(prefix, _)| prefix)
         else {
@@ -784,7 +888,15 @@ fn collapse_shared_dirs(
             .iter()
             .position(|(_, p, _, _)| p == &collapsed_dir || p.starts_with(&dir_prefix))
             .unwrap_or(next.len());
-        next.insert(member_idx, (member_code, format!("{}/*", collapsed_dir), None, collapsed_encrypted));
+        next.insert(
+            member_idx,
+            (
+                member_code,
+                format!("{}/*", collapsed_dir),
+                None,
+                collapsed_encrypted,
+            ),
+        );
         paths = next;
     }
     paths
@@ -818,14 +930,27 @@ fn color_path(code: StatusCode, path: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_patterns: &[String], git_info: Option<&str>, target_dir_abs: &Path, source_dir_abs: &Path, has_managed: bool, show_unpulled: bool) -> String {
+fn format_default(
+    entries: &[&StatusEntry],
+    all_entries: &[StatusEntry],
+    stale_patterns: &[String],
+    git_info: Option<&str>,
+    target_dir_abs: &Path,
+    source_dir_abs: &Path,
+    has_managed: bool,
+    show_unpulled: bool,
+) -> String {
     // The Unpulled block belongs only to `--unpulled`; the default report must
     // exclude it. Other commands' `--short`/`--porcelain` keep `!?` through the
     // shared filter, so the exclusion is localized here.
     let filtered: Vec<&StatusEntry> = if show_unpulled {
         entries.to_vec()
     } else {
-        entries.iter().copied().filter(|e| e.code != StatusCode::Unpulled).collect()
+        entries
+            .iter()
+            .copied()
+            .filter(|e| e.code != StatusCode::Unpulled)
+            .collect()
     };
     // Effective "are there entries to show" for the empty-report message.
     let no_entries = filtered.is_empty();
@@ -868,101 +993,120 @@ fn format_default(entries: &[&StatusEntry], all_entries: &[StatusEntry], stale_p
             StatusCode::Unmanaged | StatusCode::UnmanagedSymlink => unmanaged.push(e),
             StatusCode::Unpulled => unpulled.push(e),
             StatusCode::Ignored | StatusCode::IgnoredSymlink => ignored.push(e),
-            StatusCode::UpToDate | StatusCode::ManagedSymlink | StatusCode::NeverSynchronized => uptodate.push(e),
+            StatusCode::UpToDate | StatusCode::ManagedSymlink | StatusCode::NeverSynchronized => {
+                uptodate.push(e)
+            }
             StatusCode::StalePattern => {}
         }
     }
 
     // Helper to write a group
-    let write_group = |out: &mut String, header: &str, items: &[&StatusEntry], is_last_group: bool| {
-        if items.is_empty() {
-            return;
-        }
-        out.push_str(&format!("{}:\n", header));
-
-        // Fold shared directories: a `dir/*` is only emitted when *every* path
-        // under `dir` belongs to this group. Paths of any other status (ignored
-        // pruned dirs, up-to-date / tracked files, parallel groups; plus the
-        // Unpulled entries excluded from the default report) sever the fold, so
-        // an ignored sibling directory keeps files listed individually.
-        let member_paths: BTreeSet<&str> = items.iter().map(|i| i.path.as_str()).collect();
-        let blocked: BTreeSet<String> = all_entries
-            .iter()
-            .filter(|e| !member_paths.contains(e.path.as_str()))
-            .filter(|e| show_unpulled || e.code != StatusCode::Unpulled)
-            .map(|e| e.path.clone())
-            .collect();
-
-        // Build display paths, then collapse shared directories (e.g.
-        // multiple files under dir/ to a single dir/* entry).
-        let paths = collapse_shared_dirs(&items.iter()
-            .map(|item| (item.code, item.path.clone(), item.matched_pattern.clone(), item.encrypted))
-            .collect::<Vec<_>>(), &blocked);
-
-        // Build the final display list.
-        struct DispLine {
-            code: StatusCode,
-            path: String,
-            annotations: Vec<String>,
-        }
-        let display: Vec<DispLine> = paths.into_iter()
-            .map(|(code, path, pattern, encrypted)| {
-                let mut annotations = Vec::new();
-                if let Some(ref pat) = pattern {
-                    annotations.push(format!("({})", pat));
-                }
-                if encrypted {
-                    annotations.push("(encrypted)".to_string());
-                }
-                DispLine { code, path, annotations }
-            })
-            .collect();
-
-        // Align the right-side annotations ((pattern) and (encrypted)) so they
-        // all start at the same column. Lines without any annotation are not
-        // padded.
-        let max_path_len = display
-            .iter()
-            .filter(|d| !d.annotations.is_empty())
-            .map(|d| d.path.len())
-            .max()
-            .unwrap_or(0);
-
-        for d in &display {
-            if d.annotations.is_empty() {
-                out.push_str(&format!("  {}  {}\n", d.code, color_path(d.code, &d.path)));
-            } else {
-                out.push_str(&format!(
-                    "  {}  {:<max_width$}  {}\n",
-                    d.code,
-                    color_path(d.code, &d.path),
-                    d.annotations.join(" "),
-                    max_width = max_path_len
-                ));
+    let write_group =
+        |out: &mut String, header: &str, items: &[&StatusEntry], is_last_group: bool| {
+            if items.is_empty() {
+                return;
             }
-        }
-        // Do not print after the last group in list as 'ls -lR' shell command
-        if !is_last_group {
-            out.push('\n');
-        }
-    };
+            out.push_str(&format!("{}:\n", header));
 
-    let group_order = [merge.is_empty(),
+            // Fold shared directories: a `dir/*` is only emitted when *every* path
+            // under `dir` belongs to this group. Paths of any other status (ignored
+            // pruned dirs, up-to-date / tracked files, parallel groups; plus the
+            // Unpulled entries excluded from the default report) sever the fold, so
+            // an ignored sibling directory keeps files listed individually.
+            let member_paths: BTreeSet<&str> = items.iter().map(|i| i.path.as_str()).collect();
+            let blocked: BTreeSet<String> = all_entries
+                .iter()
+                .filter(|e| !member_paths.contains(e.path.as_str()))
+                .filter(|e| show_unpulled || e.code != StatusCode::Unpulled)
+                .map(|e| e.path.clone())
+                .collect();
+
+            // Build display paths, then collapse shared directories (e.g.
+            // multiple files under dir/ to a single dir/* entry).
+            let paths = collapse_shared_dirs(
+                &items
+                    .iter()
+                    .map(|item| {
+                        (
+                            item.code,
+                            item.path.clone(),
+                            item.matched_pattern.clone(),
+                            item.encrypted,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                &blocked,
+            );
+
+            // Build the final display list.
+            struct DispLine {
+                code: StatusCode,
+                path: String,
+                annotations: Vec<String>,
+            }
+            let display: Vec<DispLine> = paths
+                .into_iter()
+                .map(|(code, path, pattern, encrypted)| {
+                    let mut annotations = Vec::new();
+                    if let Some(ref pat) = pattern {
+                        annotations.push(format!("({})", pat));
+                    }
+                    if encrypted {
+                        annotations.push("(encrypted)".to_string());
+                    }
+                    DispLine {
+                        code,
+                        path,
+                        annotations,
+                    }
+                })
+                .collect();
+
+            // Align the right-side annotations ((pattern) and (encrypted)) so they
+            // all start at the same column. Lines without any annotation are not
+            // padded.
+            let max_path_len = display
+                .iter()
+                .filter(|d| !d.annotations.is_empty())
+                .map(|d| d.path.len())
+                .max()
+                .unwrap_or(0);
+
+            for d in &display {
+                if d.annotations.is_empty() {
+                    out.push_str(&format!("  {}  {}\n", d.code, color_path(d.code, &d.path)));
+                } else {
+                    out.push_str(&format!(
+                        "  {}  {:<max_width$}  {}\n",
+                        d.code,
+                        color_path(d.code, &d.path),
+                        d.annotations.join(" "),
+                        max_width = max_path_len
+                    ));
+                }
+            }
+            // Do not print after the last group in list as 'ls -lR' shell command
+            if !is_last_group {
+                out.push('\n');
+            }
+        };
+
+    let group_order = [
+        merge.is_empty(),
         add.is_empty(),
         pull.is_empty(),
         unpulled.is_empty(),
         unmanaged.is_empty(),
         uptodate.is_empty(),
         ignored.is_empty(),
-        stale_patterns.is_empty()];
+        stale_patterns.is_empty(),
+    ];
 
     let mut group_lastness = vec![];
     for i in 0..group_order.len() {
         // If all from i to the right are empty
         // then ith group is the last to be printed
-        let is_last = group_order.iter()
-            .skip(i + 1)
-            .all(|&se| se);
+        let is_last = group_order.iter().skip(i + 1).all(|&se| se);
         group_lastness.push(is_last);
     }
 

@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use chacha20poly1305::XChaCha20Poly1305;
 
-use crate::{Settings, file_path_relative_to, io_err, calc_working_dir_paths_unchecked};
+use crate::{Settings, calc_working_dir_paths_unchecked, file_path_relative_to, io_err};
 
 // Password cache — ask only once per `dfm` process
 //
@@ -405,7 +405,9 @@ fn encrypt_stream(
             off = metadata_prefix.len();
         }
         while off < want {
-            let r = input.read(&mut buf[off..want]).map_err(|e| io_err(Path::new("<input>"), e))?;
+            let r = input
+                .read(&mut buf[off..want])
+                .map_err(|e| io_err(Path::new("<input>"), e))?;
             if r == 0 {
                 return Err(DfmError::InvalidData(
                     "input ended before its declared length".into(),
@@ -430,7 +432,9 @@ fn encrypt_stream(
         }
         index += 1;
         if index >= MAX_STREAM_CHUNKS {
-            return Err(DfmError::InvalidData("stream is too long to encrypt".into()));
+            return Err(DfmError::InvalidData(
+                "stream is too long to encrypt".into(),
+            ));
         }
     }
     Ok(())
@@ -447,7 +451,13 @@ pub fn encrypt_bytes(
 ) -> Result<Vec<u8>, DfmError> {
     let prefix = serialize_metadata(inner_name, file_mode, dirs);
     let mut blob = Vec::with_capacity(12 + HEADER_FIXED + prefix.len() + content.len());
-    encrypt_stream(password, &mut std::io::Cursor::new(content), content.len() as u64, &prefix, &mut blob)?;
+    encrypt_stream(
+        password,
+        &mut std::io::Cursor::new(content),
+        content.len() as u64,
+        &prefix,
+        &mut blob,
+    )?;
     Ok(blob)
 }
 
@@ -576,7 +586,7 @@ impl<R: Read> DecryptSession<R> {
     fn open(mut reader: R, password: &str) -> Result<(Self, PlainMeta), DecryptError> {
         use chacha20poly1305::aead::AeadInPlace;
         use chacha20poly1305::aead::KeyInit;
-        use chacha20poly1305::{XNonce, Tag};
+        use chacha20poly1305::{Tag, XNonce};
 
         let header = read_container_header(&mut reader)?;
         let key = derive_key(
@@ -627,7 +637,7 @@ impl<R: Read> DecryptSession<R> {
     /// failures after the first chunk mean corruption, not a wrong password.
     fn stream_rest(mut self, out: &mut dyn Write) -> Result<(), DfmError> {
         use chacha20poly1305::aead::AeadInPlace;
-        use chacha20poly1305::{XNonce, Tag};
+        use chacha20poly1305::{Tag, XNonce};
 
         out.write_all(&std::mem::take(&mut self.leftover))
             .map_err(|e| io_err(Path::new("<output>"), e))?;
@@ -682,7 +692,9 @@ impl<R: Read> DecryptSession<R> {
 fn decrypt_bytes(data: &[u8], password: &str) -> Result<Decrypted, DecryptError> {
     let (session, meta) = DecryptSession::open(std::io::Cursor::new(data), password)?;
     let mut content = Vec::new();
-    session.stream_rest(&mut content).map_err(DecryptError::from)?;
+    session
+        .stream_rest(&mut content)
+        .map_err(DecryptError::from)?;
     Ok(Decrypted {
         content,
         file_mode: meta.file_mode,
@@ -745,7 +757,12 @@ pub fn write_encrypted_file(
     target_file_path: &Path,
     source_file_path: &Path,
 ) -> Result<(), DfmError> {
-    write_encrypted_source(settings, target_file_path, target_file_path, source_file_path)
+    write_encrypted_source(
+        settings,
+        target_file_path,
+        target_file_path,
+        source_file_path,
+    )
 }
 
 /// Encrypt the plaintext of `content_path` to `source_file_path` as a dfm blob.
@@ -766,7 +783,8 @@ pub fn write_encrypted_source(
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
 
-    let target_metadata = fs::metadata(target_file_path).map_err(|e| io_err(target_file_path, e))?;
+    let target_metadata =
+        fs::metadata(target_file_path).map_err(|e| io_err(target_file_path, e))?;
     let target_file_permissions = target_metadata.permissions();
 
     let target_dir_path = calc_working_dir_paths_unchecked(settings)?.0;
@@ -778,7 +796,9 @@ pub fn write_encrypted_source(
 
     let password = obtain_password(settings)?;
     let prefix = serialize_metadata(&inner_name, target_file_permissions.mode(), &dirs);
-    let content_len = fs::metadata(content_path).map_err(|e| io_err(content_path, e))?.len();
+    let content_len = fs::metadata(content_path)
+        .map_err(|e| io_err(content_path, e))?
+        .len();
     encrypt_to_new_file(
         &password,
         || fs::File::open(content_path).map_err(|e| io_err(content_path, e)),
@@ -800,8 +820,7 @@ fn encrypt_to_new_file(
     let part = PathBuf::from(format!("{}.part", dest.display()));
     let result = (|| -> Result<(), DfmError> {
         let mut input = open_input()?;
-        let mut out =
-            BufWriter::new(fs::File::create(&part).map_err(|e| io_err(&part, e))?);
+        let mut out = BufWriter::new(fs::File::create(&part).map_err(|e| io_err(&part, e))?);
         encrypt_stream(password, &mut input, content_len, metadata_prefix, &mut out)
     })();
     match result {
@@ -833,12 +852,9 @@ pub fn read_encrypted_file(
     let (session, meta) = open_with_retry(settings, source_file_path, || {
         fs::File::open(source_file_path).map_err(|e| io_err(source_file_path, e))
     })?;
-    restore_streamed(
-        &target_root,
-        target_file_path,
-        &meta,
-        |out| session.stream_rest(out),
-    )
+    restore_streamed(&target_root, target_file_path, &meta, |out| {
+        session.stream_rest(out)
+    })
 }
 
 /// Prompt for the password (retrying once on a wrong password) and open the
@@ -899,7 +915,9 @@ fn restore_streamed(
     if let Some(parent) = target_file_path.parent() {
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
-    let mut out = BufWriter::new(fs::File::create(target_file_path).map_err(|e| io_err(target_file_path, e))?);
+    let mut out = BufWriter::new(
+        fs::File::create(target_file_path).map_err(|e| io_err(target_file_path, e))?,
+    );
     match sink(&mut out) {
         Ok(()) => {}
         Err(e) => {
@@ -909,11 +927,8 @@ fn restore_streamed(
     }
     out.flush().map_err(|e| io_err(target_file_path, e))?;
     drop(out);
-    fs::set_permissions(
-        target_file_path,
-        fs::Permissions::from_mode(meta.file_mode),
-    )
-    .map_err(|e| io_err(target_file_path, e))?;
+    fs::set_permissions(target_file_path, fs::Permissions::from_mode(meta.file_mode))
+        .map_err(|e| io_err(target_file_path, e))?;
     Ok(())
 }
 
@@ -1026,12 +1041,9 @@ pub fn decrypt_file_standalone(
     let (session, meta) = open_with_retry(settings, input_path, || {
         fs::File::open(input_path).map_err(|e| io_err(input_path, e))
     })?;
-    restore_streamed(
-        &target_root,
-        output_path,
-        &meta,
-        |out| session.stream_rest(out),
-    )
+    restore_streamed(&target_root, output_path, &meta, |out| {
+        session.stream_rest(out)
+    })
 }
 
 fn default_read_password() -> Result<String, DfmError> {
@@ -1051,7 +1063,10 @@ mod tests {
     fn encrypt_decrypt_roundtrip() {
         let password = "correct horse battery staple";
         let content = b"the quick brown fox jumps over the lazy dog".to_vec();
-        let dirs = vec![(PathBuf::from("private"), 0o700), (PathBuf::from("private/sub"), 0o710)];
+        let dirs = vec![
+            (PathBuf::from("private"), 0o700),
+            (PathBuf::from("private/sub"), 0o710),
+        ];
 
         let blob = encrypt_bytes(password, &content, 0o600, "private/sub/f.conf", &dirs).unwrap();
 
@@ -1266,5 +1281,3 @@ mod tests {
         assert!(!dir_rel_is_safe(Path::new("")));
     }
 }
-
-

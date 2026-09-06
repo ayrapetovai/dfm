@@ -1,9 +1,12 @@
-use std::path::{Path, PathBuf};
-use log::{debug, info, warn};
-use dfm::*;
+use super::{
+    cli_path_in_scope, matches_source_ignore_regex, msg_dry_run, run_merge,
+    source_rel_to_target_abs, state_key_for,
+};
 use crate::DfmError;
+use dfm::*;
+use log::{debug, info, warn};
 use microxdg::Xdg;
-use super::{run_merge, msg_dry_run, state_key_for, source_rel_to_target_abs, cli_path_in_scope, matches_source_ignore_regex};
+use std::path::{Path, PathBuf};
 
 /// Typed, per-command arguments for `merge` (built by the dispatcher).
 pub struct MergeArgs {
@@ -35,7 +38,12 @@ fn resolve_state_key(
         .find(|key| state.syncs.contains_key(key.as_str()) && source_dir_abs.join(key).exists())
 }
 
-pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mut StateObject) -> Result<(), DfmError> {
+pub fn merge_command(
+    settings: &Settings,
+    xdg: &Xdg,
+    args: MergeArgs,
+    state: &mut StateObject,
+) -> Result<(), DfmError> {
     let MergeArgs { ref paths, dry_run } = args;
     let paths_provided = paths.is_some();
 
@@ -86,13 +94,19 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
 
                     candidates.push((source_abs, inferred_target_abs, sync_time.clone()));
                 } else {
-                    warn!("{:?} is not in the state file, skipping...", source_rel_base_str);
+                    warn!(
+                        "{:?} is not in the state file, skipping...",
+                        source_rel_base_str
+                    );
                 }
             } else {
                 // Provided path is a target path — find source
                 let source_abs_base = filepath_in_source_dir(
-                    &settings.dot_prefix, &target_dir_abs_path, &source_dir_abs_path,
-                    &target_abs, None,
+                    &settings.dot_prefix,
+                    &target_dir_abs_path,
+                    &source_dir_abs_path,
+                    &target_abs,
+                    None,
                 );
                 let source_rel_base_str = state_key_for(&source_abs_base, &source_dir_abs_path);
 
@@ -128,8 +142,10 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
 
             // Derive target path (replace dot_prefix, strip postfixes)
             let target_rel = source_rel_to_target_rel(
-                source_rel, &settings.dot_prefix,
-                &settings.symlink_postfix, &settings.encrypted_postfix,
+                source_rel,
+                &settings.dot_prefix,
+                &settings.symlink_postfix,
+                &settings.encrypted_postfix,
             );
             let target_abs = target_dir_abs_path.join(&target_rel);
             let target_abs = remove_dots_from_path(&target_abs);
@@ -146,30 +162,51 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
     let mut merged_count = 0;
     for (source_abs, target_abs, sync_time) in &candidates {
         if !source_abs.exists() || !target_abs.exists() {
-            debug!("source {:?} or target {:?} does not exist, skipping", source_abs, target_abs);
+            debug!(
+                "source {:?} or target {:?} does not exist, skipping",
+                source_abs, target_abs
+            );
             continue;
         }
 
         if target_abs.is_symlink() {
-            debug!("target {:?} is a symlink (managed via symlink), skipping merge", target_abs);
+            debug!(
+                "target {:?} is a symlink (managed via symlink), skipping merge",
+                target_abs
+            );
             continue;
         }
 
         let target_rel = file_path_relative_to(target_abs, &target_dir_abs_path);
-        if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel) {
-            info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs, pattern, target_ignore_file_path);
+        if let Some(pattern) =
+            check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel)
+        {
+            info!(
+                "target {:?} is ignored by regex /{}/ in file {:?}",
+                target_abs, pattern, target_ignore_file_path
+            );
             continue;
         }
 
         // Source-ignored files are not merged either, using the same both-forms
         // check as status/diff (the state key carries the encrypted/symlink postfix).
         let source_rel = state_key_for(source_abs, &source_dir_abs_path);
-        if let Some(pattern) = matches_source_ignore_regex(&source_ignore_regex, &source_rel, settings) {
-            info!("source side of {:?} is ignored by regex /{}/ in file {:?}", source_abs, pattern, source_ignore_file_path);
+        if let Some(pattern) =
+            matches_source_ignore_regex(&source_ignore_regex, &source_rel, settings)
+        {
+            info!(
+                "source side of {:?} is ignored by regex /{}/ in file {:?}",
+                source_abs, pattern, source_ignore_file_path
+            );
             continue;
         }
 
-        let cmp = match compare_files(&settings.encrypted_postfix, target_abs, source_abs, Some(sync_time)) {
+        let cmp = match compare_files(
+            &settings.encrypted_postfix,
+            target_abs,
+            source_abs,
+            Some(sync_time),
+        ) {
             Ok(cmp) => cmp,
             Err(e) if e.is_permission_denied() => {
                 warn_unreadable(target_abs, &e);
@@ -182,13 +219,22 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
             continue;
         }
 
-        warn!("both target {:?} and source {:?} were modified, merging...", target_abs, source_abs);
+        warn!(
+            "both target {:?} and source {:?} were modified, merging...",
+            target_abs, source_abs
+        );
         if dry_run {
             info!("would merge {:?} (dry run)", target_abs);
             merged_count += 1;
             continue;
         }
-        match run_merge(settings, source_abs, target_abs, state, &source_dir_abs_path) {
+        match run_merge(
+            settings,
+            source_abs,
+            target_abs,
+            state,
+            &source_dir_abs_path,
+        ) {
             Ok(()) => {}
             Err(e) if e.is_permission_denied() => {
                 warn_unreadable(target_abs, &e);
