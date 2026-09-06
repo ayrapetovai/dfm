@@ -169,16 +169,20 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
         if !dry_run {
             ensure_trailing_newline(&local_ignore_file_path)?;
         }
-        let mut target_ignore_file = open_or_create_target_ignore_file(xdg)?;
+        // Open (and thereby create) the ignore file only when actually
+        // writing: a dry-run must not create a missing ignore file on disk.
+        let mut target_ignore_file: Option<fs::File> = if dry_run {
+            None
+        } else {
+            Some(open_or_create_target_ignore_file(xdg)?)
+        };
         for ignore_path in target_ignore_paths {
             info!("add path {:?} to {:?}", ignore_path, local_ignore_file_path);
-            if dry_run {
-                continue;
-            }
-
-            let escaped_path_str = regex::escape(&ignore_path.to_string_lossy());
-            if let Err(e) = writeln!(target_ignore_file, "{}", escaped_path_str) {
-                return Err(io_err(&local_ignore_file_path, e));
+            if let Some(target_ignore_file) = target_ignore_file.as_mut() {
+                let escaped_path_str = regex::escape(&ignore_path.to_string_lossy());
+                if let Err(e) = writeln!(target_ignore_file, "{}", escaped_path_str) {
+                    return Err(io_err(&local_ignore_file_path, e));
+                }
             }
         }
     }
@@ -187,14 +191,16 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
         if !dry_run {
             ensure_trailing_newline(&local_ignore_file_path)?;
         }
-        let mut target_ignore_file = open_or_create_target_ignore_file(xdg)?;
+        let mut target_ignore_file: Option<fs::File> = if dry_run {
+            None
+        } else {
+            Some(open_or_create_target_ignore_file(xdg)?)
+        };
         for pattern in target_ignore_regexps {
             info!("add regex /{}/ to {:?}", pattern, local_ignore_file_path);
-            if dry_run {
-                continue;
-            }
-
-            if let Err(e) = writeln!(target_ignore_file, "{}", pattern) {
+            if let Some(target_ignore_file) = target_ignore_file.as_mut()
+                && let Err(e) = writeln!(target_ignore_file, "{}", pattern)
+            {
                 return Err(io_err(&local_ignore_file_path, e));
             }
         }
@@ -204,14 +210,16 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
         if !dry_run {
             ensure_trailing_newline(&source_ignore_file_path)?;
         }
-        let mut source_ignore_file = open_or_create_file(&source_ignore_file_path)?;
+        let mut source_ignore_file: Option<fs::File> = if dry_run {
+            None
+        } else {
+            Some(open_or_create_file(&source_ignore_file_path)?)
+        };
         for ignore_line in source_ignore_lines {
             info!("add path {:?} to {:?}", ignore_line, source_ignore_file_path);
-            if dry_run {
-                continue;
-            }
-
-            if let Err(e) = writeln!(source_ignore_file, "{}", ignore_line) {
+            if let Some(source_ignore_file) = source_ignore_file.as_mut()
+                && let Err(e) = writeln!(source_ignore_file, "{}", ignore_line)
+            {
                 return Err(io_err(&source_ignore_file_path, e));
             }
         }

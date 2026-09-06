@@ -23,7 +23,7 @@ Global flags: `-n/--dry-run`, `-v <0-3>` (1 brief default, 2 info, 3 debug), `-c
 export PATH="$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
 cargo build              # debug binary: target/debug/dfm (build.rs renders dfm.1)
 cargo test               # 30 unit tests (lib.rs + crypt.rs), no sealed_test dep
-bash tests/launcher.sh [-q] [test_x.sh]   # 225 shell integration tests; one test = -x trace
+bash tests/launcher.sh [-q] [test_x.sh]   # 231 shell integration tests; one test = -x trace
 cargo clippy             # must stay clean; release profile: opt-level z, lto fat, panic=abort
 just release [<major|minor|patch>]  # scripts/release.sh: with part = bump+commit+push; no arg = re-release current version (recovery after failed tag push, no incver/commit). Tag created+pushed only when absent on origin (ls-remote --tags check); gh release draft.
 just install-bin            # cargo build --release + `install -D -m 0755 target/release/dfm /usr/bin/dfm` (needs root); distinct from the pacman `install` recipe.
@@ -102,7 +102,7 @@ Self-contained **DFMENC** blob (`FORMAT_VERSION = 3`). Public header: Argon2id `
 - **`main_logic`** resolves state/config as `Option`: unresolvable paths warn and continue (purge/paths work with `$HOME` unset); mutating commands then error via `with_state`.
 - **No shell** for `merge_tool_command`/`diff_tool_command` (whitespace-split, direct spawn).
 - **Unreadable objects** (`PermissionDenied`: strict perms, wrong owner) are **skip-with-warning**, never a command failure — in `list_directory`, per-file analysis, and task execution loops (except `NotFound`, which passes roots through; other errors fail the command).
-- **Root guard** (lib.rs, first thing in `main_logic` after Args::parse): `check_root_privileges()` reads real+effective uid via hand-rolled externs `#[link(name="c")] unsafe extern { getuid, geteuid }` (edition 2024 needs `unsafe extern`; symbols from already-linked libc, no new dep). Refuse iff `euid==0 && (ruid!=0 || SUDO_USER non-empty)` — genuine root (0,0,None) allowed; `euid!=0` never refused. Error `InvalidInput` naming sudo vs setuid-style elevation, exit 1; `--help`/`--version` still work (clap exits first). Unit: `test_refuse_root_access_matrix`. No shell integration test (user removed it). Shell test counts are 225, Rust unit 30.
+- **Root guard** (lib.rs, first thing in `main_logic` after Args::parse): `check_root_privileges()` reads real+effective uid via hand-rolled externs `#[link(name="c")] unsafe extern { getuid, geteuid }` (edition 2024 needs `unsafe extern`; symbols from already-linked libc, no new dep). Refuse iff `euid==0 && (ruid!=0 || SUDO_USER non-empty)` — genuine root (0,0,None) allowed; `euid!=0` never refused. Error `InvalidInput` naming sudo vs setuid-style elevation, exit 1; `--help`/`--version` still work (clap exits first). Unit: `test_refuse_root_access_matrix`. No shell integration test (user removed it). Shell test counts are 231, Rust unit 30.
 - Build notes: installed `/usr/bin/dfm` is an older build **without** the root guard; detect euid-0 with `unshare -r` (emulates euid 0 without privileges), never with sudo.
 
 ## Testing conventions (launcher.sh)
@@ -145,3 +145,5 @@ Self-contained **DFMENC** blob (`FORMAT_VERSION = 3`). Public header: Argon2id `
 - `status <path>` with exactly one path and nothing to report → `<path> is up-to-date.` (stdout).
 - Documents: GPL-3.0-only in a separate LICENSE file (not embedded); README states pure-local sync; shrink README/context.txt by pre-agreed per-section line budgets.
 - Considerations ("source file owned by another user"): user marked **not ready** — open question, must become a decision before it can be a task.
+- Review round v0.4.5 (`4dcb97a`): full result → **REVIEW.md**. Key hits: ignore `--dry-run` creates a missing ignore file (H1); source-ignore stored dotless-target form never matches `source_rel` in status/diff (M1); add-encrypted-first vs resolve_source_variant plain-first diverge (M2). Shell test count is now 231 (context.txt + tests/README.md fixed).
+- **H1 FIXED**: `ignore --dry-run` no longer creates a missing ignore file (open_or_create_* moved behind `!dry_run` in ignore.rs, with `Option<fs::File>` handles); regression test `tests/test_ignore_dry_run_no_create.sh` added. Suite 231 pass, clippy clean after this change.
