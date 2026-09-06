@@ -39,9 +39,6 @@
    and an already-encrypted managed file whose source-side path
    no longer satisfies the rule is decrypted in place during `pull`.
 
-6. Calling 'dfm merge filepath' does not merge files (tested on encrypted files).
-   But it must.
-
 8. Add a progress bar for the action phase of the `add`, `pull` and `sync`
    commands (the walkdir phase already has progress).
    One step = one processed file

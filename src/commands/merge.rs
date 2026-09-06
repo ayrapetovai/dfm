@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use log::{debug, info, warn};
 use dfm::*;
 use crate::DfmError;
@@ -13,27 +13,26 @@ pub struct MergeArgs {
 
 /// Look up a source-relative path in state, trying known postfixes.
 /// Returns the matching state key (which may include encrypted/symlink postfix).
+/// Postfix variants are tried in order (exact, encrypted, symlink), but a
+/// state entry whose source file no longer exists is treated as stale and
+/// skipped — otherwise a leftover plain entry (e.g. the one a pre-encryption
+/// `add` wrote before the source was re-encrypted) would shadow the live
+/// `.encrypted` entry and silently prevent the merge.
 fn resolve_state_key(
     state: &StateObject,
     base_rel: &str,
     encrypted_postfix: &str,
     symlink_postfix: &str,
+    source_dir_abs: &Path,
 ) -> Option<String> {
-    // Try exact match first
-    if state.syncs.contains_key(base_rel) {
-        return Some(base_rel.to_string());
-    }
-    // Try with encrypted postfix
-    let enc = format!("{}{}", base_rel, encrypted_postfix);
-    if state.syncs.contains_key(&enc) {
-        return Some(enc);
-    }
-    // Try with symlink postfix
-    let sym = format!("{}{}", base_rel, symlink_postfix);
-    if state.syncs.contains_key(&sym) {
-        return Some(sym);
-    }
-    None
+    let candidates = [
+        base_rel.to_string(),
+        format!("{}{}", base_rel, encrypted_postfix),
+        format!("{}{}", base_rel, symlink_postfix),
+    ];
+    candidates
+        .into_iter()
+        .find(|key| state.syncs.contains_key(key.as_str()) && source_dir_abs.join(key).exists())
 }
 
 pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mut StateObject) -> Result<(), DfmError> {
@@ -58,18 +57,33 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
 
             if target_abs.starts_with(&source_dir_abs_path) {
                 // Provided path is in the source directory — infer target
-                // (same logic as pull.rs source-traversal branch)
-                let source_abs = target_abs;
-                let source_rel_str = state_key_for(&source_abs, &source_dir_abs_path);
+                // (same logic as pull.rs source-traversal branch).
+                let source_rel_base_str = state_key_for(&target_abs, &source_dir_abs_path);
 
-                // Derive target path (replace dot_prefix, strip postfixes)
-                let (_, inferred_target_abs) =
-                    source_rel_to_target_abs(&source_rel_str, &target_dir_abs_path, settings);
+                // The state key may include the encrypted/symlink postfix, and
+                // the user may pass either the plain name or the postfixed one
+                // (e.g. `secret.txt` vs `secret.txt.encrypted`) — try all
+                // variants, mirroring the target-path branch.
+                let state_key = resolve_state_key(
+                    state,
+                    &source_rel_base_str,
+                    &settings.encrypted_postfix,
+                    &settings.symlink_postfix,
+                    &source_dir_abs_path,
+                );
 
-                if let Some(sync_time) = state.syncs.get(source_rel_str.as_str()) {
+                if let Some(state_key) = state_key {
+                    // Derive the source file (with postfix when the state key
+                    // has one) and the target path (postfix stripped).
+                    let source_abs = source_dir_abs_path.join(&state_key);
+                    let source_abs = remove_dots_from_path(&source_abs);
+                    let (_, inferred_target_abs) =
+                        source_rel_to_target_abs(&state_key, &target_dir_abs_path, settings);
+                    let sync_time = &state.syncs[&state_key];
+
                     candidates.push((source_abs, inferred_target_abs, sync_time.clone()));
                 } else {
-                    warn!("{:?} is not in the state file, skipping...", source_rel_str);
+                    warn!("{:?} is not in the state file, skipping...", source_rel_base_str);
                 }
             } else {
                 // Provided path is a target path — find source
@@ -85,6 +99,7 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
                     &source_rel_base_str,
                     &settings.encrypted_postfix,
                     &settings.symlink_postfix,
+                    &source_dir_abs_path,
                 );
 
                 if let Some(state_key) = state_key {
