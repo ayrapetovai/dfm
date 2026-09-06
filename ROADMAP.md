@@ -58,13 +58,6 @@
    Multiple path arguments keep the old `All up-to-date.` message.
    `--porcelain`/`--short` output is unchanged.
 
-11. For subcommand 'config --set name value' add syntax parsing.
-  If the parameter is an array, the next syntax of value can be used:
-  add:element <- the prefix 'add:' and then value to add a value to the end of the array.
-  rm:element  <- the prefix 'rm:' and then value to remove element from the array.
-  rmi:2       <- the 'rmi:' prefix then an index of the value that must be removed.
-  If parameter is not an array then the error must be printed and exit code 1 must be returned.
-
 ## Documents
 
 - Add information about `./justfile` to the DEVELOPMENT.md, describe how it works.

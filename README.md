@@ -348,7 +348,24 @@ dfm config --default
 | `-l`, `--list` | List all config properties. |
 | `--default` | Print the default configuration in TOML format, suitable for redirecting into the config file (overrides its content and remains valid). |
 
-Note: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the config file directly.
+Note: Array-typed properties accept `--set` with the array syntax:
+
+| Value | Effect |
+|---|---|
+| `add:<element>` | Append the element (a regex for `force_encryption_for`) to the end of the array. The element must not be empty. |
+| `rm:<element>` | Remove every element equal to the given one; error + exit code 1 if none matches. |
+| `rmi:<index>` | Remove the element at the given 0-based index; error + exit code 1 if the index is invalid or out of range. |
+
+`force_encryption_for` is the only array property. It is treated as an array
+regardless of file content, so `add:` can also repair a corrupted (non-array)
+value. A parameter that is not a known config property is rejected with an
+error and exit code 1 before any syntax validation (the error lists the known
+parameters). Using array syntax on a scalar property, or a plain value on the
+array property, prints an error and exits with code 1. An element that
+literally begins with `add:`, `rm:`, or `rmi:` cannot be set through the CLI
+(no escape syntax); edit the config file instead. Removing the last element
+leaves an empty array, which is treated as "use the default rule" — not
+"no encryption".
 
 `dfm config --default` works even before `dfm init` and prints exactly the
 config file `init` creates, so a default config file can be produced with
@@ -641,7 +658,7 @@ source_dir/.current_diff/                  -- transient diff-tool scratch dir (0
 ## Limitations
 
 - **Root privileges**: `dfm` refuses to run with root privileges it did not get as the root user itself (e.g. `sudo dfm` or a setuid-style elevation of a non-root user). A genuine root session (uid 0 launched by the root user itself) still works. Set `DFM_ALLOW_ROOT=1` to bypass the check.
-- **Config `--set` and arrays**: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the TOML file directly.
+- **Config `--set` and arrays**: `force_encryption_for` can be edited via the array syntax (`add:` / `rm:` / `rmi:`), see [§2.9 config](#29-config). An element that literally begins with those prefixes needs a direct edit of the TOML file.
 - **Dotfiles outside UTF-8 paths**: Only valid UTF-8 paths are supported.
 - **Merge tool**: The merge command is run directly (no shell), so shell features (`|`, `>`, `$VAR`) in `merge_tool_command` are not processed.
 - **Diff tool**: Same as the merge tool — `diff_tool_command` is run directly (no shell), so shell features are not processed.

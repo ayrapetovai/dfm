@@ -1412,6 +1412,151 @@ pub fn read_property_from_config(
     }
 }
 
+/// Parameters whose config value is a TOML array — decided by schema, not by
+/// the current file content. Only `force_encryption_for` is an array.
+fn is_array_config_param(param_name: &str) -> bool {
+    param_name == "force_encryption_for"
+}
+
+/// Names of all config properties defined by the `Config` schema.
+/// `config --set` rejects a parameter that is not among them.
+fn known_config_params() -> &'static [&'static str] {
+    &[
+        "dot_prefix",
+        "symlink_postfix",
+        "encrypted_postfix",
+        "force_encryption_for",
+        "obtain_password_shell_command",
+        "merge_tool_command",
+        "diff_tool_command",
+        "diff_all_tool_command_target",
+        "diff_all_tool_command_source",
+        "diff_editable_tool_command",
+    ]
+}
+
+/// Split a `config --set` value into its syntax operation and operand.
+/// Array parameters accept `add:` / `rm:` / `rmi:` prefixes; anything else is
+/// a plain value. Returns `(is_array_syntax, op, operand)`.
+fn split_set_value(value: &str) -> (bool, &str, &str) {
+    match value.split_once(':') {
+        Some(("add", operand)) => (true, "add", operand),
+        Some(("rm", operand)) => (true, "rm", operand),
+        Some(("rmi", operand)) => (true, "rmi", operand),
+        _ => (false, "", value),
+    }
+}
+
+fn config_array_elements(value: Option<&Value>) -> Vec<String> {
+    match value {
+        // A missing field or a corrupted non-array value (e.g. an old string
+        // written by a pre-syntax `--set`) is treated as an empty array, so
+        // array syntax can create or repair the field.
+        Some(Value::Array(elements)) => elements
+            .iter()
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => vec![],
+    }
+}
+
+/// Compute the new value for `config --set` from the value syntax:
+/// array parameters accept `add:`, `rm:` and `rmi:` prefixes; a plain value
+/// on an array parameter or a prefix on a scalar parameter is an error.
+fn resolve_set_value(
+    param_name: &str,
+    param_new_value: &str,
+    config: &Table,
+) -> Result<Value, DfmError> {
+    let (is_array_syntax, op, operand) = split_set_value(param_new_value);
+
+    if !known_config_params().contains(&param_name) {
+        return Err(DfmError::InvalidInput(format!(
+            "parameter `{}` is not found; known parameters: {}",
+            param_name,
+            known_config_params().join(", ")
+        )));
+    }
+
+    if is_array_syntax && !is_array_config_param(param_name) {
+        return Err(DfmError::InvalidInput(format!(
+            "parameter `{}` is not an array and cannot be modified with `{}:` syntax",
+            param_name,
+            match op {
+                "rmi" => "rmi",
+                _ => op,
+            }
+        )));
+    }
+
+    if is_array_config_param(param_name) && !is_array_syntax {
+        return Err(DfmError::InvalidInput(format!(
+            "parameter `{}` is an array; the value must use the `add:`, `rm:` or `rmi:` prefix",
+            param_name
+        )));
+    }
+
+    if !is_array_config_param(param_name) {
+        return Ok(Value::String(param_new_value.to_owned()));
+    }
+
+    let mut elements = config_array_elements(config.get(param_name));
+
+    match op {
+        "add" => {
+            if operand.is_empty() {
+                return Err(DfmError::InvalidInput(format!(
+                    "the element added to `{}` must not be empty",
+                    param_name
+                )));
+            }
+            Regex::new(operand).map_err(|e| {
+                DfmError::InvalidInput(format!(
+                    "invalid regex added to `{}`: {}",
+                    param_name, e
+                ))
+            })?;
+            elements.push(operand.to_owned());
+        }
+        "rm" => {
+            let before = elements.len();
+            elements.retain(|element| element != operand);
+            if elements.len() == before {
+                return Err(DfmError::InvalidInput(format!(
+                    "element not found in `{}`: {}",
+                    param_name, operand
+                )));
+            }
+        }
+        "rmi" => {
+            let index: usize = operand.parse().map_err(|_| {
+                DfmError::InvalidInput(format!(
+                    "invalid index for `{}`: {}",
+                    param_name, operand
+                ))
+            })?;
+            if index >= elements.len() {
+                return Err(DfmError::InvalidInput(format!(
+                    "index out of range for `{}`: {} (array has {} element{})",
+                    param_name,
+                    operand,
+                    elements.len(),
+                    if elements.len() == 1 { "" } else { "s" }
+                )));
+            }
+            elements.remove(index);
+        }
+        _ => unreachable!("array parameter with a plain value is rejected above"),
+    }
+
+    Ok(Value::Array(
+        elements.into_iter().map(Value::String).collect(),
+    ))
+}
+
 pub fn write_property_to_config(
     path_to_config_file: &PathBuf,
     param_name: &str,
@@ -1419,16 +1564,19 @@ pub fn write_property_to_config(
 ) -> Result<(), DfmError> {
     let config_file_content =
         fs::read_to_string(path_to_config_file).map_err(|e| io_err(path_to_config_file, e))?;
-    let mut config: Table = toml::from_str(&config_file_content).map_err(|e| {
+    let config: Table = toml::from_str(&config_file_content).map_err(|e| {
         DfmError::other(format!(
             "config file corrupt: {}: {}",
             path_to_config_file.display(),
             e
         ))
     })?;
+    let new_value = resolve_set_value(param_name, param_new_value, &config)?;
+    // Rebuild the file with the whole table so the other properties survive.
+    let mut config = config;
     config.insert(
         param_name.to_owned(),
-        Value::String(param_new_value.to_owned()),
+        new_value,
     );
     let new_content = toml::to_string_pretty(&config)?;
     atomic_write(path_to_config_file, new_content)

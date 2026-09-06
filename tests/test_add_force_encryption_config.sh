@@ -6,9 +6,8 @@ dfm init dotfiles
 # set password command via config subcommand (string field, works with --set)
 dfm config --set obtain_password_shell_command "echo -n $PASSWORD"
 
-# force_encryption_for is an array — config --set stores everything as a TOML
-# string, so replace it in-place with sed instead
-sed -i 's|^force_encryption_for = .*|force_encryption_for = ["\\\\.txt$"]|' "$PWD/.config/dfm/config.toml"
+# force_encryption_for is an array — add the rule with the array syntax
+dfm config --set force_encryption_for "add:\.txt$"
 
 # create a .txt file (matches the force_encryption_for regex)
 write "$CONTENT" secret.txt
