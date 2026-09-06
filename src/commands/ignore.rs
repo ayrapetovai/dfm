@@ -23,7 +23,7 @@ fn ensure_trailing_newline(path: &PathBuf) -> Result<(), DfmError> {
 
 use dfm::*;
 use crate::DfmError;
-use super::{msg_dry_run, msg_nothing_to_do, prune_ignore_file, cli_path_in_scope};
+use super::{msg_dry_run, msg_nothing_to_do, prune_ignore_file, cli_path_in_scope, matches_source_ignore_regex};
 use microxdg::Xdg;
 
 /// Typed, per-command arguments for `ignore` (built by the dispatcher).
@@ -53,8 +53,8 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
     let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
     let empty_paths: &Vec<PathBuf> = &Vec::new();
-    // Relative CLI paths are anchored at the target directory, not at the
-    // current working directory.
+    // Relative CLI paths are anchored at the current working directory (normal
+    // shell semantics).
     let traversed_paths: Vec<PathBuf> = match paths {
         Some(p) => p.iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
@@ -93,8 +93,7 @@ pub fn ignore_command(settings: &Settings, xdg: &Xdg, args: IgnoreArgs) -> Resul
                 .to_string_lossy()
                 .into_owned();
             let canonical_line = format!("^{}$", regex::escape(&canonical));
-            let matched = check_path_matches_regex_component_wise(&source_ignore_regex, &rel_path)
-                .or_else(|| check_path_matches_regex_component_wise(&source_ignore_regex, &PathBuf::from(&canonical)));
+            let matched = matches_source_ignore_regex(&source_ignore_regex, &rel_path.to_string_lossy(), settings);
             if let Some(matched) = matched {
                 if matched == canonical_line {
                     info!("source path {:?} is ignored already", path);

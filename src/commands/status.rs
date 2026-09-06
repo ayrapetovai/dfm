@@ -11,7 +11,7 @@ use regex::RegexSet;
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{list_directory, report_progress, state_key_for, source_rel_to_target_abs, cli_path_in_scope, print_paged, write_stdout};
+use super::{list_directory, report_progress, state_key_for, source_rel_to_target_abs, cli_path_in_scope, print_paged, write_stdout, matches_source_ignore_regex};
 
 /// Typed, per-command arguments for `status` (built by the dispatcher).
 pub struct StatusArgs {
@@ -27,8 +27,9 @@ pub struct StatusArgs {
     pub ignored: bool,
     pub ignored_patterns: bool,
     pub unused_patterns: bool,
-    /// Restrict the report to these paths (absolute or relative to the target
-    /// directory). `None` shows the full report over the whole target dir.
+    /// Restrict the report to these paths (absolute or relative to the current
+    /// working directory; each must lie under the target or source directory).
+    /// `None` shows the full report over the whole target dir.
     pub paths: Option<Vec<PathBuf>>,
 }
 
@@ -244,7 +245,7 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
 
         // Source-side patterns classify the same way: the entry stays out of
         // the pullable groups (a removed target copy is not "Unpulled").
-        if let Some(pattern) = check_path_matches_regex_component_wise(&source_ignore_regex, &PathBuf::from(source_rel)) {
+        if let Some(pattern) = matches_source_ignore_regex(&source_ignore_regex, source_rel, settings) {
             let code = if is_managed_symlink { StatusCode::IgnoredSymlink } else { StatusCode::Ignored };
             entries.push(StatusEntry {
                 code,

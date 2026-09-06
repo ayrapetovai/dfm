@@ -257,15 +257,15 @@ pub enum Command {
     /// Get or set config properties.
     Config {
         /// Print the specified config property.
-        #[arg(long, short, num_args = 1, required = false, required_unless_present_any = ["set", "list", "default"], value_name = "NAME")]
+        #[arg(long, short, num_args = 1, required = false, required_unless_present_any = ["set", "list", "default"], value_name = "NAME", conflicts_with_all = ["set", "list"])]
         get: Option<String>,
 
         /// Set config property to a specified value.
-        #[arg(long, short, num_args = 2, required = false, required_unless_present_any = ["get", "list", "default"], value_names = ["NAME", "VALUE"])]
+        #[arg(long, short, num_args = 2, required = false, required_unless_present_any = ["get", "list", "default"], value_names = ["NAME", "VALUE"], conflicts_with_all = ["get", "list"])]
         set: Option<Vec<String>>,
 
         /// List all config properties.
-        #[arg(long, short, required = false, required_unless_present_any = ["get", "set", "default"])]
+        #[arg(long, short, required = false, required_unless_present_any = ["get", "set", "default"], conflicts_with_all = ["get", "set"])]
         list: bool,
 
         /// Print the default configuration in TOML format, suitable for

@@ -247,26 +247,32 @@ pub(crate) enum SourceVariant {
 }
 
 /// Resolve the existing source counterpart(s) for `target_abs_path`, tried in
-/// priority order: plain, encrypted, symlink pointer. Returns the first that
+/// priority order: encrypted, plain, symlink pointer. Returns the first that
 /// exists on disk, or `None` when the target has no source at all.
+///
+/// The encrypted variant wins when both a plain and an encrypted source exist,
+/// which matches the preference `add` applies when it (re)encrypts a file;
+/// leaving the leftover plain source in place is the consistent outcome of the
+/// conversion. All commands (`sync`, `diff`, `merge`, `forget`) resolve their
+/// source through this single order.
 pub(crate) fn resolve_source_variant(
     settings: &Settings,
     target_dir_abs_path: &Path,
     source_dir_abs_path: &Path,
     target_abs_path: &Path,
 ) -> Option<(SourceVariant, PathBuf)> {
-    let plain = filepath_in_source_dir(
-        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path, None,
-    );
-    if plain.exists() {
-        return Some((SourceVariant::Plain, plain));
-    }
     let encrypted = filepath_in_source_dir(
         &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path,
         Some(&settings.encrypted_postfix),
     );
     if encrypted.exists() {
         return Some((SourceVariant::Encrypted, encrypted));
+    }
+    let plain = filepath_in_source_dir(
+        &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path, None,
+    );
+    if plain.exists() {
+        return Some((SourceVariant::Plain, plain));
     }
     let symlink = filepath_in_source_dir(
         &settings.dot_prefix, target_dir_abs_path, source_dir_abs_path, target_abs_path,
@@ -278,6 +284,24 @@ pub(crate) fn resolve_source_variant(
     None
 }
 
+/// Test a state key (source-relative path) against the source-ignore file.
+/// `ignore` stores source-side patterns in dotless target-relative form
+/// (source `dot_my.log` → stored `^my\.log$`), so a candidate matches when
+/// either its original or its decoded form is matched. This is the same
+/// both-forms check `ignore_command` itself performs on re-runs.
+pub(crate) fn matches_source_ignore_regex(
+    source_ignore_regex: &RegexSet,
+    source_rel: &str,
+    settings: &Settings,
+) -> Option<String> {
+    check_path_matches_regex_component_wise(source_ignore_regex, &PathBuf::from(source_rel)).or_else(|| {
+        let canonical = decode_source_rel_path(source_rel, &settings.dot_prefix, false)
+            .to_string_lossy()
+            .into_owned();
+        check_path_matches_regex_component_wise(source_ignore_regex, &PathBuf::from(canonical))
+    })
+}
+
 // Shared --dry-run / --force helpers
 
 /// Resolve the effective dry-run value: `true` if either the per-command flag
@@ -287,12 +311,6 @@ pub(crate) fn resolve_dry_run(cmd_dry_run: bool, args_dry_run: bool) -> bool {
     cmd_dry_run || args_dry_run
 }
 
-/// If `force` is `false`, return `Err(DfmError::Other(msg))`.
-/// Useful for the common post-loop "force required" check.
-///
-/// When `force` is `true` the caller still needs to handle the case
-/// (e.g. skip the conflict, or proceed despite errors); this helper
-/// only covers the "reject without force" half.
 /// Drop lines from an ignore file whose trimmed content makes `should_ignore`
 /// return true. Blank lines and the full original text of kept lines are
 /// preserved. A missing file is a no-op. When `dry_run` is true the file is not
@@ -342,6 +360,12 @@ pub(crate) fn prune_matched_ignore_patterns(
     Ok(())
 }
 
+/// If `force` is `false`, return `Err(DfmError::Other(msg))`.
+/// Useful for the common post-loop "force required" check.
+///
+/// When `force` is `true` the caller still needs to handle the case
+/// (e.g. skip the conflict, or proceed despite errors); this helper
+/// only covers the "reject without force" half.
 #[inline]
 pub(crate) fn require_force(force: bool, msg: impl std::fmt::Display) -> Result<(), DfmError> {
     if force {

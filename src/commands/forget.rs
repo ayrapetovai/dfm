@@ -267,8 +267,8 @@ pub fn forget_command(settings: &Settings, xdg: &Xdg, args: ForgetArgs, state: &
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
     let forget_all = paths.is_none();
-    // Relative CLI paths are anchored at the target directory, not at the
-    // current working directory, and may not resolve out of the managed tree.
+    // Relative CLI paths are anchored at the current working directory (normal
+    // shell semantics) and may not resolve out of the managed tree.
     let paths = match paths {
         Some(p) => p.iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))

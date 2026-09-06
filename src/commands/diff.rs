@@ -12,6 +12,7 @@ use super::{
     resolve_tool_command, split_command, run_tool, DirGuard, create_private_temp_dir,
     state_key_for, source_rel_to_target_abs, resolve_source_variant,
     read_symlink_pointer, get_sync_time, SourceVariant, cli_path_to_abs,
+    matches_source_ignore_regex,
     print_paged, write_stdout, update_sync_state, msg_dry_run,
 };
 
@@ -250,7 +251,8 @@ fn diff_regular(
         .to_string_lossy()
         .ends_with(&settings.encrypted_postfix);
     if source_is_encrypted {
-        let inner_name = file_path_relative_to(target_abs, Path::new(&settings.target_dir));
+        let target_dir_abs_path = calc_working_dir_paths_unchecked(settings)?.0;
+        let inner_name = file_path_relative_to(target_abs, &target_dir_abs_path);
         dfm::crypt::announce_encryption_password(&inner_name.to_string_lossy());
         let (decrypted, _mode) = dfm::crypt::read_encrypted_bytes(settings, source_abs)?;
         let target_bytes = fs::read(target_abs).map_err(|e| io_err(target_abs, e))?;
@@ -349,7 +351,7 @@ fn diff_all(
         if check_path_matches_regex_component_wise(&target_ignore_regex, &PathBuf::from(&target_rel)).is_some() {
             continue;
         }
-        if check_path_matches_regex_component_wise(&source_ignore_regex, &PathBuf::from(source_rel)).is_some() {
+        if matches_source_ignore_regex(&source_ignore_regex, source_rel, settings).is_some() {
             continue;
         }
 
@@ -475,7 +477,8 @@ fn decrypt_source(
     target_abs: &Path,
     source_abs: &Path,
 ) -> Result<Vec<u8>, DfmError> {
-    let inner_name = file_path_relative_to(target_abs, Path::new(&settings.target_dir));
+    let target_dir_abs_path = calc_working_dir_paths_unchecked(settings)?.0;
+    let inner_name = file_path_relative_to(target_abs, &target_dir_abs_path);
     dfm::crypt::announce_encryption_password(&inner_name.to_string_lossy());
     let (decrypted, _mode) = dfm::crypt::read_encrypted_bytes(settings, source_abs)?;
     Ok(decrypted)

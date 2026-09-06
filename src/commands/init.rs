@@ -56,7 +56,7 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                 let current_dir = env::current_dir()?;
                 PathBuf::from_iter(vec![current_dir, path_to_source.clone()])
             };
-            fs::create_dir_all(actual_path)?;
+            fs::create_dir_all(&actual_path).map_err(|e| io_err(&actual_path, e))?;
         }
     }
 
@@ -98,7 +98,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
             source_directory_pointer = source_directory_pointer.join(&pointer_content);
             trace!("searching .dfm_root in {:?}", source_directory_pointer);
         }
-        fs::canonicalize(source_directory_pointer.parent().unwrap())?
+        let pointer_parent = source_directory_pointer.parent()
+            .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_directory_pointer)))?;
+        fs::canonicalize(pointer_parent).map_err(|e| io_err(pointer_parent, e))?
     } else {
         tasks.push(InitTask::CreateSourceRootFile(
             path_to_source.join(".dfm_root"),
@@ -112,7 +114,7 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                 env::current_dir()?.join(path_to_source)
             }
         } else {
-            fs::canonicalize(path_to_source)?
+            fs::canonicalize(path_to_source).map_err(|e| io_err(path_to_source, e))?
         }
     };
 
@@ -136,7 +138,7 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
     };
 
     let target_abs_path = if let Some(path_to_target) = path_to_target_opt {
-        fs::canonicalize(path_to_target)?
+        fs::canonicalize(path_to_target).map_err(|e| io_err(path_to_target, e))?
     } else {
         home_dir_path
     };
@@ -179,8 +181,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
         }
         match task {
             InitTask::CreateSourceRootFile(path) => {
-                fs::create_dir_all(path.parent().unwrap())
-                    .map_err(|e| io_err(path.parent().unwrap(), e))?;
+                let parent = path.parent()
+                    .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", path)))?;
+                fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
                 fs::write(&path, ".").map_err(|e| io_err(&path, e))?;
             }
             InitTask::CreateSourceIgnoreFile() => {
@@ -193,8 +196,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                     ".current_diff",
                 ];
 
-                fs::create_dir_all(source_ignore_file_path.parent().unwrap())
-                    .map_err(|e| io_err(source_ignore_file_path.parent().unwrap(), e))?;
+                let source_ignore_parent = source_ignore_file_path.parent()
+                    .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_ignore_file_path)))?;
+                fs::create_dir_all(source_ignore_parent).map_err(|e| io_err(source_ignore_parent, e))?;
                 let mut source_ignore_file = open_or_create_file(&source_ignore_file_path)?;
 
                 for ignore_file_record in ignore_file_records {
@@ -208,8 +212,9 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
                 }
             }
             InitTask::CreateStateFile(path, target_dir, source_dir) => {
-                fs::create_dir_all(path.parent().unwrap())
-                    .map_err(|e| io_err(path.parent().unwrap(), e))?;
+                let parent = path.parent()
+                    .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", path)))?;
+                fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
 
                 let empty_state = StateObject::new(target_dir, source_dir);
                 write_state(&path, &empty_state)?;

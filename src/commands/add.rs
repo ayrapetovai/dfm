@@ -360,8 +360,8 @@ pub fn add_command(settings: &Settings, xdg: &Xdg, args: AddArgs, state: &mut St
         calc_local_ignore_file(xdg),
     ].into_iter().filter_map(|r| r.ok()).collect();
 
-    // Relative CLI paths are anchored at the target directory, not at the
-    // current working directory, and may not resolve out of the managed tree.
+    // Relative CLI paths are anchored at the current working directory (normal
+    // shell semantics) and may not resolve out of the managed tree.
     let paths = match paths {
         Some(p) => p.iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))

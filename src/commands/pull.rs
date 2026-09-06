@@ -390,8 +390,8 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 
-    // Relative CLI paths are anchored at the target directory, not at the
-    // current working directory, and may not resolve out of the managed tree.
+    // Relative CLI paths are anchored at the current working directory (normal
+    // shell semantics) and may not resolve out of the managed tree.
     let paths = match paths {
         Some(p) => p.iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
@@ -399,7 +399,8 @@ pub fn pull_command(settings: &Settings, xdg: &Xdg, args: PullArgs, state: &mut 
         None => vec![source_dir_abs_path.clone()]
     };
 
-    let regex_no_dot_files = RegexSet::new(vec![PULL_KEEP_NON_DOTFILES]).unwrap();
+    let regex_no_dot_files = RegexSet::new(vec![PULL_KEEP_NON_DOTFILES])
+        .map_err(|e| DfmError::Other(format!("invalid keep-non-dotfiles regex {:?}: {}", PULL_KEEP_NON_DOTFILES, e)))?;
     let traversed_paths = list_directory_or_error(
         &paths,
         &source_dir_abs_path,

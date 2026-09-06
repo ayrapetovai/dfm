@@ -3,7 +3,7 @@ use log::{debug, info, warn};
 use dfm::*;
 use crate::DfmError;
 use microxdg::Xdg;
-use super::{run_merge, msg_dry_run, state_key_for, source_rel_to_target_abs, cli_path_in_scope};
+use super::{run_merge, msg_dry_run, state_key_for, source_rel_to_target_abs, cli_path_in_scope, matches_source_ignore_regex};
 
 /// Typed, per-command arguments for `merge` (built by the dispatcher).
 pub struct MergeArgs {
@@ -47,6 +47,9 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
 
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
+
+    let source_ignore_file_path = calc_source_ignore_file(&source_dir_abs_path);
+    let source_ignore_regex = load_ignore_regex(&source_ignore_file_path)?;
 
     // Build list of (source_abs, target_abs, sync_time) tuples to check
     let mut candidates: Vec<(PathBuf, PathBuf, SyncTime)> = vec![];
@@ -155,6 +158,14 @@ pub fn merge_command(settings: &Settings, xdg: &Xdg, args: MergeArgs, state: &mu
         let target_rel = file_path_relative_to(target_abs, &target_dir_abs_path);
         if let Some(pattern) = check_path_matches_regex_component_wise(&target_ignore_regex, &target_rel) {
             info!("target {:?} is ignored by regex /{}/ in file {:?}", target_abs, pattern, target_ignore_file_path);
+            continue;
+        }
+
+        // Source-ignored files are not merged either, using the same both-forms
+        // check as status/diff (the state key carries the encrypted/symlink postfix).
+        let source_rel = state_key_for(source_abs, &source_dir_abs_path);
+        if let Some(pattern) = matches_source_ignore_regex(&source_ignore_regex, &source_rel, settings) {
+            info!("source side of {:?} is ignored by regex /{}/ in file {:?}", source_abs, pattern, source_ignore_file_path);
             continue;
         }
 

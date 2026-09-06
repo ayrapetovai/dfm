@@ -11,7 +11,8 @@ After each feature implementation or fix update the context.txt, keep it concise
 - Do not install the built distributive of the project.
 - Do not make any modifications in the dependent library sources.
 - The project's binary dfm could be installed on the hosting system.
-Don't execute it during tests.
-Make sure that all XDG_* envs point to testing directory.
+- Do not use line numbers to point code.
+- Use clippy, rustfmt after coding, fix all warnings.
+Make sure that all XDG_* envs point to testing directory when performing manual testing.
 Otherwise dfm could damage user's files in home directory.
 

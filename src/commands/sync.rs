@@ -32,7 +32,11 @@ enum SyncTask {
     /// Decrypt source → target.
     PullEncrypted(PathBuf, PathBuf),
     /// Update the source symlink pointer file to the target's current pointee.
-    UpdatePointer(PathBuf, String),
+    UpdatePointer {
+        source_symlink: PathBuf,
+        target_path: PathBuf,
+        points_to: String,
+    },
 }
 
 /// Human-readable description of a task, shown before it runs (and during
@@ -45,7 +49,7 @@ fn describe_sync_task(task: &SyncTask) -> String {
             format!("copy encrypted target {:?} to source {:?}", target, source),
         SyncTask::PullEncrypted(target, source) =>
             format!("decrypt source {:?} to target {:?}", source, target),
-        SyncTask::UpdatePointer(source_symlink, points_to) =>
+        SyncTask::UpdatePointer { source_symlink, points_to, .. } =>
             format!("directing source symlink file {:?} to the pointee {:?}", source_symlink, points_to),
     }
 }
@@ -93,7 +97,11 @@ fn handle_symlink(
     }
     info!("target symlink {:?} points to {:?},\n\tpointer must be updated to {:?}",
         target_path, source_content, target_pointee_str);
-    tasks.push(SyncTask::UpdatePointer(source_symlink_file, target_pointee_str));
+    tasks.push(SyncTask::UpdatePointer {
+        source_symlink: source_symlink_file,
+        target_path: target_path.to_path_buf(),
+        points_to: target_pointee_str,
+    });
     Ok(())
 }
 
@@ -207,8 +215,9 @@ pub fn sync_command(settings: &Settings, xdg: &Xdg, args: SyncArgs, state: &mut 
         calc_local_ignore_file(xdg),
     ].into_iter().filter_map(|r| r.ok()).collect();
 
-    // Relative CLI paths are anchored at the target directory and may not
-    // resolve out of the managed tree, same as add/pull.
+    // Relative CLI paths are anchored at the current working directory (normal
+    // shell semantics) and may not resolve out of the managed tree, same as
+    // add/pull.
     let paths = match paths {
         Some(p) => p.iter()
             .map(|p| cli_path_in_scope(p, &target_dir_abs_path, &source_dir_abs_path))
@@ -362,12 +371,16 @@ fn execute_sync_task(
             update_sync_state(state, source_file, target_file, source_dir_abs_path)?;
             Ok(true)
         },
-        SyncTask::UpdatePointer(source_symlink, points_to) => {
+        SyncTask::UpdatePointer { source_symlink, target_path, points_to } => {
             let source_parent = source_symlink.parent()
                 .ok_or_else(|| DfmError::Other(format!("cannot resolve parent directory of {:?}", source_symlink)))?;
             let result = (|| -> Result<(), DfmError> {
                 fs::create_dir_all(source_parent).map_err(|e| io_err(source_parent, e))?;
                 fs::write(source_symlink, points_to.as_bytes()).map_err(|e| io_err(source_symlink, e))?;
+                // Refresh the sync record so the pointer's recorded mtime/hash
+                // reflects what was just written (add does the same on symlink
+                // creation); without it the state entry stays stale forever.
+                update_sync_state(state, source_symlink, target_path, source_dir_abs_path)?;
                 Ok(())
             })();
             match result {

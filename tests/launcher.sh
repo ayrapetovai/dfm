@@ -39,7 +39,7 @@ fi
 export EXECUTABLE
 
 eval 'function '$PROGRAMM_NAME_IN_SHELL'() { "$EXECUTABLE" "$@"; }'
-export "$PROGRAMM_NAME_IN_SHELL"
+export -f "$PROGRAMM_NAME_IN_SHELL"
 
 function write() {
   mkdir -p "$(dirname "$2")" && echo "$1" >"$2"

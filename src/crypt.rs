@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use chacha20poly1305::XChaCha20Poly1305;
 
-use crate::{Settings, file_path_relative_to, io_err};
+use crate::{Settings, file_path_relative_to, io_err, calc_working_dir_paths_unchecked};
 
 // Password cache — ask only once per `dfm` process
 //
@@ -712,14 +712,13 @@ fn enclosing_dirs(rel: &Path) -> Vec<PathBuf> {
 }
 
 /// Enclosing-directory modes: `(target_rel_dir, mode)` for every component of
-/// `inner_name`'s parent under `settings.target_dir`, so a decrypt can recreate
-/// e.g. a 0700 SSH directory.
-fn enclosing_dirs_with_modes(settings: &Settings, inner_name: &Path) -> Vec<(PathBuf, u32)> {
-    let target_dir_path = PathBuf::from(&settings.target_dir);
+/// `inner_name`'s parent under the (expanded) target directory, so a decrypt
+/// can recreate e.g. a 0700 SSH directory.
+fn enclosing_dirs_with_modes(target_dir_abs: &Path, inner_name: &Path) -> Vec<(PathBuf, u32)> {
     enclosing_dirs(inner_name)
         .into_iter()
         .filter_map(|dir_rel| {
-            let dir_abs = target_dir_path.join(&dir_rel);
+            let dir_abs = target_dir_abs.join(&dir_rel);
             fs::metadata(&dir_abs)
                 .ok()
                 .map(|m| (dir_rel, m.permissions().mode()))
@@ -770,10 +769,10 @@ pub fn write_encrypted_source(
     let target_metadata = fs::metadata(target_file_path).map_err(|e| io_err(target_file_path, e))?;
     let target_file_permissions = target_metadata.permissions();
 
-    let target_dir_path = PathBuf::from(&settings.target_dir);
+    let target_dir_path = calc_working_dir_paths_unchecked(settings)?.0;
     let inner_name_p = file_path_relative_to(target_file_path, &target_dir_path);
     let inner_name = inner_name_p.to_string_lossy().into_owned();
-    let dirs = enclosing_dirs_with_modes(settings, &inner_name_p);
+    let dirs = enclosing_dirs_with_modes(&target_dir_path, &inner_name_p);
 
     announce_encryption_password(&inner_name);
 
@@ -830,7 +829,7 @@ pub fn read_encrypted_file(
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
 
-    let target_root = PathBuf::from(&settings.target_dir);
+    let target_root = calc_working_dir_paths_unchecked(settings)?.0;
     let (session, meta) = open_with_retry(settings, source_file_path, || {
         fs::File::open(source_file_path).map_err(|e| io_err(source_file_path, e))
     })?;
@@ -866,6 +865,9 @@ where
                 already_retried = true;
             }
             Err(DecryptError::WrongPassword) => {
+                // Drop the rejected password so the next encrypted file starts
+                // with a fresh prompt instead of failing on the cached wrong one.
+                clear_password_cache();
                 return Err(DfmError::other(format!(
                     "wrong password for encrypted file {:?}",
                     encrypted_path
@@ -883,9 +885,9 @@ where
 /// time. A streaming failure removes the partially written target file.
 ///
 /// Directory permissions are restored relative to the caller-supplied target
-/// root. For the internal add/pull/merge/purge path this is
-/// `settings.target_dir` (where the directories actually live); the standalone
-/// `dfm decrypt` passes the output file's parent so dirs resolve relative to it.
+/// root. For the internal add/pull/merge/purge path this is the expanded target
+/// directory (where the directories actually live); the standalone `dfm decrypt`
+/// passes the output file's parent so dirs resolve relative to it.
 fn restore_streamed(
     target_root: &Path,
     target_file_path: &Path,
