@@ -617,13 +617,15 @@ pub struct Settings {
     pub diff_editable_tool_command: Option<String>,
 }
 
+pub fn config_to_string(config: &Config) -> Result<String, DfmError> {
+    match toml::to_string_pretty(config) {
+        Ok(c) => Ok(c),
+        Err(e) => Err(DfmError::other(e)),
+    }
+}
+
 pub fn write_config(path_to_config_file: &Path, config: &Config) -> Result<(), DfmError> {
-    let content = match toml::to_string_pretty(config) {
-        Ok(c) => c,
-        Err(e) => {
-            return Err(DfmError::other(e));
-        }
-    };
+    let content = config_to_string(config)?;
     if let Some(config_parent_directory) = path_to_config_file.parent()
         && !config_parent_directory.exists()
     {

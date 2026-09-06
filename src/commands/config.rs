@@ -10,11 +10,27 @@ pub struct ConfigArgs {
     pub get: Option<String>,
     pub set: Option<Vec<String>>,
     pub list: bool,
+    pub default: bool,
     pub dry_run: bool,
 }
 
 pub fn config_command(args: ConfigArgs, path_to_config_file: &PathBuf) -> Result<(), DfmError> {
-    let ConfigArgs { ref get, ref set, ref list, dry_run } = args;
+    let ConfigArgs {
+        ref get,
+        ref set,
+        ref list,
+        default,
+        dry_run,
+    } = args;
+
+    if default {
+        // `--default` is exclusive with `--get`/`--set`/`--list` (clap), so it
+        // always runs alone. Print the default configuration: the exact TOML
+        // `init` writes, redirectable into the config file.
+        let defaults = Config::from_settings(&create_default_settings());
+        print!("{}", config_to_string(&defaults)?);
+        return Ok(());
+    }
 
     if let Some(param_name ) = get {
         match read_property_from_config(path_to_config_file, param_name) {

@@ -58,11 +58,6 @@
    Multiple path arguments keep the old `All up-to-date.` message.
    `--porcelain`/`--short` output is unchanged.
 
-10. Add flag --default to subcommand 'config'. dfm must print the default configuration
-  in toml format, that output must be eligible to be redirected to the dfm's config file
-  to override its content and live it valid config file.
-  User could use that to create a default config file.
-
 11. For subcommand 'config --set name value' add syntax parsing.
   If the parameter is an array, the next syntax of value can be used:
   add:element <- the prefix 'add:' and then value to add a value to the end of the array.

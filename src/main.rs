@@ -91,12 +91,18 @@ fn main_logic() -> Result<(), dfm::DfmError> {
                 dry_run: resolve_dry_run(dry_run, args.dry_run),
             },
         ),
-        Command::Config { get, set, list } => match &path_to_config_file {
+        Command::Config {
+            get,
+            set,
+            list,
+            default,
+        } => match &path_to_config_file {
             Some(p) => config_command(
                 ConfigArgs {
                     get,
                     set,
                     list,
+                    default,
                     dry_run: args.dry_run,
                 },
                 p,

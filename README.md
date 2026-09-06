@@ -338,6 +338,7 @@ Read or write config file properties.
 dfm config --get <NAME>
 dfm config --set <NAME> <VALUE>
 dfm config --list
+dfm config --default
 ```
 
 | Flag | Description |
@@ -345,8 +346,13 @@ dfm config --list
 | `-g`, `--get <NAME>` | Print the value of a config property. |
 | `-s`, `--set <NAME> <VALUE>` | Set a config property. |
 | `-l`, `--list` | List all config properties. |
+| `--default` | Print the default configuration in TOML format, suitable for redirecting into the config file (overrides its content and remains valid). |
 
 Note: Array-typed properties (`force_encryption_for`) cannot be set via `--set`; edit the config file directly.
+
+`dfm config --default` works even before `dfm init` and prints exactly the
+config file `init` creates, so a default config file can be produced with
+`dfm config --default > "$(dfm paths | sed -n 's/^Config: //p')"`.
 
 ### 2.10 `purge`
 
@@ -488,6 +494,10 @@ dfm sync [PATH...] [--force] [--dry-run]
 The config file is read from `$XDG_CONFIG_HOME/dfm/config.toml` (or `~/.dfm.toml` if the XDG path does not exist).
 
 ### Default settings
+
+`dfm config --default` prints the default configuration in TOML form — the
+same values as below — which is redirectable into the config file, overriding
+the current content with the defaults ([§2.9 config](#29-config)):
 
 ```toml
 dot_prefix = "dot_"
