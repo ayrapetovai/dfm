@@ -16,7 +16,7 @@ if [[ $# -gt 1 ]]; then
 fi
 target=${1:-}
 
-cd "$(dirname "$0")/.."   # project root (repo dir, where justfile lives)
+cd "$(dirname "$0")/.." # project root (repo dir, where justfile lives)
 
 # --- preflight: must be on main, clean, and in sync with upstream ---
 branch=$(git rev-parse --abbrev-ref HEAD)
@@ -44,6 +44,8 @@ remote=${remote%%/*}
 if [[ -n "$target" ]]; then
   just incver "$target"
 fi
+
+just clean
 just package
 
 TAG="$(tomlq -r '.package.version' Cargo.toml)"
@@ -57,9 +59,9 @@ if [[ -n "$target" ]]; then
 fi
 
 # --- tag conditionally, then push the tag only when it is missing on the remote ---
-if git ls-remote --tags --exit-code "$remote" "$TAGV" > /dev/null 2>&1; then
+if git ls-remote --tags --exit-code "$remote" "$TAGV" >/dev/null 2>&1; then
   echo "tag $TAGV already exists on $remote; not re-creating or re-pushing"
-elif git rev-parse -q --verify "refs/tags/$TAGV" > /dev/null 2>&1; then
+elif git rev-parse -q --verify "refs/tags/$TAGV" >/dev/null 2>&1; then
   echo "tag $TAGV exists locally but not on $remote; pushing it"
   git push "$remote" "$TAGV"
 else
