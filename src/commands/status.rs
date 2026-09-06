@@ -497,20 +497,33 @@ pub fn status_command(settings: &Settings, xdg: &Xdg, args: StatusArgs, state: &
     let explicit_paths = paths.is_some();
 
     let filtered: Vec<&StatusEntry> = entries.iter().filter(|e| {
-        // `-e` overrides all other restrictive filters: report only the
-        // encrypted set, in whatever status category each entry belongs to.
+        // `-e` overrides all other filters: report only the encrypted set, in
+        // whatever status category each entry belongs to.
         if *encrypted {
             return e.encrypted;
         }
-        if *conflicted && e.code != StatusCode::BothModified { return false; }
-        if *modified && !e.code.is_modified() { return false; }
-        if *unmanaged && e.code != StatusCode::Unmanaged && e.code != StatusCode::UnmanagedSymlink { return false; }
-        if *managed && !e.code.is_managed() { return false; }
-        if *unpulled && e.code != StatusCode::Unpulled { return false; }
-        if *ignored && !e.code.is_ignored() { return false; }
+        // Base visibility, independent of which filter flags are set: ignored
+        // entries stay hidden unless `--all`, `--ignored`, or an explicit
+        // scope asks for them; up-to-date entries stay hidden unless `--all`
+        // or `--managed` asks for them.
         if !*all && !*ignored && !explicit_paths && e.code.is_ignored() { return false; }
         if !*all && !*managed && e.code.is_up_to_date() { return false; }
-        true
+
+        // With no filter flag the default report shows every visible entry.
+        // Combining filter flags is additive: each enabled flag contributes
+        // its own set and the report shows the union — `--managed --unmanaged`
+        // shows both blocks — with no priority between the flags.
+        let any_category_filter = *conflicted || *modified || *unmanaged
+            || *managed || *unpulled || *ignored;
+        if !any_category_filter {
+            return true;
+        }
+        (*conflicted && e.code == StatusCode::BothModified)
+            || (*modified && e.code.is_modified())
+            || (*unmanaged && (e.code == StatusCode::Unmanaged || e.code == StatusCode::UnmanagedSymlink))
+            || (*managed && e.code.is_managed())
+            || (*unpulled && e.code == StatusCode::Unpulled)
+            || (*ignored && e.code.is_ignored())
     }).collect();
 
     // Output

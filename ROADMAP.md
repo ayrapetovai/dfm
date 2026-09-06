@@ -42,16 +42,6 @@
 6. Calling 'dfm merge filepath' does not merge files (tested on encrypted files).
    But it must.
 
-5. 'status' accepts any combination of its flags in any order,
-   each in short or long spelling interchangeably
-   (both `-e`/`--encrypted`, `-m`/`--modified`, `-s`/`--short`, etc.).
-   Combining flags is additive: every matching block is printed —
-   e.g. `--managed --unmanaged` shows both blocks;
-   there is no "contradictory flags" error
-   and no hidden priority conflict
-   (the only per-flag override is `-e` overrides other filters,
-   per the `status --encrypted` item).
-
 8. Add a progress bar for the action phase of the `add`, `pull` and `sync`
    commands (the walkdir phase already has progress).
    One step = one processed file

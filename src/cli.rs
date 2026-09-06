@@ -128,6 +128,11 @@ pub enum Command {
     },
 
     /// Show status of managed files.
+    ///
+    /// Filter flags combine additively: each enabled filter contributes its
+    /// entries and the report shows the union (e.g. --managed --unmanaged
+    /// shows both blocks), in any order and spelling. --encrypted is the only
+    /// filter that overrides the others.
     Status {
         /// Full report: include up-to-date and ignored entries.
         #[arg(long, short = 'a')]
