@@ -56,14 +56,6 @@
   `Cargo.toml` `license` and packaging (AUR) metadata
   are updated in the same commit.
 
-- In README.md's general description, state that dfm works only locally:
-  the sync is purely local —
-  dfm only ever moves files between local directories on the same machine,
-  with no remote/host/server mode;
-  it never talks to git servers, the network, cloud, or any external service.
-  This is additional to (not a replacement for)
-  the existing "git commands are not embedded" limitation.
-
 - Shrink README.md and context.txt: define a per-section max-size budget
   (in lines) for each file, then trim each section
   so that both files fit within their budgets.

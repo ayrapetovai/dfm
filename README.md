@@ -8,6 +8,13 @@ A CLI tool to manage dotfiles: keep copies of configuration files from your home
 - Argon2id + XChaCha20-Poly1305 encrypted storage for sensitive files
 - Ignore lists for target and source files
 
+`dfm` is **purely local**: synchronization only ever moves files between two
+local directories on the same machine (the target and source directories). There
+is no remote, host, or server mode; `dfm` never talks to git servers, the
+network, cloud, or any external service. This is in addition to — not a
+replacement for — the [limitations](#never-be-in-scope) section below, which
+also rules out embedding git commands inside `dfm`.
+
 ## Quick start
 
 ```bash
@@ -667,6 +674,9 @@ source_dir/.current_diff/                  -- transient diff-tool scratch dir (0
 - Windows support.
 - Support of version management system other than git.
 - Git commands embedding into CLI of dfm (dfm git status).
+- Any remote/host/server, network, cloud, or other external service mode: dfm
+  synchronization is purely local (target and source directories on the same
+  machine).
 
 ## Repo management
 
