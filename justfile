@@ -27,7 +27,7 @@ install:
 # Build a release binary and install it to /usr/bin/dfm with the `install` (needs root).
 install-bin:
     cargo build --release
-    install -D -m 0755 target/release/dfm /usr/bin/dfm
+    sudo install -D -m 0755 target/release/dfm /usr/bin/dfm
 
 # Increment version. Usage: just incver <major|minor|patch>
 incver target:
