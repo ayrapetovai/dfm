@@ -1,5 +1,52 @@
 # Development
 
+## Task runner: `justfile`
+
+`dfm` uses [`just`](https://github.com/casey/just) as its task runner, with all
+recipes defined in `./justfile`. Running a recipe is `just <name>`; run `just
+--list` (or just `just -l`) to see every recipe and its comment.
+
+The recipes cover the day-to-day workflow. Most are thin wrappers that delegate
+to a script under `./scripts/` instead of inlining multi-line shell, so the
+justfile stays a readable index and the logic lives in a testable script:
+
+- `just build` — `cargo build`, compile only (no package).
+- `just clean` — `cargo clean`.
+- `just test` — the `./tests/launcher.sh` integration suite.
+- `just package` — build the pacman package via `cargo aur` + `makepkg`.
+- `just install` — build the package and install it with `pacman -si`.
+- `just install-bin` — release build + `install -D` to `/usr/bin/dfm` (root).
+- `just incver <major|minor|patch>` — bump the version in `Cargo.toml`.
+- `just release [ <major|minor|patch> ]` — bump (optional), tag, and open a
+  draft GitHub release via `./scripts/release.sh`.
+
+**Rule: any repeatable multi-step task must be scripted and added to
+`./justfile` as a recipe.** If a task needs to be done more than once, it is a
+candidate for a recipe; wrap its steps in a script under `./scripts/` (add the
+shebang, make it executable, keep `set -euo pipefail`) and have the recipe call
+it. This keeps commands reproducible, documented in one place, and out of
+people's muscle memory.
+
+## Build tools
+
+The project uses a few external tools. They are called either directly by the
+recipes above, by the scripts they invoke, or by `build.rs`:
+
+- **`gh`** (GitHub CLI, https://cli.github.com/) — used by `./scripts/release.sh`
+  (`gh release create`) to create and push the draft release with its assets.
+  It must be installed and authenticated (`gh auth login`) for `just release`.
+- **`yq`/`tomlq`** — used by the `incver` recipe and `./scripts/incsemver` to
+  read and rewrite `Cargo.toml`'s `.package.version`. The recipes invoke the
+  TOML-aware `tomlq` command, so it is surfaced here as **`tomlq`**
+  (`tomlq -r '.package.version' Cargo.toml` for reading,
+  `tomlq -i -t` for in-place writes). On the reference system `tomlq -V`
+  reports `jq-1.8.2`, i.e. the Real Tomlq jq wrapper; ensure whichever `tomlq`
+  is installed is on `PATH`.
+- **`just`** — the task runner itself (see the section above).
+- **`cargo aur`** (`cargo install cargo-aur`) — builds the pacman source
+  package (`./target/cargo-aur`). A toolbox dependency, not from the
+  GitHub CLI set.
+
 ## Building
 
 ### Install tools
