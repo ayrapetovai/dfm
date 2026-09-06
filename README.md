@@ -1,6 +1,6 @@
 # Dotfile Manager (dfm)
 
-A CLI tool to manage dotfiles: keep copies of configuration files from your home directory (**target**) inside a version-controlled **source** directory, and synchronize changes between them safely.
+A CLI tool to manage dotfiles: keep copies of configuration files from your home directory (**target**) inside a version-controlled **source** directory, and synchronize changes between them safely. `dfm` is **purely local** — it only ever moves files between the target and source directories on the same machine; no remote, host, or server mode, and it never talks to git servers, the network, cloud, or any external service (see [Never be in scope](#never-be-in-scope)).
 
 - Copy files between target and source with conflict detection
 - Three-way merge for conflicting files
@@ -8,114 +8,64 @@ A CLI tool to manage dotfiles: keep copies of configuration files from your home
 - Argon2id + XChaCha20-Poly1305 encrypted storage for sensitive files
 - Ignore lists for target and source files
 
-`dfm` is **purely local**: synchronization only ever moves files between two
-local directories on the same machine (the target and source directories). There
-is no remote, host, or server mode; `dfm` never talks to git servers, the
-network, cloud, or any external service. This is in addition to — not a
-replacement for — the [limitations](#never-be-in-scope) section below, which
-also rules out embedding git commands inside `dfm`.
-
 ## Quick start
 
 ```bash
-# Initialize with an existing dotfiles repository
-dfm init /path/to/dotfiles/repo
-dfm pull
+dfm init /path/to/dotfiles/repo && dfm pull     # existing dotfiles repo
 
-# Initialize with a new directory
-git clone url-to-reop/dotfiles
+git clone url-to-repo/dotfiles                  # or start fresh
 dfm init dotfiles
+dfm ignore .local .cache                        # ignore local dependent files
 dfm add ~/.bashrc ~/.config/git/config
-cd dotfiles
-git add .
-git commit -m "initial"
-git push
+cd dotfiles && git add . && git commit -m "initial" && git push
 ```
-
----
 
 ## Dependencies
 
-`dfm` is a self-contained Rust binary — there are **no mandatory runtime dependencies**. The following tools are **optional**; each enhances a specific feature:
+`dfm` is a self-contained Rust binary — **no mandatory runtime dependencies**; the tools below are optional:
 
-| Tool | Required for | Notes |
-|---|---|---|
-| — | Core functionality | Add, pull, forget, merge, diff, status, purge all work out of the box. |
-| `less` (or `$PAGER`) | Paged `status` output | Default pager is `less -FRSX`. Falls back to plain stdout if unavailable. |
-| `git` | Git-info line in `status` output | Shows branch and dirty state of the source directory. Silently skipped if the source directory is not a git repository. |
-| `sh` (POSIX) | `obtain_password_shell_command` | The command is piped to `sh` stdin (not exposed in `ps`). Falls back to interactive password prompt when unset. |
-| A merge tool (`vimdiff` by default) | `merge` subcommand | Configured via `merge_tool_command`. Any command that accepts `{target}`, `{source}`, `{result}` placeholders works (e.g., `vimdiff`, `nvim -d`, `meld`). |
-| A diff tool (`vimdiff` by default) | `diff` subcommand | Configured via `diff_tool_command` (per-path) and `diff_all_tool_command_target`/`diff_all_tool_command_source` (batch `--all`). Any command that accepts `{target}`, `{source}` placeholders works (e.g., `diff -u`, `vimdiff`, `meld`). |
-
----
+| Tool | Required for |
+|---|---|
+| `less` (or `$PAGER`) | paged `status` output (default `less -FRSX`; falls back to plain stdout). |
+| `git` | the git-info line in `status` (branch + dirty state; silently skipped if the source is not a git repo). |
+| `sh` | `obtain_password_shell_command` (piped to `sh` stdin, not visible in `ps`); else interactive password prompt. |
+| a merge tool (`vimdiff` default) | `merge`, via `merge_tool_command` (`{target}`, `{source}`, `{result}` placeholders). |
+| a diff tool (`vimdiff` default) | `diff`, via `diff_tool_command` / `diff_all_tool_command_target` / `diff_all_tool_command_source` (`{target}`, `{source}` placeholders). |
 
 ## Table of Contents
 
-1. [Concepts](#1-concepts) — target/source directories and the terms used throughout.
+1. [Concepts](#1-concepts)
 2. [Commands](#2-commands)
-   - [init](#21-init) — create the target/source directories and config (install).
-   - [add](#22-add) — copy a target file into the source directory.
-   - [pull](#23-pull) — copy a source file back into the target directory.
-   - [merge](#24-merge) — 3-way merge of conflicting files.
-   - [diff](#25-diff) — show changes between target and source.
-   - [forget](#26-forget) — stop managing a file (does not delete it).
-   - [ignore](#27-ignore) — exclude files from management.
-   - [paths](#28-paths) — show where are config and state files.
-   - [config](#29-config) — view and edit configuration.
-   - [purge](#210-purge) — remove source files, state (uninstall).
-   - [status](#211-status) — report managed, modified, unmanaged, ignored files.
-   - [sync](#213-sync) — push and pull changed of managed files.
-3. [Configuration](#3-configuration) — config file location and settings.
-4. [Encryption](#4-encryption) — encrypted storage of sensitive files.
-5. [Conflict detection](#5-conflict-detection) — how file conflicts are detected.
-6. [File layout](#6-file-layout) — where dfm stores its own files.
-
----
+3. [Configuration](#3-configuration)
+4. [Encryption](#4-encryption)
+5. [Conflict detection](#5-conflict-detection)
+6. [File layout](#6-file-layout)
 
 ## 1 Concepts
 
 | Term | Description |
 |---|---|
-| **Target directory** | The root for all managed files, usually `$HOME`. |
-| **Source directory** | A directory (typically under version control) that stores copies of managed files. |
-| **Target file (TF)** | A managed file inside the target directory. |
-| **Source file (SF)** | The backing copy inside the source directory. |
-| **State file** | A TOML file (`state.toml`) that maps each managed file to a `"<seconds>;<nanos>"` sync timestamp. |
-| **Sync time** | The timestamp recorded when a target→source (add) or source→target (pull) copy completed. Used for conflict detection. |
+| **Target directory** | root for managed files, usually `$HOME`. |
+| **Source directory** | a directory (typically version-controlled) holding copies of managed files. |
+| **Target file (TF) / Source file (SF)** | the managed file inside the target / its backing copy in the source. |
+| **State file** | `$XDG_STATE_HOME/dfm/state.toml`, mapping each managed file to its sync time. |
+| **Sync time** | the timestamp (`"<secs>;<nanos>"`) recorded when the last `add`/`pull` copy completed — the basis of conflict detection. |
 
 ### Path mapping
 
-File names starting with `.` in the target directory are stored with a **dot prefix** in the source directory (default: `dot_`). This keeps hidden files visible in the source tree.
-
-- Target `~/.bashrc` → Source `source_dir/dot_bashrc`
-- Target `~/.config/foo.conf` → Source `source_dir/dot_config/foo.conf`
-
-The dot prefix and other postfixes are configurable (see [Configuration](#3-configuration)).
-
----
+Target names starting with `.` get the `dot_prefix` (default `dot_`) in the source: `~/.bashrc` → `source_dir/dot_bashrc`, `~/.config/foo.conf` → `source_dir/dot_config/foo.conf`. Prefixes and postfixes are configurable ([Configuration](#3-configuration)).
 
 ## 2 Commands
 
-Relative `PATH` arguments follow normal shell semantics: they are anchored at the **current working directory** and normalized lexically (`dir/../file` becomes `file`). A `PATH` may not resolve outside the managed tree: if it lands under neither the target nor the source directory (a `..` climbing past the managed root, or an absolute path elsewhere), the command rejects it with an error. The read-only `diff` is the exception — it accepts any existing path and reports it as *not managed*.
+Relative `PATH` arguments follow shell semantics: anchored at the **current working directory** and normalized lexically. A path resolving outside the managed tree (neither target nor source) is rejected; the read-only `diff` is the exception, reporting the path as *not managed*.
 
 ### 2.1 `init`
-
-Set up the source directory, config file, and state file.
 
 ```bash
 dfm init <PATH> [TARGET]
 ```
 
-- `<PATH>` — the source directory (created if it does not exist). A marker file `.dfm_root` is written inside.
-- `[TARGET]` — optional target directory. Default: `$HOME`.
-
-`init` will:
-1. Locate or create the source directory (recursively searches parent directories for `.dfm_root`).
-2. Create the source ignore file if it does not exist (with `.dfm_root`, git-related entries, and the `.current_merge`/`.current_diff` temp dirs used by `merge`/`diff`).
-3. Create or clear the state file at `$XDG_STATE_HOME/dfm/state.toml`, writing the target and source directory paths into it.
-4. Create the config file at `$XDG_CONFIG_HOME/dfm/config.toml` with defaults if it does not exist.
-
-`init` does not look for a config file inside the source directory; the config file always lives outside the source directory.
+Creates the source directory (marker `.dfm_root`, searched upward in parents), the source ignore file, the state file at `$XDG_STATE_HOME/dfm/state.toml`, and the config at `$XDG_CONFIG_HOME/dfm/config.toml` with defaults. `TARGET` defaults to `$HOME`. `init` never looks for a config inside the source directory.
 
 | Flag | Description |
 |---|---|
@@ -123,405 +73,168 @@ dfm init <PATH> [TARGET]
 
 ### 2.2 `add`
 
-Copy files from the target directory to the source directory.
-
 ```bash
 dfm add [PATH...] [--force] [--symlink] [--encrypt] [--dry-run]
 ```
 
-- `PATH...` — files or directories to add. Omitting traverses the entire target directory (respecting ignore rules).
-- Fully-ignored directories are pruned during the traversal: they are never descended into (so their files are not visited, counted in progress, or reported), and the matching pattern is kept. An explicitly named ignored path is still entered — combine with `--force` to add an ignored directory anyway.
-- Each file is compared against its source counterpart using [conflict detection](#5-conflict-detection). Only safe copies proceed automatically; conflicts require `--force`.
+Copies target files into the source. Without `PATH`, traverses the whole target (fully-ignored directories are pruned). Every file is checked against its source via [conflict detection](#5-conflict-detection); conflicts require `--force`.
 
 | Flag | Description |
 |---|---|
-| `-f`, `--force` | Overwrite source files on conflict. Also bypasses ignore patterns (the matching pattern is removed from the ignore file on success). |
-| `-s`, `--symlink` | Move the file to the source directory and replace the target with a symlink. |
-| `-e`, `--encrypt` | Encrypt the file before storing in the source directory. |
+| `-f`, `--force` | Overwrite the source on conflict; also bypasses ignore patterns (the matching pattern is removed from the ignore file on success). |
+| `-s`, `--symlink` | Move the file to the source and replace the target with a symlink. |
+| `-e`, `--encrypt` | Encrypt the file in the source. |
 | `-n`, `--dry-run` | Check without making changes. |
 
-#### Symlink handling
-
-When traversed paths include symlinks, `add` resolves each symlink using these rules:
-
-| Scenario | Behavior |
-|---|---|
-| Symlink has an existing symlink file pointing to the correct pointee | Do nothing (already managed). |
-| Symlink has an existing symlink file pointing to a *different* pointee | Update the symlink file to the current pointee. |
-| Symlink has *no* symlink file and the pointee is outside the source directory | Create a symlink file pointing to the pointee. |
-| Symlink has *no* symlink file and the pointee is inside the source directory | Do nothing (pointee is handled as a regular file). |
-| `--force` | Always (re)create the symlink file using the current pointee, overriding the cases above. |
+Symlinks: a traversed symlink becomes a `.symlink` pointer file recording its pointee; an existing pointer to a *different* pointee is updated; a pointee inside the source is handled as a regular file; `--force` always (re)creates the pointer.
 
 ### 2.3 `pull`
-
-Copy files from the source directory to the target directory.
 
 ```bash
 dfm pull [PATH...] [--force] [--symlink] [--dry-run]
 ```
 
-- `PATH...` — files or directories in the *source* directory. Omitting pulls all files from the source directory.
-- You may also pass a target-directory path; the corresponding source path is computed automatically.
+Copies source files back into the target. Without `PATH`, pulls everything. A `PATH` may be a source path or a target path (mapped automatically).
 
 | Flag | Description |
 |---|---|
-| `-f`, `--force` | Overwrite target files on conflict. Also bypasses ignore patterns (the matching pattern is removed from the ignore file on success). |
-| `-s`, `--symlink` | Create symlinks in the target directory pointing to source files. |
+| `-f`, `--force` | Overwrite the target on conflict; also bypasses ignore patterns. |
+| `-s`, `--symlink` | Create symlinks in the target pointing to source files. |
 | `-n`, `--dry-run` | Check without making changes. |
 
-#### Symlink handling (non-source path)
-
-| Scenario | Behavior |
-|---|---|
-| Symlink points outside source dir | Error (or overwrite with `--force`). |
-| Symlink points to the correct source file | Do nothing. |
-| Symlink points to a *different* source file | Error (or fix with `--force`). |
-| Symlink matches its source symlink file | Do nothing. |
-| Symlink *differs* from its source symlink file | Recreate the symlink (with `--force` only). |
-
-#### Symlink handling (source path)
-
-| Scenario | Behavior |
-|---|---|
-| Source symlink file + target path does not exist | Create a symlink in the target. |
-| Source symlink file + existing target symlink | Recreate if the pointee does not match. |
+Symlinks: with `--symlink`, a missing target gets a symlink (recreated when a pointee differs); a target symlink pointing to a *different* source file is an error unless `--force`; a symlink matching its source pointer file needs no action.
 
 ### 2.4 `merge`
-
-Run the three-way merge tool on conflicting files.
 
 ```bash
 dfm merge [PATH...]
 ```
 
-- `PATH...` — optional paths to force-merge regardless of conflict state. Pass a target path or a source path; the corresponding counter-part is resolved automatically.
-- Without arguments, scans all entries in the state file for `BothModified` files only.
-- With a path given, merges the file even if only one side was modified — useful for resolving a `M ` or ` M` state proactively.
-- Skips symlinks and files matching the target ignore pattern.
+Runs the merge tool on conflicting files. Without args: only `BothModified` files; with a `PATH` (target or source), merges even a single-side modification. Skips symlinks and ignored files.
 
-The merge tool is configured by the `merge_tool_command` setting (default: `vimdiff {target} {source} {result}`). The placeholders are:
-
-| Placeholder | Description |
-|---|---|
-| `{target}` | Working-directory side (plain text copy). |
-| `{source}` | Cellar side (decrypted if the source is encrypted). |
-| `{result}` | Output file — the merge tool writes the result here. |
-
-After the merge tool exits successfully, `result.<file>` is copied back to both the target and the source (and re-encrypted if needed). The sync state is updated to the merge time.
+`merge_tool_command` (default `vimdiff {target} {source} {result}`): `{target}` and `{source}` are the two sides (source decrypted if encrypted), `{result}` is the file the tool must write. On success the result is copied to both sides (re-encrypted if needed) and the sync state is updated.
 
 ### 2.5 `diff`
-
-Show the differences between a managed target file and its source using a diff tool.
 
 ```bash
 dfm diff [PATH...] [-a|--all] [-e|--editable]
 ```
 
-- `PATH...` — files to diff. Pass a target path or a source path; the corresponding counter-part is resolved automatically (same as `pull`).
-- Without arguments, `dfm diff` diff-s every *modified* managed file (`-a`/`--all`, the default): each modified file is diffed with the non-interactive `diff_all_tool_command_*` templates, all output is concatenated, and the whole report goes through the same pager `status` uses. Up-to-date and never-synchronized files produce nothing. A `--all` given together with explicit `PATH`s is ignored — explicit paths always use the per-path mode.
-- `dfm diff` **never modifies any file** — it only reads. The one exception is `--editable`, described below.
-
-For each path, `dfm diff` reports:
+Shows changes between a target file and its source; **read-only** except `--editable`. Without arguments (or with `-a`), batch mode diffs every *modified* managed file using the non-interactive `diff_all_tool_command_target`/`..._source` templates, concatenates the output, and pages it like `status`; up-to-date and never-synced files produce nothing. Explicit `PATH`s always use the per-path mode (`diff_tool_command`). Per path it reports:
 
 | Situation | Output |
 |---|---|
-| Target and source are synchronized | `{path} is synchronized` |
-| Target file has no source file | `{path} is not managed` |
-| Path exists neither in target nor in source | `{path} does not exist` |
-| Source file whose target does not exist | `{corresponding_target_file_path} is not pulled` |
-| Path matches an ignore pattern | `{path} is ignored by {regexp}` |
-| Target is a symlink | The target's pointee and the source's pointee |
-| Target and source differ | The diff tool is run |
+| synchronized | `{path} is synchronized` |
+| target has no source | `{path} is not managed` |
+| exists nowhere | `{path} does not exist` |
+| source exists, target missing | `{corresponding_target_path} is not pulled` |
+| matches an ignore pattern | `{path} is ignored by {regexp}` |
+| target is a symlink | the diff of the pointees |
+| target and source differ | the diff tool is run |
 
-Modification is detected the same way as in `add` (mtime, then content): only when the files actually differ in content is the diff tool invoked. A content-identical but differently-timestamped file is reported as synchronized.
-
-The diff tool is configured by the `diff_tool_command` setting (default: `vimdiff -M {target} {source}` — `-M` makes both files unmodifiable, read-only). The placeholders are:
-
-| Placeholder | Description |
-|---|---|
-| `{target}` | Target directory side (usually plain text). |
-| `{source}` | Source directory side. When the source file is encrypted, the *decrypted* plaintext is passed to the tool as a temporary file (substituted for `{source}`); it is never piped to the tool's stdin (an interactive tool like `vimdiff` would read stdin into an extra buffer and refuse to quit), and the `.encrypted` bytes are never shown. |
-
-Like the merge tool, the diff tool is launched directly (fork-exec, no shell). A missing diff tool makes `dfm diff` fail with exit code 1.
-
-The `--all` batch mode (the no-argument default) is driven by two non-interactive templates, selected by which side changed:
-
-| Config key | Default | Used for |
-|---|---|---|
-| `diff_all_tool_command_target` | `diff -u --color=always {source} {target}` | Target- and both-modified files |
-| `diff_all_tool_command_source` | `diff -u --color=always {target} {source}` | Source-modified files |
-
-In batch mode the modified side is shown as the *new* side. Encrypted sources are decrypted to a transient scratch copy (requires the password) and diffed against the plaintext target; the scratch directory is removed afterwards. Explicit path arguments always use the per-path interactive `diff_tool_command` described above, never the batch templates.
+Modification is detected like `add` (mtime, then content hash). The tool is spawned directly (no shell); a missing tool fails with exit 1. `diff_tool_command` defaults to `vimdiff -M {target} {source}` (`-M` = read-only). For encrypted sources the *decrypted* plaintext is passed as a temporary file substituted for `{source}` — never on stdin, never the `.encrypted` bytes. Batch mode shows the modified side as the *new* side, decrypting encrypted sources to a transient scratch dir removed afterwards.
 
 #### Editable diff
 
-`dfm diff --editable PATH...` (`-e`) edits both sides of a file at once — the way to change a managed dotfile without deciding afterwards which side to copy where.
-
-- `--editable` requires at least one `PATH` and cannot be combined with `--all`.
-- It works on already-differing files too: there is no "equal content" requirement — `--editable` is exactly the way to edit a pair that has diverged.
-- The tool is the `diff_editable_tool_command` template (default `vimdiff {target} {source}` — the same tool as `diff_tool_command` but without `-M`, so both buffers are writable). It receives private, writable copies of the two sides in `.current_diff`, never the real files.
-- When the tool exits **0**, every copy it changed is written back to its own file — the target copy over the target, the source copy over the source (re-encrypted, when the source is encrypted). Each side is saved independently: a side the tool did not touch is left alone, and the two saved files may hold different content — that is the point of editing an already-diverged pair. The sync state is updated **only when the two saved files hold equal content**: a per-side edit that left them differing is written but not recorded as synchronized, so the pair keeps reporting as diverged.
-- When the tool exits **non-zero** (`:cq` in vim), the edit is discarded: the copies are removed, neither file is written and the sync state is untouched.
-- An encrypted source is decrypted into its scratch copy and re-encrypted on write-back; the plaintext never lands in the source directory.
-- `--dry-run` sets up the copies and reports what would be edited, without running the tool or writing anything.
-
-A symlink, an unmanaged, ignored or un-pulled path cannot be edited: unlike the reporting modes, `--editable` fails on them instead of printing a note.
+`diff --editable PATH...` (`-e`) edits both sides at once. It requires `PATH` and conflicts with `--all`; it works on already-diverged pairs (no equality check). It runs `diff_editable_tool_command` (default `vimdiff {target} {source}`, writable) on private copies in `.current_diff`. On exit **0** every changed side is written back independently — still-differing sides are written but not recorded as synchronized (the state updates only when both saved files are equal). On a **non-zero** exit (`:cq`) the edit is discarded and nothing is written. `--dry-run` only prepares the copies. A symlink, unmanaged, ignored, or un-pulled path is an error here, unlike the reporting modes.
 
 ### 2.6 `forget`
 
-Remove a file from management (does **not** delete the target file).
-
-```bash
-dfm forget [PATH...] [--force] [--dry-run]
-```
-
-- `PATH...` — paths in either the target or source directory.
-- Without a path, `forget` processes all managed files.
-
-#### Target-path behavior
+`dfm forget [PATH...] [--force] [--dry-run]` removes files from management — it **never deletes the target file**. Without a path it processes all managed files.
 
 | Scenario | Behavior |
 |---|---|
-| Symlink pointing outside source dir | Do nothing. |
-| Symlink pointing to the correct source file | Remove both source file and symlink. |
-| Symlink pointing to a *different* source file | Remove the symlink only. |
-| Symlink matching its source symlink file | Remove the source symlink file. |
-| Symlink *differing* from its source symlink file | Require `--force`. |
-| File with a corresponding source file | Remove the source file (unless source was modified — then require `--force`). |
-| File with no corresponding source file | Do nothing. |
-| Non-existing file with a source entry | Remove the state entry (unless source was modified — then require `--force`). |
-| Path that exists nowhere (no target file, no source) | Error: `{path} does not exist` (exit code 1, nothing is forgotten). |
-
-#### Source-path behavior
-
-| Scenario | Behavior |
-|---|---|
-| Source file with no target file | Remove source (unless modified — require `--force`). |
-| Source file with a target file | Remove source (unless modified — require `--force`). |
-| Source symlink file with matching target symlink | Remove source symlink file. |
-| Source symlink file with *mismatched* target symlink | Require `--force`. |
-| Source path that does not exist and has no target either | Error: `{path} does not exist` |
+| symlink → correct source | remove the source file and the symlink |
+| symlink → different source | remove the symlink only |
+| source modified | require `--force` |
+| source entry, no target file | remove the state entry (modified source → `--force`) |
+| path exists nowhere | error `{path} does not exist`, exit 1, nothing forgotten |
 
 ### 2.7 `ignore`
 
-Add paths or regex patterns to the ignore list. Ignored files are skipped by `add`, `pull`, `merge`, and `forget`.
+`dfm ignore [PATH...] [-p PATTERN...] [-r RECORD...] [--dry-run]` adds paths or regex patterns to the ignore list (ignored files are skipped by `add`, `pull`, `merge`, `forget`). The three input groups are mutually exclusive and at least one is required. Adding a directory writes the directory itself, which is then pruned during traversal.
 
-```bash
-dfm ignore [PATH...] [-p PATTERN...] [-r RECORD...] [--dry-run]
-```
+- **Target ignore** — `$XDG_STATE_HOME/dfm/ignore_file` (target-side patterns).
+- **Source ignore** — `source_dir/.dfm_ignore_file` (source-side patterns).
 
-- `PATH...` — file paths to ignore (relative to target or source directory).
-- `-p`, `--patterns` — regex patterns to ignore.
-- `-r`, `--remove` — records to remove from the ignore list.
-- At least one of `PATH...`, `--patterns`, or `--remove` is required; running `dfm ignore` with none of them exits with an error.
-- `PATH...`/`--patterns` add records to the ignore list, while `--remove` deletes them — the three are **mutually exclusive** and combining any of them is rejected by the CLI.
-- When adding a directory path, dfm writes the directory itself to the ignore file; the directory (and everything under it) is then skipped by `add`, `merge`, `forget`, and `status` — ignored directories are pruned during traversal rather than walked and filtered file-by-file.
-
-The program maintains two ignore files:
-- **Target ignore file** at `$XDG_STATE_HOME/dfm/ignore_file` — patterns for target-side files.
-- **Source ignore file** at `source_dir/.dfm_ignore_file` — patterns for source-side files.
-
-Ignore file format:
-- One entry per line.
-- Lines starting with `#` are comments. `\#` escapes a literal `#`.
-- Blank lines are ignored.
-- Each line is a regex that must match the *full* relative path (from the root of the target or source directory).
+Format: one entry per line; `#` starts a comment (`\#` escapes a literal `#`); blank lines are skipped; each entry is a regex matching the *full* relative path.
 
 ### 2.8 `paths`
 
-Print the resolved paths used by dfm.
-
-```bash
-dfm paths
-```
-
-Outputs the target directory, source directory, config file, and state file paths.
+`dfm paths` prints the resolved target, source, config, and state file paths.
 
 ### 2.9 `config`
 
-Read or write config file properties.
-
 ```bash
-dfm config --get <NAME>
-dfm config --set <NAME> <VALUE>
-dfm config --list
-dfm config --default
+dfm config --get <NAME> | --set <NAME> <VALUE> | --list | --default
 ```
 
-| Flag | Description |
-|---|---|
-| `-g`, `--get <NAME>` | Print the value of a config property. |
-| `-s`, `--set <NAME> <VALUE>` | Set a config property. |
-| `-l`, `--list` | List all config properties. |
-| `--default` | Print the default configuration in TOML format, suitable for redirecting into the config file (overrides its content and remains valid). |
+`--get` prints a value, `--set` sets one, `--list` lists all, `--default` prints the default configuration as TOML (works before `init`, redirectable into the config file). Note: `dfm config list` (a positional) is invalid syntax.
 
-Note: Array-typed properties accept `--set` with the array syntax:
+The only array property is `force_encryption_for`; it uses the array syntax with `--set`:
 
 | Value | Effect |
 |---|---|
-| `add:<element>` | Append the element (a regex for `force_encryption_for`) to the end of the array. The element must not be empty. |
-| `rm:<element>` | Remove every element equal to the given one; error + exit code 1 if none matches. |
-| `rmi:<index>` | Remove the element at the given 0-based index; error + exit code 1 if the index is invalid or out of range. |
+| `add:<element>` | append (a regex; must be non-empty) — also repairs a corrupted non-array value |
+| `rm:<element>` | remove every equal element; error + exit 1 if none |
+| `rmi:<index>` | remove the element at the 0-based index; error + exit 1 if invalid |
 
-`force_encryption_for` is the only array property. It is treated as an array
-regardless of file content, so `add:` can also repair a corrupted (non-array)
-value. A parameter that is not a known config property is rejected with an
-error and exit code 1 before any syntax validation (the error lists the known
-parameters). Using array syntax on a scalar property, or a plain value on the
-array property, prints an error and exits with code 1. An element that
-literally begins with `add:`, `rm:`, or `rmi:` cannot be set through the CLI
-(no escape syntax); edit the config file instead. Removing the last element
-leaves an empty array, which is treated as "use the default rule" — not
-"no encryption".
-
-`dfm config --default` works even before `dfm init` and prints exactly the
-config file `init` creates, so a default config file can be produced with
-`dfm config --default > "$(dfm paths | sed -n 's/^Config: //p')"`.
+Unknown property names are rejected (before syntax checks) with exit 1; array syntax on a scalar or a plain value on the array property also errors with exit 1. An element literally starting with `add:`/`rm:`/`rmi:` needs a direct TOML edit. An emptied array means "use the default rule", not "no encryption".
 
 ### 2.10 `purge`
 
-Remove all program data: config file, source directory, and state directory.
-
-```bash
-dfm purge [--keep-source] [--keep-config-file] [--force] [--dry-run]
-```
-
-Before removing the source directory, `purge` checks for un-pulled changes (source files modified since their last sync) and un-pushed changes (target files modified since their last sync). If any exist, the command aborts unless `--force` is given.
-
-The config file is removed (unless `--keep-config-file`). When the config file is the default one (at `$XDG_CONFIG_HOME/dfm/config.toml`), its parent directory is removed along with it; a config passed via `-c PATH` removes only the file, never the directory around it.
-
-Managed symlinks (created by `add -s` / `pull -s`) are replaced with regular copies of the files they point to before the source directory is removed, so no dangling symlinks are left behind. Symlinks pointing outside the source directory are left untouched.
-
-| Flag | Description |
-|---|---|
-| `-s`, `--keep-source` | Do not remove the source directory. |
-| `-c`, `--keep-config-file` | Do not remove the config file. |
-| `-f`, `--force` | Remove the source directory even if it has un-pulled or un-pushed changes. |
-| `-n`, `--dry-run` | Check without making changes. |
+`dfm purge [--keep-source] [--keep-config-file] [--force] [--dry-run]` removes all program data: config file, source directory, and state directory. It aborts (unless `--force`) if there are un-pulled or un-pushed changes. The config's parent directory is removed only when the config is the default one (never `$HOME`); a custom `-c PATH` removes just the file. Managed symlinks are replaced by regular copies of their pointees before the source is removed; outside symlinks are left untouched.
 
 ### 2.11 `encrypt` / `decrypt`
 
-Encrypt or decrypt a single file outside of the target/source workflow. See [Encryption](#4-encryption) for details on the format.
-
-```bash
-dfm encrypt [PATH] [-o OUTPUT]
-dfm decrypt [PATH] [-o OUTPUT]
-```
-
-| Flag | Description |
-|---|---|
-| `-o`, `--output` | Output path. `encrypt` defaults to `<input>.encrypted`; `decrypt` strips the `.encrypted` suffix (an explicit `-o` is required when the input has no suffix). |
+`dfm encrypt [PATH] [-o OUTPUT]` / `dfm decrypt [PATH] [-o OUTPUT]` encrypt or decrypt a single file outside the target/source workflow (see [Encryption](#4-encryption)). `encrypt` defaults to `<input>.encrypted`; `decrypt` strips the `.encrypted` suffix (an explicit `-o` is required when the input has none).
 
 ### 2.12 `status`
-
-Show the current state of managed files, unmanaged files, and ignore patterns.
-
-```bash
-dfm status [--all] [--short] [--porcelain]
-           [--conflicted] [--modified] [--unmanaged] [--managed] [--unpulled] [--ignored]
-           [--ignored-patterns] [--unused-patterns]
-           [PATH...]
-```
-
-By default, status prints a categorized report grouped by state. When one or more `PATH` arguments are given, the report is restricted to those paths only.
-
-```
-Up to date:
-  --  .bashrc
-  --  .config/git/config
-  LL  .vimrc               (symlink, tracked)
-
-Modified:
-  MM  .ssh/config          (both target and source modified)
-
-Unmanaged:
-  ?L  .some_symlink        (symlink, not tracked)
-  ??  temp.txt             (regular file, not tracked)
-
-Ignore patterns:
-  /\.swp$/
-  *.log
-```
-
-#### Output formats
-
-| Flag | Description |
-|---|---|
-| *(default)* | Grouped human-readable report with sections, paged through `$PAGER` (default `less`). |
-| `-s`, `--short` | One line per entry: `<code> <path>` (no headers, no pager). |
-| `--porcelain` | Tab-separated: `<code>\t<path>` (stable, machine-readable, no pager). |
+`dfm status [OPTIONS] [PATH...]` shows the state of managed, unmanaged, ignored, and encrypted files. By default: a grouped, paged report of **modified + unmanaged** entries. `PATH` arguments restrict the report to those paths (ignored entries inside that scope are then shown even without a flag).
 
 #### Status codes
 
 | Code | Meaning |
 |---|---|
-| `--` | Up to date — target and source are synchronized. |
-| `MM` | **BothModified** — both target and source were modified since last sync (conflict). |
-| `M ` | Target modified — only the target was changed since last sync. |
-| ` M` | Source modified — only the source was changed since last sync. |
-| `NM` | **NeverSynchronized** — both target and source exist but have never been synchronized. |
-| `!?` | Missing target — the managed file's target path does not exist but the source does (unpulled). |
-| `??` | Unmanaged — regular file exists in the target directory but is not tracked. |
-| `?L` | Unmanaged symlink — symlink exists in the target directory but is not tracked. |
-| `LL` | Managed symlink — symlink tracked via a `.symlink` pointer file. |
-| `!!` | Ignored — file matches an ignore pattern. A fully-ignored directory is shown as a single `!! dir/` entry (with trailing slash) instead of its contents. |
-| `!L` | Ignored symlink — symlink matches an ignore pattern. |
-| `!P` | Stale pattern — ignore pattern matches no files, shown by `--unused-patterns`. |
+| `--` | up to date |
+| `MM` | both modified (conflict) |
+| `M ` | target modified only |
+| ` M` | source modified only |
+| `NM` | never synchronized |
+| `!?` | unpulled (target missing, source exists) |
+| `??` / `?L` | unmanaged file / symlink |
+| `LL` | managed symlink |
+| `!!` / `!L` | ignored file / symlink (fully-ignored dir → one `!! dir/`) |
+| `!P` | stale pattern (`--unused-patterns`) |
 
-Codes are two characters: the first represents the **target** side, the second represents the **source** side. A space (` `) means "no change" on that side.
+Two characters per code: **target** side first, **source** side second; ` ` = no change on that side.
 
-#### Filter flags
+#### Formats, filters
 
-| Flag | Shows only |
+| Flag | Effect |
 |---|---|
-| `-a`, `--all` | Show all entries, including up-to-date (`--`), managed-symlink (`LL`), and ignored (`!!`, `!L`) — all of which are hidden by default. |
-| `-c`, `--conflicted` | Entries with `MM` (BothModified). |
-| `-m`, `--modified` | Entries where target or source was modified. |
-| `-U`, `--unmanaged` | Untracked files (`??`, `?L`). |
-| `-M`, `--managed` | Tracked entries only (inverse of `--unmanaged`). Implies `--all` for managed files. |
-| `-p`, `--unpulled` | Source-only entries (source modified, target missing). |
-| `-e`, `--encrypted` | Managed entries stored encrypted (`.encrypted` source). Overrides all other filter flags and reports the encrypted set in every category. Orphaned `.encrypted` files (no state) are never shown. |
-| `-i`, `--ignored` | Ignored files (`!!`, `!L`). |
-| `-l`, `--ignored-patterns` | List active ignore patterns (no file entries). |
-| `-u`, `--unused-patterns` | List ignore patterns that match no files. |
+| *(default)* | grouped + paged report (`$PAGER`/`less`); modified + unmanaged only |
+| `-s` / `--short` | one line `<code> <path>`; no pager |
+| `--porcelain` | `<code>\t<path>`; stable, machine-readable, no pager |
+| `-a` / `--all` | also up-to-date and ignored entries (hidden by default) |
+| `-c` / `--conflicted` | only `MM` |
+| `-m` / `--modified` | only target- or source-modified |
+| `-U` / `--unmanaged` | only `??` / `?L` |
+| `-M` / `--managed` | only tracked entries (implies `--all`) |
+| `-p` / `--unpulled` | only `!?` |
+| `-e` / `--encrypted` | only encrypted sources; overrides other filters, suppresses the stale block |
+| `-i` / `--ignored` | only `!!` / `!L` |
+| `-l` / `-u` | the active / the stale ignore patterns (no file entries) |
 
-Without any filter flag, the default output shows: modified entries and unmanaged entries. Up-to-date (`--`, `LL`), ignored (`!!`, `!L`), and unpulled (`!?`) entries are **hidden** (use `--all` to see up-to-date, ignored, and unpulled; or `--unpulled` to see only unpulled). Exception: when the report is restricted to explicit `PATH` arguments, ignored entries inside that scope are shown even without a flag — naming a path asks "what is this file's state?", and *ignored* is the answer for those.
-
-Filter flags combine freely, in any order and spelling (`-m`/`--modified`, `-U`/`--unmanaged`, ...). Combining them is **additive**: each flag contributes its own set and the report shows the union — e.g. `--managed --unmanaged` shows both the managed and the unmanaged blocks. There is no "contradictory flags" error and no priority conflict between the flags. The one exception is `--encrypted`: it overrides all other filters and reports only the encrypted set (in whatever status category each entry belongs to).
-
-Managed entries whose source is encrypted are marked with `(encrypted)` at the end of their line, right-aligned so all markers in a block line up in one column. A fully-encrypted folded directory prints as `dir/* (encrypted)`; a mixed directory folds without the marker and its encrypted members are listed individually under `-e`. The marker appears only in the default human-readable report — `--short` and `--porcelain` never include it.
-
-The "Unused ignore patterns" block is part of the **unfiltered** default report only (and of the dedicated `--unused-patterns` mode). Reports restricted by a filter flag show only their own lists and never include that block; `--all` keeps it.
+Filters combine **additively** (union — no priority, no contradictory-flag error); `-e` is the one override. The default report shows the git-info line (`git -C <source> status --porcelain -b`), folds directories as `dir/*`, right-aligns an `(encrypted)` marker on encrypted entries (`dir/* (encrypted)` for a fully-encrypted folded dir; never in `--short`/`--porcelain`), and includes the unused-patterns block (which any of the filter flags drops).
 
 ### 2.13 `sync`
 
-Synchronize only files that are **already managed** — their target and source both exist and have a sync record — copying changes in either direction.
-
-```bash
-dfm sync [PATH...] [--force] [--dry-run]
-```
-
-- `PATH...` — target-directory paths to process. Omitting traverses the entire target directory (respecting ignore rules).
-- Only files with a source counterpart **and** a sync record are eligible. Unmanaged, never-synced, unpulled, and ignored files are left untouched (ignored files are never processed, with or without `--force`).
-- Changes are copied both ways: a target-only change is pushed to the source, a source-only change is pulled to the target.
-- A change on **both** sides while they differ is a conflict. Without `--force` the run traverses all eligible files and exits non-zero when conflicts are present (nothing is modified). With `--force` the conflict is not treated as an error: the run copies all eligible (non-conflicting) files, never touches a conflict, and exits successfully.
-
-| Flag | Description |
-|---|---|
-| `-f`, `--force` | Do not treat conflicts as errors; copy eligible files and exit successfully. Never modifies a conflict. |
-| `-n`, `--dry-run` | Report what would be done without making changes. |
-
----
+`dfm sync [PATH...] [--force] [--dry-run]` synchronizes only **already-managed** files (target + source + a sync record): target-only changes are pushed, source-only changes pulled. Both-side changes are conflicts. Without `--force`: traverses all eligible files and exits non-zero when conflicts exist (nothing modified). With `--force`: copies all eligible (non-conflicting) files, never touches a conflict, exits 0. Unmanaged, never-synced, unpulled, and ignored files are never touched (ignored regardless of `--force`).
 
 ## 3 Configuration
 
-The config file is read from `$XDG_CONFIG_HOME/dfm/config.toml` (or `~/.dfm.toml` if the XDG path does not exist).
-
-### Default settings
-
-`dfm config --default` prints the default configuration in TOML form — the
-same values as below — which is redirectable into the config file, overriding
-the current content with the defaults ([§2.9 config](#29-config)):
+The config file is `$XDG_CONFIG_HOME/dfm/config.toml` (fallback `~/.dfm.toml` when the XDG path is absent). `dfm config --default` prints the values below as TOML, redirectable into the config file.
 
 ```toml
 dot_prefix = "dot_"
@@ -536,152 +249,83 @@ diff_all_tool_command_source = "diff -u --color=always {target} {source}"
 diff_editable_tool_command = "vimdiff {target} {source}"
 ```
 
-### Properties
-
-| Property | Type | Description |
+| Property | Type | Purpose |
 |---|---|---|
-| `dot_prefix` | String | Prefix to replace leading `.` in filenames inside the source directory. |
-| `symlink_postfix` | String | Suffix appended to symlink pointer files in the source directory. |
-| `encrypted_postfix` | String | Suffix appended to encrypted source files. |
-| `force_encryption_for` | Array of regex | File paths matching these regexes are always encrypted on `add`. |
-| `obtain_password_shell_command` | String (shell command) | Command to obtain the encryption password. See [Encryption](#4-encryption). |
-| `merge_tool_command` | String (template) | Merge tool command with `{target}`, `{source}`, `{result}` placeholders. |
-| `diff_tool_command` | String (template) | Diff tool command with `{target}`, `{source}` placeholders (per-path `diff`). |
-| `diff_all_tool_command_target` | String (template) | `diff --all` template for target/both-modified files, with `{target}`, `{source}` placeholders. |
-| `diff_all_tool_command_source` | String (template) | `diff --all` template for source-modified files, with `{target}`, `{source}` placeholders. |
-| `diff_editable_tool_command` | String (template) | `diff --editable` tool with `{target}`, `{source}` placeholders; must be able to *write* both files. |
-The source and target directories are **not** stored in the config file — they come from the state file (`state.toml`).
+| `dot_prefix` | string | replaces a leading `.` in source filenames |
+| `symlink_postfix` | string | suffix of symlink pointer files |
+| `encrypted_postfix` | string | suffix of encrypted source files |
+| `force_encryption_for` | array of regex | paths always encrypted on `add` |
+| `obtain_password_shell_command` | shell command | command producing the encryption password |
+| `merge_tool_command` | template | `{target}` / `{source}` / `{result}` |
+| `diff_tool_command` / `diff_all_tool_command_*` | template | per-path diff / the two batch `--all` templates (`{target}` / `{source}`) |
+| `diff_editable_tool_command` | template | `diff --editable`; must write both files |
 
-### Managing the config file itself
-
-The dfm config file is ordinary user data: it can be managed like any other
-dotfile with `add`, `pull`, `status`, `merge`, `diff`, and `forget` (e.g.
-`dfm add ~/.config/dfm`). The state file (`state.toml`) and the target ignore
-file are rewritten by dfm during sync runs, so they remain internal and cannot
-be managed.
-
----
+The source and target directories are **not** config settings — they live in the state file. The config file is ordinary user data (manage it like any dotfile, e.g. `dfm add ~/.config/dfm`); the state and target-ignore files are internal.
 
 ## 4 Encryption
 
-Sensitive files can be stored encrypted. Files matching `force_encryption_for` regexes (default: `\.ssh`) are automatically encrypted on `add`. Encryption can also be requested per-run with `--encrypt`.
+Sensitive files can be stored encrypted. Files matching `force_encryption_for` (default `\.ssh`) are auto-encrypted on `add`; `--encrypt` forces it per-run.
 
-Each encrypted file (suffix `.encrypted`) is a self-contained, self-describing container:
+Each `.encrypted` file is a self-contained container:
+- Argon2id password stretching (memory-hard KDF).
+- XChaCha20-Poly1305 AEAD: tampering and wrong passwords are detected.
+- 64 KiB chunks with per-chunk nonces and tags; reorder/dup/truncate/splice all fail authentication; peak RAM = one chunk.
+- Filename, permissions, and directory structure are encrypted with the content.
+- KDF cost parameters travel inside the archive, so defaults may change without breaking old files.
 
-- The password is stretched with **Argon2id** (memory-hard KDF), making brute-force attacks against weak passwords expensive.
-- The payload is authenticated-encrypted with **XChaCha20-Poly1305** (AEAD): ciphertext tampering and wrong passwords are detected.
-- The plaintext is sealed in **64 KiB chunks** (stream construction): each chunk carries its own Poly1305 tag, its nonce binds it to its position in the stream, and the declared total length is authenticated — so reordered, duplicated, truncated or spliced chunks fail authentication. Encryption and decryption hold at most one chunk in RAM regardless of file size.
-- The **filename, file permissions, and directory structure are encrypted together with the content** — nothing about the payload is visible without the password.
-- The KDF cost parameters travel inside the archive, so files decrypt correctly even if the default costs change in a future version.
-
-Encrypted files use format version 3; older (v1/v2) archives are rejected with an "unsupported encrypted format version" error and must be re-created.
-
-`dfm` performs encryption/decryption transparently during `add` and `pull` (and `merge` / `purge` for encrypted sources).
+Format version 3; v1/v2 archives are rejected and must be re-created. Encryption/decryption is transparent during `add`/`pull` (and `merge`/`purge` on encrypted sources); streaming, no size cap.
 
 ### Obtaining a password
 
-When `obtain_password_shell_command` is set (non-empty), dfm pipes the command to `sh` stdin and reads the password from stdout. The command is **not** passed as a `-c` argument, so it does not appear in the process listing (`ps aux`). Example:
-
-```bash
-# Config
-obtain_password_shell_command = "security find-generic-password -w -a dfm"
-```
-
-When the setting is empty (the default), dfm prompts interactively using `rpassword` (masked input with `*`).
-
-The password is cached in memory for the duration of the process, so you are prompted only once per `dfm` invocation.
+`obtain_password_shell_command` (default empty) is piped to `sh` stdin — **not** `-c` — so it never appears in `ps aux`. Example: `obtain_password_shell_command = "security find-generic-password -w -a dfm"`. When empty, dfm prompts interactively with masked input (`rpassword`). The password is cached for the process duration.
 
 ### Standalone `encrypt` / `decrypt`
 
-Encrypted files can also be produced and inspected outside of the target/source workflow:
-
-```bash
-dfm encrypt path/to/file [-o output.encrypted]
-dfm decrypt file.encrypted [-o output]
-```
-
-- `encrypt` writes `<input>.encrypted` next to the input by default (overridable with `-o`).
-- `decrypt` strips the `.encrypted` suffix for the default output path; if the input has no suffix, an explicit `-o` is required.
-- The same `obtain_password_shell_command` / interactive prompt rules apply. Decrypting also restores the file permissions recorded at encrypt time.
-
-There is no external tool requirement — `dfm decrypt` (or a future re-encrypting `dfm add`) is the supported way to read `.encrypted` files.
-
-### Memory use
-
-Encryption and decryption are streaming: at most one 64 KiB plaintext chunk, its ciphertext, and the fixed-size header are held in RAM regardless of file size. There is no hard size cap.
-
----
+`dfm encrypt path/to/file [-o output.encrypted]` writes `<input>.encrypted` next to the input by default. `dfm decrypt file.encrypted [-o output]` strips the `.encrypted` suffix (an explicit `-o` is required when the input has none) and restores the recorded permissions. Same password rules as above; no external tool required.
 
 ## 5 Conflict detection
 
-Before any copy, dfm compares timestamps to detect concurrent modifications. The comparison uses three values:
+Before any copy, dfm compares the **TF mtime**, **SF mtime**, and the stored **sync time** (from the last `add`/`pull`):
 
-- **TF mtime** — last modification time of the target file.
-- **SF mtime** — last modification time of the source file.
-- **Sync time** — the stored timestamp of the last successful sync (set by both `add` and `pull`).
-
-The algorithm:
-
-| Condition | Result | `add` behavior | `pull` behavior |
+| Condition | Result | `add` | `pull` |
 |---|---|---|---|
-| TF mtime == sync == SF mtime | **NonModified** | Skip (or copy with `--force`) | Skip (or copy with `--force`) |
-| TF mtime == sync < SF mtime | **SourceModified** | Overwrite source (conflict) | Copy source → target (safe) |
-| TF mtime > sync == SF mtime | **TargetModified** | Copy target → source (safe) | Overwrite target (conflict) |
-| TF mtime > sync < SF mtime | **BothModified** | Conflict; `dfm merge` to resolve | Conflict; `dfm merge` to resolve |
-| No sync time recorded | **NeverSynchronized** | Record sync if content equal; require `--force` otherwise | Require `--force` |
+| TF == sync == SF | NonModified | skip (copy with `--force`) | skip (copy with `--force`) |
+| TF == sync < SF | SourceModified | overwrite source (conflict) | copy source → target (safe) |
+| TF > sync == SF | TargetModified | copy target → source (safe) | overwrite target (conflict) |
+| TF > sync < SF | BothModified | conflict; use `merge` | conflict; use `merge` |
+| no sync recorded | NeverSynchronized | record sync if equal; else `--force` | require `--force` |
 
-For encrypted source files, the conflict check is performed against the encrypted file's mtime; decryption is only scheduled when safe (or forced). The `dfm merge` subcommand also handles encrypted sources by decrypting, merging, and re-encrypting the result.
+Encrypted sources are compared by the encrypted file's mtime (re-encryption changes bytes); decryption is scheduled only when safe (or forced). `merge` handles encrypted sources by decrypting, merging, re-encrypting.
 
 ### All-or-nothing per-run semantics
 
-Each `add`, `pull`, `merge`, or `diff --editable` run is atomic **per file**, not per run:
-
-- Files already processed remain applied if a later file fails mid-run.
-- The sync state is written **only when the whole command succeeds** (state is committed at the end via `with_state`). A failed run persists no state, so a later run re-evaluates every file from scratch.
-- `forget`/`purge` intentionally continue past per-file errors (best-effort), and `forget` persists state even on failure.
-
-This means a multi-file sync is never left half-committed in the state file, even though individual copies made during a failed run are not rolled back.
-
----
+`add`/`pull`/`merge`/`diff --editable` are atomic **per file**, not per run: copies already made during a failed run are not rolled back, but the sync state is committed only when the whole command succeeds (`with_state`), so a later run re-evaluates every file. `forget`/`purge` are best-effort and continue past per-file errors; `forget` persists state even on failure.
 
 ## 6 File layout
 
 ```
-$XDG_CONFIG_HOME/dfm/config.toml           -- user config
-~/.dfm.toml                                -- fallback config (if XDG path absent)
-$XDG_STATE_HOME/dfm/state.toml             -- sync timestamps (`"<secs>;<nanos>"` per file)
-$XDG_STATE_HOME/dfm/ignore_file            -- target-side ignore patterns
-source_dir/.dfm_root                       -- source directory marker
-source_dir/.dfm_ignore_file                -- source-side ignore patterns
-source_dir/dot_bashrc                      -- managed copy of ~/.bashrc
-source_dir/dot_bashrc.encrypted            -- encrypted managed copy
-source_dir/dot_bashrc.symlink              -- symlink pointer file
-source_dir/.current_merge/                 -- transient merge-tool scratch dir (0700, removed on exit)
-source_dir/.current_diff/                  -- transient diff-tool scratch dir (0700, encrypted diffs only)
+$XDG_CONFIG_HOME/dfm/config.toml       user config
+~/.dfm.toml                            fallback config (if XDG path absent)
+$XDG_STATE_HOME/dfm/state.toml         sync timestamps ("<secs>;<nanos>")
+$XDG_STATE_HOME/dfm/ignore_file        target-side ignore patterns
+source_dir/.dfm_root                   source dir marker
+source_dir/.dfm_ignore_file            source-side ignore patterns
+source_dir/dot_bashrc[.encrypted|.symlink]   managed / encrypted / pointer copy
+source_dir/.current_merge|.current_diff       merge / diff scratch dirs (0700)
 ```
-
----
-
 ## Limitations
-
-- **Root privileges**: `dfm` refuses to run with root privileges it did not get as the root user itself (e.g. `sudo dfm` or a setuid-style elevation of a non-root user). A genuine root session (uid 0 launched by the root user itself) still works. Set `DFM_ALLOW_ROOT=1` to bypass the check.
-- **Config `--set` and arrays**: `force_encryption_for` can be edited via the array syntax (`add:` / `rm:` / `rmi:`), see [§2.9 config](#29-config). An element that literally begins with those prefixes needs a direct edit of the TOML file.
-- **Dotfiles outside UTF-8 paths**: Only valid UTF-8 paths are supported.
-- **Merge tool**: The merge command is run directly (no shell), so shell features (`|`, `>`, `$VAR`) in `merge_tool_command` are not processed.
-- **Diff tool**: Same as the merge tool — `diff_tool_command` is run directly (no shell), so shell features are not processed.
+- **Root privileges**: refuses to run with root powers gained via sudo/setuid-style elevation (`DFM_ALLOW_ROOT=1` bypasses); a genuine root session still works.
+- **Config `--set` arrays**: elements literally starting with `add:`/`rm:`/`rmi:` need a direct TOML edit.
+- **UTF-8 only**: non-UTF-8 paths are unsupported.
+- **Tools run without a shell**: `|`, `>`, `$VAR` in `merge_tool_command`/`diff_tool_command` are not processed.
 
 ## Never be in scope
 - Windows support.
 - Support of version management system other than git.
 - Git commands embedding into CLI of dfm (dfm git status).
-- Any remote/host/server, network, cloud, or other external service mode: dfm
-  synchronization is purely local (target and source directories on the same
-  machine).
+- Any remote/host/server, network, cloud, or other external service mode — synchronization is purely local.
 
 ## Repo management
-
-To reclaim space (including deleted files) in a local git repo:
-
 ```shell
 git remote prune origin
 git reflog expire --expire=now --all
