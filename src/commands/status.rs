@@ -528,20 +528,55 @@ pub fn status_command(
             }
         }
 
-        let pattern_total = target_ignore_regex.patterns().len();
-        for (i, pattern_str) in target_ignore_regex.patterns().iter().enumerate() {
-            progress.set(i + 1, Some(pattern_total));
-            let mut matched_any = false;
-            for rel_path in &all_relative_paths {
-                if pattern_matches_path_components(pattern_str, rel_path) {
-                    matched_any = true;
-                    break;
+        // Mark which patterns still match something. The old nested loop ran
+        // every pattern against every path (O(patterns × paths)). Instead,
+        // probe each path through the RegexSet once: `matches` returns every
+        // pattern whose raw regex hits as a *substring*, then verify each hit
+        // with the exact component-wise matcher and mark the pattern used.
+        //
+        // For anchor-free patterns the substring hit is a superset of the
+        // component-wise truth (a component fully matching a sub-pattern is a
+        // substring match at the same position), so the prefilter can only
+        // over-approximate — never miss a real use — and the verify step keeps
+        // the result exact. Patterns containing `^`/`$` break that implication
+        // (e.g. `^my\.log$` matches any component but only a string-start
+        // substring), so those resolve with the exhaustive per-path check.
+        let patterns = target_ignore_regex.patterns();
+        let anchored: HashSet<usize> = patterns
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.contains('^') || p.contains('$'))
+            .map(|(i, _)| i)
+            .collect();
+        let mut used = vec![false; patterns.len()];
+
+        for (i, rel_path) in all_relative_paths.iter().enumerate() {
+            progress.set(i + 1, Some(all_relative_paths.len()));
+            for idx in target_ignore_regex.matches(rel_path).iter() {
+                if !anchored.contains(&idx)
+                    && pattern_matches_path_components(&patterns[idx], rel_path)
+                {
+                    used[idx] = true;
                 }
             }
-            if !matched_any {
-                stale_patterns.push(pattern_str.to_string());
+        }
+        for (i, idx) in anchored.iter().enumerate() {
+            progress.set(i + 1, Some(anchored.len()));
+            let pattern = &patterns[*idx];
+            if all_relative_paths
+                .iter()
+                .any(|rel_path| pattern_matches_path_components(pattern, rel_path))
+            {
+                used[*idx] = true;
             }
         }
+
+        stale_patterns = patterns
+            .iter()
+            .zip(used.iter())
+            .filter(|(_, used)| !**used)
+            .map(|(p, _)| p.to_string())
+            .collect();
     }
 
     // Special mode: only list patterns

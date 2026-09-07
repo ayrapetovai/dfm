@@ -31,6 +31,32 @@ fn source_to_state_key(source_abs: &Path, source_dir_abs: &Path) -> String {
     state_key_for(source_abs, source_dir_abs)
 }
 
+/// True when `key` is scheduled for removal: it is either removed exactly, or
+/// it lives inside a removed directory subtree. The subtree test walks the
+/// key's ancestor directories (at most the path depth) instead of testing
+/// every removed prefix, so clearing a whole tree costs one `retain` pass,
+/// not one `retain` per removed entry.
+fn state_key_scheduled_for_removal(
+    key: &str,
+    removed_exact: &HashSet<String>,
+    removed_subtrees: &HashSet<String>,
+) -> bool {
+    if removed_exact.contains(key) {
+        return true;
+    }
+    if removed_subtrees.is_empty() {
+        return false;
+    }
+    let mut end = key.len();
+    while let Some(slash) = key[..end].rfind('/') {
+        if removed_subtrees.contains(&key[..slash]) {
+            return true;
+        }
+        end = slash;
+    }
+    false
+}
+
 /// Remove a source object from disk. A regular file or symlink is removed with
 /// `remove_file`; a directory (e.g. the whole subtree of a forgotten target
 /// directory) is removed with `remove_dir_all`.
@@ -574,24 +600,29 @@ pub fn forget_command(
 
     // Phase 2: Remove state entries for all processed files (infallible).
     // Skipped under --dry-run: a dry-run must not mutate the state file.
+    // Collect the removal set once, then filter `state.syncs` in a single
+    // `retain` pass — a `retain` per task rescan of the whole map made a full
+    // `forget` quadratic in the number of managed files.
+    let mut removed_exact: HashSet<String> = HashSet::new();
+    let mut removed_subtrees: HashSet<String> = HashSet::new();
     for task in &tasks {
-        if dry_run {
-            continue;
-        }
         match task {
             ForgetTask::Delete(source_file) => {
                 // A deleted directory removes the whole subtree, so clear every
                 // state entry that lives at that source path or beneath it.
                 let key = source_to_state_key(source_file, &source_dir_abs_path);
-                let key_prefix = format!("{}/", key);
-                state
-                    .syncs
-                    .retain(|k, _| k != &key && !k.starts_with(&key_prefix));
+                removed_exact.insert(key.clone());
+                removed_subtrees.insert(key);
             }
             ForgetTask::RemoveState(key) => {
-                state.syncs.remove(key);
+                removed_exact.insert(key.clone());
             }
         }
+    }
+    if !dry_run {
+        state
+            .syncs
+            .retain(|k, _| !state_key_scheduled_for_removal(k, &removed_exact, &removed_subtrees));
     }
 
     // Phase 3: Clean up empty parent directories (best-effort)
