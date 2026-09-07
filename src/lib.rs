@@ -7,7 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
 use log::{debug, trace, warn};
@@ -1048,6 +1048,12 @@ const ACTION_WALK_STEP: usize = 500;
 /// (a few planned tasks) still shows its full countdown.
 const ACTION_SMALL_BATCH: usize = 100;
 
+/// A bar stays silent for this long after its first write, so quick
+/// operations never flash a progress line; it appears only for work running
+/// longer than the delay. Setting `DFM_PROGRESS_BAR_DELAY_OFF` disables the
+/// delay entirely (the bars render immediately).
+const ACTION_START_DELAY: Duration = Duration::from_secs(1);
+
 /// Renders a self-overwriting progress line on stdout.
 ///
 /// Each `set` overwrites the previous line in place (carriage return + space
@@ -1059,11 +1065,15 @@ const ACTION_SMALL_BATCH: usize = 100;
 /// The bar only renders when stdout is an interactive terminal. Piped or
 /// redirected stdout (scripts, CI, `dfm status | grep ...`) never receives
 /// progress text, so program output stays byte-clean. The bar is shown at
-/// every verbosity level regardless of `-v`/`--dry-run`.
+/// every verbosity level regardless of `-v`/`--dry-run`. After the first
+/// write the bar stays silent for `start_delay` (1 s by default), so quick
+/// operations never flash a progress line.
 pub struct ActionBar {
     label: &'static str,
     enabled: bool,
     sink: Box<dyn Write>,
+    start_delay: Duration,
+    started: Option<Instant>,
     active: bool,
     last_len: usize,
     last_total: Option<usize>,
@@ -1074,13 +1084,28 @@ pub struct ActionBar {
 
 impl ActionBar {
     pub fn new(label: &'static str) -> ActionBar {
-        ActionBar::with_sink(label, Box::new(io::stdout()), io::stdout().is_terminal())
+        let mut bar =
+            ActionBar::with_sink(label, Box::new(io::stdout()), io::stdout().is_terminal());
+        bar.apply_start_delay();
+        bar
     }
 
     /// Bar that never renders, used when stdout must stay byte-clean even on
     /// a terminal (e.g. `status --porcelain`).
     pub fn suppressed(label: &'static str) -> ActionBar {
-        ActionBar::with_sink(label, Box::new(io::stdout()), false)
+        let mut bar = ActionBar::with_sink(label, Box::new(io::stdout()), false);
+        bar.apply_start_delay();
+        bar
+    }
+
+    /// The default `ACTION_START_DELAY`; reduced to zero when
+    /// `DFM_PROGRESS_BAR_DELAY_OFF` is set, so the bar is visible immediately.
+    fn apply_start_delay(&mut self) {
+        self.start_delay = if std::env::var_os("DFM_PROGRESS_BAR_DELAY_OFF").is_some() {
+            Duration::ZERO
+        } else {
+            ACTION_START_DELAY
+        };
     }
 
     fn with_sink(label: &'static str, sink: Box<dyn Write>, enabled: bool) -> ActionBar {
@@ -1088,6 +1113,8 @@ impl ActionBar {
             label,
             enabled,
             sink,
+            start_delay: Duration::ZERO,
+            started: None,
             active: false,
             last_len: 0,
             last_total: None,
@@ -1115,6 +1142,14 @@ impl ActionBar {
     /// `ACTION_WALK_STEP` visited entries.
     pub fn set(&mut self, done: usize, total: Option<usize>) {
         if !self.enabled || total == Some(0) {
+            return;
+        }
+        // Stay silent through the start delay. The window counts from the
+        // first write of the bar's lifetime (reused bars across phases share
+        // it), so the bar appears only once the whole operation has been
+        // running longer than the delay.
+        let started = *self.started.get_or_insert_with(Instant::now);
+        if started.elapsed() < self.start_delay {
             return;
         }
         let pct = total.map(|t| done * 100 / t);
