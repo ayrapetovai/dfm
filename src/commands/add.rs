@@ -9,9 +9,9 @@ use regex::RegexSet;
 
 use super::{
     IgnoreHandling, cli_path_in_scope, cli_path_to_abs, get_sync_time, handle_ignore_or_override,
-    list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure,
-    prune_matched_ignore_patterns, remove_sync_state, report_progress, require_force,
-    symlink_pointer_matches, sync_file_copy, update_sync_state,
+    list_directory_or_error_with_progress, msg_dry_run, msg_nothing_to_do, msg_tasks_failure,
+    prune_matched_ignore_patterns, remove_sync_state, require_force, symlink_pointer_matches,
+    sync_file_copy, update_sync_state,
 };
 use dfm::*;
 use microxdg::Xdg;
@@ -519,12 +519,15 @@ pub fn add_command(
             .map(|r| r.as_str().to_owned()),
     )?;
 
-    let traversed_paths = list_directory_or_error(
+    let mut walk_bar = ActionBar::new("reading");
+    let traversed_paths = list_directory_or_error_with_progress(
         &paths,
         &target_dir_abs_path,
         Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
         "in targets",
+        &mut |visited| walk_bar.set(visited, None),
     )?;
+    walk_bar.clear();
     debug!("traversing result is {:?}", traversed_paths);
 
     let mut tasks: Vec<AddTask> = Vec::new();
@@ -535,9 +538,9 @@ pub fn add_command(
     let mut error_messages = vec![];
     let mut patterns_to_remove: Vec<String> = vec![];
 
-    let mut progress = ProgressLine::new();
+    walk_bar.set_label("reading");
     for (i, target_path) in traversed_paths.iter().enumerate() {
-        report_progress(&mut progress, i + 1, traversed_paths.len());
+        walk_bar.set(i + 1, Some(traversed_paths.len()));
         debug!("checking {:?}", target_path);
 
         if target_path.is_symlink() {
@@ -589,7 +592,7 @@ pub fn add_command(
             }
         }
     }
-    progress.clear();
+    walk_bar.clear();
 
     if !error_messages.is_empty() {
         let joined = format!("add failed: {}", error_messages.join("; "));
@@ -616,14 +619,16 @@ pub fn add_command(
     let total_tasks = tasks.len();
     let mut completed_tasks = 0usize;
 
-    for task in tasks {
+    let mut action_bar = ActionBar::new("processing");
+    for (i, task) in tasks.iter().enumerate() {
         // Print what each task would do even under --dry-run.
-        info!("{}", describe_add_task(&task));
+        action_bar.set(i + 1, Some(total_tasks));
+        info!("{}", describe_add_task(task));
         if dry_run {
             continue;
         }
         match execute_add_task(
-            &task,
+            task,
             settings,
             state,
             &target_dir_abs_path,
@@ -640,6 +645,7 @@ pub fn add_command(
             }
         }
     }
+    action_bar.clear();
 
     prune_matched_ignore_patterns(xdg, &patterns_to_remove, dry_run)?;
 

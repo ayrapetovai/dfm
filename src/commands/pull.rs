@@ -7,9 +7,9 @@ use walkdir::WalkDir;
 
 use super::{
     IgnoreHandling, cli_path_in_scope, get_sync_time, handle_ignore_or_override,
-    list_directory_or_error, msg_dry_run, msg_nothing_to_do, msg_tasks_failure,
-    prune_matched_ignore_patterns, read_symlink_pointer, report_progress, require_force,
-    source_rel_to_target_abs, sync_file_copy, update_sync_state,
+    list_directory_or_error_with_progress, msg_dry_run, msg_nothing_to_do, msg_tasks_failure,
+    prune_matched_ignore_patterns, read_symlink_pointer, require_force, source_rel_to_target_abs,
+    sync_file_copy, update_sync_state,
 };
 use crate::DfmError;
 use dfm::*;
@@ -633,12 +633,15 @@ pub fn pull_command(
             PULL_KEEP_NON_DOTFILES, e
         ))
     })?;
-    let traversed_paths = list_directory_or_error(
+    let mut walk_bar = ActionBar::new("reading");
+    let traversed_paths = list_directory_or_error_with_progress(
         &paths,
         &source_dir_abs_path,
         Some(TraversalFilter::KeepMatching(&regex_no_dot_files)),
         "in source",
+        &mut |visited| walk_bar.set(visited, None),
     )?;
+    walk_bar.clear();
     debug!("traversing result is {:?}", traversed_paths);
 
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
@@ -648,9 +651,9 @@ pub fn pull_command(
     let mut error_list = vec![];
     let mut patterns_to_remove: Vec<String> = vec![];
 
-    let mut progress = ProgressLine::new();
+    let mut progress = ActionBar::new("reading");
     for (i, path) in traversed_paths.iter().enumerate() {
-        report_progress(&mut progress, i + 1, traversed_paths.len());
+        progress.set(i + 1, Some(traversed_paths.len()));
         debug!("checking {:?}", path);
 
         let target_abs_path = remove_dots_from_path(&target_dir_abs_path.join(path));
@@ -724,8 +727,10 @@ pub fn pull_command(
     let total_tasks = tasks.len();
     let mut completed_tasks = 0usize;
 
-    for task in tasks.iter() {
+    let mut action_bar = ActionBar::new("processing");
+    for (i, task) in tasks.iter().enumerate() {
         // Print what each task would do even under --dry-run.
+        action_bar.set(i + 1, Some(total_tasks));
         info!("{}", describe_pull_task(task));
         if dry_run {
             continue;
@@ -742,6 +747,7 @@ pub fn pull_command(
             }
         }
     }
+    action_bar.clear();
 
     prune_matched_ignore_patterns(xdg, &patterns_to_remove, dry_run)?;
 

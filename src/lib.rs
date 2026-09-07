@@ -4,7 +4,7 @@ pub mod crypt;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
@@ -1038,69 +1038,126 @@ pub fn calc_working_dir_paths_unchecked(
     Ok((target_dir_abs_path, source_dir_abs_path))
 }
 
-// Single-line progress indicator
+// Single-line action progress indicator
 
-/// Renders a self-overwriting progress line on stderr.
+/// Renderer step for a directory walk whose total is unknown up front
+/// (the bar shows only a growing count until the walk completes).
+const ACTION_WALK_STEP: usize = 500;
+
+/// Batches no larger than this render on every step, so a small operation
+/// (a few planned tasks) still shows its full countdown.
+const ACTION_SMALL_BATCH: usize = 100;
+
+/// Renders a self-overwriting progress line on stdout.
 ///
 /// Each `set` overwrites the previous line in place (carriage return + space
-/// padding), so a long-running operation shows one updating line instead of
-/// many lines. `clear` (also run automatically on drop) erases the line, so
-/// nothing lingers after the operation finishes.
-pub struct ProgressLine {
-    last_len: usize,
+/// padding), with a phase label (`reading` / `processing`), a `done/total`
+/// counter and — when the total is known — a percentage. `clear` (also run
+/// automatically on drop) erases the line, so nothing lingers after the
+/// operation finishes.
+///
+/// The bar only renders when stdout is an interactive terminal. Piped or
+/// redirected stdout (scripts, CI, `dfm status | grep ...`) never receives
+/// progress text, so program output stays byte-clean. The bar is shown at
+/// every verbosity level regardless of `-v`/`--dry-run`.
+pub struct ActionBar {
+    label: &'static str,
+    enabled: bool,
+    sink: Box<dyn Write>,
     active: bool,
+    last_len: usize,
+    last_total: Option<usize>,
+    last_pct: Option<usize>,
+    last_rendered_done: usize,
+    label_dirty: bool,
 }
 
-impl ProgressLine {
-    pub fn new() -> ProgressLine {
-        ProgressLine {
-            last_len: 0,
+impl ActionBar {
+    pub fn new(label: &'static str) -> ActionBar {
+        ActionBar::with_sink(label, Box::new(io::stdout()), io::stdout().is_terminal())
+    }
+
+    /// Bar that never renders, used when stdout must stay byte-clean even on
+    /// a terminal (e.g. `status --porcelain`).
+    pub fn suppressed(label: &'static str) -> ActionBar {
+        ActionBar::with_sink(label, Box::new(io::stdout()), false)
+    }
+
+    fn with_sink(label: &'static str, sink: Box<dyn Write>, enabled: bool) -> ActionBar {
+        ActionBar {
+            label,
+            enabled,
+            sink,
             active: false,
+            last_len: 0,
+            last_total: None,
+            last_pct: None,
+            last_rendered_done: 0,
+            label_dirty: true,
         }
     }
 
-    /// Replace the current progress line with `text`, overwriting in place.
+    /// Switch the phase label shown at the start of the line. The next `set`
+    /// renders regardless of the throttling rules.
+    pub fn set_label(&mut self, label: &'static str) {
+        if self.label != label {
+            self.label = label;
+            self.label_dirty = true;
+        }
+    }
+
+    /// Advance the counter to `done` of the `total` known steps, or — while
+    /// the total is unknown (directory walks) — to a bare visited count.
     ///
-    /// No-op when info-level logging is enabled (`-v > 1`): stderrlog maps
-    /// `-v 2`/`-v 3` to `log::LevelFilter::Info`/`Debug`, and that log output
-    /// would interleave with the self-overwriting progress line, producing
-    /// garbled terminal output. Errors and warnings (`-v 0`/`-v 1`) never
-    /// spam mid-operation, so progress stays rendered there.
-    pub fn set(&mut self, text: &str) {
-        if log::max_level() >= log::LevelFilter::Info {
+    /// Rendering is throttled so large operations do not write every step:
+    /// small batches render each step, larger ones render on percentage
+    /// changes (plus the final step), and walks render once per
+    /// `ACTION_WALK_STEP` visited entries.
+    pub fn set(&mut self, done: usize, total: Option<usize>) {
+        if !self.enabled || total == Some(0) {
             return;
         }
-        use std::io::Write;
-        let mut stderr = std::io::stderr();
-        let _ = write!(stderr, "\r{}", text);
-        if text.len() < self.last_len {
-            let _ = write!(stderr, "{}", " ".repeat(self.last_len - text.len()));
+        let pct = total.map(|t| done * 100 / t);
+        let render = self.label_dirty
+            || self.last_total != total
+            || match total {
+                None => done == 0 || done - self.last_rendered_done >= ACTION_WALK_STEP,
+                Some(t) if t <= ACTION_SMALL_BATCH => true,
+                Some(t) => pct != self.last_pct || done == t,
+            };
+        if !render {
+            return;
         }
-        let _ = stderr.flush();
+        let text = match total {
+            Some(t) => format!("{} {}/{} ({}%)", self.label, done, t, pct.unwrap_or(0)),
+            None => format!("{} {}", self.label, done),
+        };
+        let _ = write!(self.sink, "\r{text}");
+        if text.len() < self.last_len {
+            let _ = write!(self.sink, "{}", " ".repeat(self.last_len - text.len()));
+        }
+        let _ = self.sink.flush();
         self.last_len = text.len();
         self.active = true;
+        self.last_total = total;
+        self.last_pct = pct;
+        self.last_rendered_done = done;
+        self.label_dirty = false;
     }
 
     /// Erase the progress line if one is currently shown.
     pub fn clear(&mut self) {
-        use std::io::Write;
-        if self.active {
-            let mut stderr = std::io::stderr();
-            let _ = write!(stderr, "\r{}", " ".repeat(self.last_len));
-            let _ = write!(stderr, "\r");
-            let _ = stderr.flush();
-            self.active = false;
+        if !self.enabled || !self.active {
+            return;
         }
+        let _ = write!(self.sink, "\r{}", " ".repeat(self.last_len));
+        let _ = write!(self.sink, "\r");
+        let _ = self.sink.flush();
+        self.active = false;
     }
 }
 
-impl Default for ProgressLine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Drop for ProgressLine {
+impl Drop for ActionBar {
     fn drop(&mut self) {
         self.clear();
     }
@@ -1155,21 +1212,25 @@ pub fn list_directory(
     rel_base: &PathBuf,
     filter: Option<TraversalFilter<'_>>,
 ) -> Result<ListDirectories, DfmError> {
+    list_directory_with_progress(paths, rel_base, filter, &mut |_| {})
+}
+
+/// `list_directory` that reports every visited entry to `on_entry` (called
+/// with the running visited count) so the caller can render walk progress.
+/// The count includes entries that `filter_entry` keeps; pruned subtrees are
+/// never yielded and do not count.
+pub fn list_directory_with_progress(
+    paths: &[PathBuf],
+    rel_base: &PathBuf,
+    filter: Option<TraversalFilter<'_>>,
+    on_entry: &mut dyn FnMut(usize),
+) -> Result<ListDirectories, DfmError> {
     trace!("list directories with filter {:?}", filter);
 
     let mut error_messages = Vec::new();
-
-    // Walk the tree and report progress periodically so large traversals
-    // (e.g. `dfm add`/`dfm status` over $HOME) do not look frozen.
-    // Progress is written straight to stderr (not via the `log` crate) so it
-    // is shown at every verbosity level, and reuses a single line in place.
-    // Pruned subtrees are never yielded by `filter_entry`, so skipped
-    // directories do not count toward the visited-entry counter.
-    const TRAVERSE_PROGRESS_STEP: usize = 500;
     let mut traversed_paths: Vec<PathBuf> = Vec::new();
     let mut pruned_dirs: Vec<String> = Vec::new();
     let mut visited = 0usize;
-    let mut progress = ProgressLine::new();
 
     for path in paths.iter() {
         let keep_entry = |dir_entry: &DirEntry| -> bool {
@@ -1210,9 +1271,7 @@ pub fn list_directory(
             .filter_entry(keep_entry)
         {
             visited += 1;
-            if visited.is_multiple_of(TRAVERSE_PROGRESS_STEP) {
-                progress.set(&format!("traversing... {} entries visited", visited));
-            }
+            on_entry(visited);
             match entry {
                 Ok(d) if !d.file_type().is_dir() => traversed_paths.push(d.path().to_path_buf()),
                 Err(ref e) => match e.io_error() {
@@ -1957,4 +2016,126 @@ fn test_refuse_root_access_matrix() {
     // Only the effective uid grants privileges; a process owned by root but
     // running without root privileges is not refused.
     assert!(!should_refuse_root_access(0, 1000, None));
+}
+
+#[cfg(test)]
+mod action_bar_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    // A shared byte buffer the bar writes into, so a test can inspect the
+    // rendered progress text while the bar is still alive.
+    type SharedBuf = Rc<RefCell<Vec<u8>>>;
+
+    struct Sink(SharedBuf);
+    impl std::io::Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn harness(enabled: bool) -> (ActionBar, SharedBuf) {
+        let shared = Rc::new(RefCell::new(Vec::new()));
+        let bar = ActionBar::with_sink("reading", Box::new(Sink(shared.clone())), enabled);
+        (bar, shared)
+    }
+
+    /// Render the captured progress to a visible string by replaying the
+    /// carriage returns (each `\r` returns to column zero and overwrites).
+    fn rendered(buf: &[u8]) -> String {
+        let mut line = String::new();
+        for &b in buf {
+            if b == b'\r' {
+                line.clear();
+            } else {
+                line.push(b as char);
+            }
+        }
+        line.trim_end().to_string()
+    }
+
+    #[test]
+    fn suppressed_bar_never_writes() {
+        let (mut bar, buf) = harness(false);
+        bar.set(5, Some(10));
+        bar.set(10, Some(10));
+        bar.clear();
+        assert!(buf.borrow().is_empty());
+    }
+
+    #[test]
+    fn zero_total_never_writes() {
+        let (mut bar, buf) = harness(true);
+        bar.set(0, Some(0));
+        assert!(buf.borrow().is_empty());
+    }
+
+    #[test]
+    fn small_batch_renders_counter_and_percent() {
+        let (mut bar, buf) = harness(true);
+        bar.set(3, Some(10));
+        assert_eq!(rendered(&buf.borrow()), "reading 3/10 (30%)");
+        bar.clear();
+    }
+
+    #[test]
+    fn label_switch_renders_even_when_throttled() {
+        let (mut bar, buf) = harness(true);
+        // First render, then a percentage-throttled no-op, then a label change.
+        bar.set(1000, Some(2000)); // 50%
+        let before = rendered(&buf.borrow());
+        bar.set(1200, Some(2000)); // 60% -> renders
+        let mid = rendered(&buf.borrow());
+        assert_eq!(mid, "reading 1200/2000 (60%)");
+        assert_ne!(before, mid);
+        bar.set_label("processing");
+        bar.set(1200, Some(2000)); // same count, new label -> must re-render
+        assert_eq!(rendered(&buf.borrow()), "processing 1200/2000 (60%)");
+        bar.clear();
+    }
+
+    #[test]
+    fn clear_erases_the_line() {
+        let (mut bar, buf) = harness(true);
+        bar.set(1, Some(1));
+        let len_before = buf.borrow().len();
+        bar.clear();
+        let after_clear = buf.borrow().len();
+        assert!(after_clear > len_before, "clear must write padding");
+        assert_eq!(rendered(&buf.borrow()), "");
+    }
+
+    #[test]
+    fn walk_mode_grows_without_total_and_throttles() {
+        let (mut bar, buf) = harness(true);
+        // Walk visits: render on the first, then every ACTION_WALK_STEP.
+        bar.set(0, None);
+        assert_eq!(rendered(&buf.borrow()), "reading 0");
+        bar.set(250, None);
+        // 250 < step: same rendered text (ends with "0").
+        assert_eq!(rendered(&buf.borrow()), "reading 0");
+        bar.set(500, None);
+        assert_eq!(rendered(&buf.borrow()), "reading 500");
+        bar.set(501, None);
+        assert_eq!(rendered(&buf.borrow()), "reading 500");
+        bar.clear();
+    }
+
+    #[test]
+    fn final_step_always_renders() {
+        let (mut bar, buf) = harness(true);
+        // First two renders at 33% and 34% land on the same rounded percent
+        // (1200/2000 = 60%, 1000/2000 = 50%); pick a boundary where the final
+        // step must force a render even if the percent did not change.
+        bar.set(1998, Some(2000)); // 99%
+        bar.set(1999, Some(2000)); // 99% — no pct change, but not final
+        bar.set(2000, Some(2000)); // 100%, final -> must render
+        assert_eq!(rendered(&buf.borrow()), "reading 2000/2000 (100%)");
+        bar.clear();
+    }
 }

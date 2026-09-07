@@ -178,14 +178,17 @@ pub(crate) fn update_sync_state(
     Ok(())
 }
 
-/// Thin wrapper around `list_directory` that bundles the error check.
-pub(crate) fn list_directory_or_error(
+/// `list_directory_or_error` that reports every visited entry to `on_entry`
+/// (running visited count) so the caller can render walk progress.
+pub(crate) fn list_directory_or_error_with_progress(
     paths: &[PathBuf],
     rel_base: &PathBuf,
     filter: Option<TraversalFilter<'_>>,
     context: &str,
+    on_entry: &mut dyn FnMut(usize),
 ) -> Result<Vec<PathBuf>, DfmError> {
-    let ListDirectories { found, errors, .. } = list_directory(paths, rel_base, filter)?;
+    let ListDirectories { found, errors, .. } =
+        list_directory_with_progress(paths, rel_base, filter, on_entry)?;
     if !errors.is_empty() {
         return Err(DfmError::InvalidData(format!(
             "failed to process some subdirectories or files {}: {:?}",
@@ -193,24 +196,6 @@ pub(crate) fn list_directory_or_error(
         )));
     }
     Ok(found)
-}
-
-/// Report a periodic progress heartbeat during bulk analysis loops.
-/// No-op unless the batch is large enough to be worth reporting,
-/// so small, fast operations stay quiet.
-///
-/// Each update overwrites the single progress line in place (`\r`), and the
-/// caller erases the line when the operation is done via `progress.clear()`.
-/// Progress is written straight to stderr (not through the `log` crate) so it
-/// is visible at every verbosity level, including `-v 0`.
-pub(crate) fn report_progress(progress: &mut ProgressLine, done: usize, total: usize) {
-    const BULK_PROGRESS_MIN: usize = 100;
-    // Scale the step with the batch size so large operations still only
-    // update the line about 20 times per run.
-    let step = (total / 20).max(BULK_PROGRESS_MIN);
-    if total >= BULK_PROGRESS_MIN && (done.is_multiple_of(step) || done == total) {
-        progress.set(&format!("processed {}/{} files", done, total));
-    }
 }
 
 // Shared message templates

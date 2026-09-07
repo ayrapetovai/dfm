@@ -5,9 +5,9 @@ use log::{debug, error, info, warn};
 use regex::RegexSet;
 
 use super::{
-    SourceVariant, cli_path_in_scope, get_sync_time, is_ignored, list_directory_or_error,
-    msg_dry_run, msg_nothing_to_do, msg_tasks_failure, read_symlink_pointer, report_progress,
-    resolve_source_variant, sync_file_copy, update_sync_state,
+    SourceVariant, cli_path_in_scope, get_sync_time, is_ignored,
+    list_directory_or_error_with_progress, msg_dry_run, msg_nothing_to_do, msg_tasks_failure,
+    read_symlink_pointer, resolve_source_variant, sync_file_copy, update_sync_state,
 };
 use crate::DfmError;
 use dfm::*;
@@ -295,20 +295,23 @@ pub fn sync_command(
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
-    let traversed_paths = list_directory_or_error(
+    let mut walk_bar = ActionBar::new("reading");
+    let traversed_paths = list_directory_or_error_with_progress(
         &paths,
         &target_dir_abs_path,
         Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
         "in targets",
+        &mut |visited| walk_bar.set(visited, None),
     )?;
+    walk_bar.clear();
 
     let mut tasks: Vec<SyncTask> = Vec::new();
     let mut conflict_detected = false;
     let mut conflict_paths: Vec<String> = vec![];
 
-    let mut progress = ProgressLine::new();
+    walk_bar.set_label("reading");
     for (i, target_path) in traversed_paths.iter().enumerate() {
-        report_progress(&mut progress, i + 1, traversed_paths.len());
+        walk_bar.set(i + 1, Some(traversed_paths.len()));
         debug!("checking {:?}", target_path);
 
         let handle = if target_path.is_symlink() {
@@ -344,7 +347,7 @@ pub fn sync_command(
             Err(e) => return Err(e),
         }
     }
-    progress.clear();
+    walk_bar.clear();
 
     // A conflict leaves the conflicting files untouched and blocks the whole
     // run unless --force is given. With --force the non-conflicting tasks still
@@ -376,12 +379,14 @@ pub fn sync_command(
     let total_tasks = tasks.len();
     let mut completed_tasks = 0usize;
 
-    for task in tasks {
-        info!("{}", describe_sync_task(&task));
+    let mut action_bar = ActionBar::new("processing");
+    for (i, task) in tasks.iter().enumerate() {
+        action_bar.set(i + 1, Some(total_tasks));
+        info!("{}", describe_sync_task(task));
         if dry_run {
             continue;
         }
-        match execute_sync_task(&task, settings, state, &source_dir_abs_path) {
+        match execute_sync_task(task, settings, state, &source_dir_abs_path) {
             Ok(completed) => {
                 if completed {
                     completed_tasks += 1;
@@ -393,6 +398,7 @@ pub fn sync_command(
             }
         }
     }
+    action_bar.clear();
 
     Ok(())
 }

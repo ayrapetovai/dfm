@@ -9,7 +9,7 @@ use log::{debug, info};
 use regex::RegexSet;
 
 use super::{
-    cli_path_in_scope, list_directory, matches_source_ignore_regex, print_paged, report_progress,
+    cli_path_in_scope, list_directory_with_progress, matches_source_ignore_regex, print_paged,
     source_rel_to_target_abs, state_key_for, write_stdout,
 };
 use crate::DfmError;
@@ -213,9 +213,13 @@ pub fn status_command(
     let mut entries: Vec<StatusEntry> = Vec::new();
     let mut state_keys: HashSet<String> = HashSet::new();
 
-    let mut progress = ProgressLine::new();
+    let mut progress = ActionBar::new("reading");
+    if *porcelain {
+        // `--porcelain` output keeps stdout byte-clean even on a terminal.
+        progress = ActionBar::suppressed("reading");
+    }
     for (i, (source_rel, sync_time)) in state.syncs.iter().enumerate() {
-        report_progress(&mut progress, i + 1, state.syncs.len());
+        progress.set(i + 1, Some(state.syncs.len()));
         state_keys.insert(source_rel.clone());
 
         let source_abs = source_dir_abs.join(source_rel);
@@ -372,10 +376,11 @@ pub fn status_command(
         found: traversed_target,
         errors: traversal_errors,
         pruned: pruned_dirs,
-    } = list_directory(
+    } = list_directory_with_progress(
         &requested_roots,
         &target_dir_abs,
         Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
+        &mut |visited| progress.set(visited, None),
     )?;
     if !traversal_errors.is_empty() {
         return Err(DfmError::InvalidData(format!(
@@ -391,7 +396,7 @@ pub fn status_command(
         fs::canonicalize(&source_dir_abs).unwrap_or_else(|_| source_dir_abs.clone());
 
     for (i, target_abs) in traversed_target.iter().enumerate() {
-        report_progress(&mut progress, i + 1, traversed_target.len());
+        progress.set(i + 1, Some(traversed_target.len()));
         // Skip files inside the source directory — normalize via canonicalize
         // to avoid path-comparison edge cases (symlinks, double slashes, etc.)
         if let Ok(canon_target) = fs::canonicalize(target_abs) {
@@ -450,7 +455,6 @@ pub fn status_command(
             );
         }
     }
-    progress.clear();
 
     // Entries for fully-ignored directories that were pruned during the walk:
     // one `!! dir/` per directory instead of enumerating every file inside it.
@@ -485,10 +489,11 @@ pub fn status_command(
                 found,
                 errors,
                 pruned,
-            } = list_directory(
+            } = list_directory_with_progress(
                 std::slice::from_ref(&target_dir_abs),
                 &target_dir_abs,
                 Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
+                &mut |visited| progress.set(visited, None),
             )?;
             if !errors.is_empty() {
                 return Err(DfmError::InvalidData(format!(
@@ -504,7 +509,8 @@ pub fn status_command(
         // A pattern that pruned a directory counts as in use (its `!! dir/`
         // entry is exactly what makes it used in the full report).
         let mut all_relative_paths: Vec<String> = Vec::new();
-        for abs in &unused_walk {
+        for (i, abs) in unused_walk.iter().enumerate() {
+            progress.set(i + 1, Some(unused_walk.len()));
             if abs.to_str().is_some() {
                 let rel = file_path_relative_to(abs, &target_dir_abs);
                 if let Some(rs) = rel.to_str() {
@@ -522,7 +528,9 @@ pub fn status_command(
             }
         }
 
-        for pattern_str in target_ignore_regex.patterns() {
+        let pattern_total = target_ignore_regex.patterns().len();
+        for (i, pattern_str) in target_ignore_regex.patterns().iter().enumerate() {
+            progress.set(i + 1, Some(pattern_total));
             let mut matched_any = false;
             for rel_path in &all_relative_paths {
                 if pattern_matches_path_components(pattern_str, rel_path) {
@@ -543,6 +551,7 @@ pub fn status_command(
             out.push_str(p);
             out.push('\n');
         }
+        progress.clear();
         return write_stdout(&out);
     }
 
@@ -556,6 +565,7 @@ pub fn status_command(
             for p in &stale_patterns {
                 out.push_str(&format!("  {}  {}\n", StatusCode::StalePattern, p));
             }
+            progress.clear();
             return write_stdout(&out);
         }
         return Ok(());
@@ -612,6 +622,11 @@ pub fn status_command(
         .collect();
 
     // Output
+    // Show 100 % to cover the sort/filter phase before clearing the bar.
+    if !entries.is_empty() {
+        progress.set(entries.len(), Some(entries.len()));
+    }
+    progress.clear();
     let git_info = get_git_info(&source_dir_abs);
 
     // A restrictive filter asks for one specific list, so the unused-patterns
@@ -650,6 +665,7 @@ pub fn status_command(
         // Show the Unpulled block when explicitly requested (`--unpulled`) or
         // when `--all` unhides every category.
         let show_unpulled = *unpulled || *all;
+        let mut formatting = ActionBar::new("formatting output");
         let output = format_default(
             &filtered,
             &entries,
@@ -659,7 +675,9 @@ pub fn status_command(
             &source_dir_abs,
             has_managed,
             show_unpulled,
+            &mut formatting,
         );
+        formatting.clear();
         print_paged(&output)?;
         Ok(())
     }
@@ -828,94 +846,202 @@ fn classify_target_file(
 /// the user needs to see separately. So `.config/dir1/file` + `.config/dir3/file`
 /// with an ignored `.config/dir2` still prints both files individually.
 ///
-/// Iteration is deepest-first: each pass picks the deepest ancestor directory
-/// that has ≥2 descendants and no blocked path beneath it, replaces everything
-/// under it with one `{dir}/*`, and repeats so `a/b/x + a/b/y` becomes
-/// `a/b/*` and then propagates to `a/*`. Paths already marked `*` are never
-/// collapsed further. The `matched_pattern` is dropped from a collapsed entry;
-/// the collapsed entry's `encrypted` flag is true only when every member of the
-/// group is encrypted (so `dir/* (encrypted)` is emitted only for a wholly
-/// encrypted directory).
+/// Foldability is decided bottom-up in a single pass (O(n × depth), no rescans):
+/// counting every blocked path's ancestor prefixes once, tallying the group's
+/// descendants under each prefix, then folding prefixes deepest-first. A dir
+/// folds only when, after its directly-folding children collapse to one member
+/// each, at least two members remain beneath it — so `a/b/x + a/b/y` becomes
+/// `a/b/*` and `a/c` converges with it into `a/*`, while a chain empty except
+/// for a collapsing leaf (`a/b/c x2`) folds only at `a/b/c/*`. Each final
+/// folded directory is emitted as one `{dir}/*` entry at the position of
+/// its first member. Paths already marked `*` are never crossed. The
+/// `matched_pattern` is dropped from a collapsed entry; the collapsed entry's
+/// `encrypted` flag is true only when every member of the group is encrypted
+/// (so `dir/* (encrypted)` is emitted only for a wholly encrypted directory).
+///
+/// Every path examined advances `formatting` by one (`examined` accumulates
+/// across callers so the counter stays monotonic through all report groups).
 fn collapse_shared_dirs(
     paths: &[(StatusCode, String, Option<String>, bool)],
     blocked: &BTreeSet<String>,
+    formatting: &mut ActionBar,
+    examined: &mut usize,
 ) -> Vec<(StatusCode, String, Option<String>, bool)> {
-    let mut paths = paths.to_vec();
-    loop {
-        let mut ancestor_counts: BTreeMap<String, usize> = BTreeMap::new();
-        for (_, path, _, _) in &paths {
-            let parts: Vec<&str> = path.split('/').collect();
-            let mut prefix = String::new();
-            for (i, part) in parts.iter().enumerate() {
-                if *part == "*" {
-                    break; // don't collapse through a wildcard marker
-                }
-                if i > 0 {
-                    prefix.push('/');
-                }
-                prefix.push_str(part);
-                if i + 1 < parts.len() {
-                    *ancestor_counts.entry(prefix.clone()).or_default() += 1;
-                }
+    // A blocked path severs every ancestor directory above it too, so compute
+    // the closure of blocked prefixes once: O(|blocked| × depth) for setup,
+    // then each membership test below is O(1).
+    let mut blocked_prefixes: BTreeSet<String> = BTreeSet::new();
+    for blocked_path in blocked {
+        let parts: Vec<&str> = blocked_path.split('/').collect();
+        let mut prefix = String::new();
+        for (i, part) in parts.iter().enumerate() {
+            if *part == "*" {
+                break; // never fold through a wildcard marker
             }
-        }
-
-        // Find the deepest ancestor with ≥2 entries beneath it that is not
-        // severed by a blocked path. Fold only full-coverage gaps.
-        let Some(collapsed_dir) = ancestor_counts
-            .into_iter()
-            .filter(|(prefix, count)| *count >= 2 && !is_blocked(prefix, blocked))
-            .max_by_key(|(prefix, _)| prefix.matches('/').count())
-            .map(|(prefix, _)| prefix)
-        else {
-            break;
-        };
-
-        // Replace every entry under `collapsed_dir` with a single
-        // `collapsed_dir/*` entry at the position of the first member.
-        let mut next = Vec::new();
-        let dir_prefix = format!("{}/", collapsed_dir);
-        let mut collapsed_encrypted = true;
-        for (code, path, pattern, encrypted) in &paths {
-            if path == &collapsed_dir || path.starts_with(&dir_prefix) {
-                collapsed_encrypted &= *encrypted;
-                continue;
+            if i > 0 {
+                prefix.push('/');
             }
-            next.push((*code, path.clone(), pattern.clone(), *encrypted));
+            prefix.push_str(part);
+            blocked_prefixes.insert(prefix.clone());
         }
-        let member_code = paths[0].0; // every member shares the group's code
-        let member_idx = paths
-            .iter()
-            .position(|(_, p, _, _)| p == &collapsed_dir || p.starts_with(&dir_prefix))
-            .unwrap_or(next.len());
-        next.insert(
-            member_idx,
-            (
-                member_code,
-                format!("{}/*", collapsed_dir),
-                None,
-                collapsed_encrypted,
-            ),
-        );
-        paths = next;
     }
-    paths
+
+    // Tally how many group paths lie strictly beneath every prefix.
+    let mut ancestor_counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (_, path, _, _) in paths {
+        let parts: Vec<&str> = path.split('/').collect();
+        let mut prefix = String::new();
+        for (i, part) in parts.iter().enumerate() {
+            if *part == "*" {
+                break;
+            }
+            if i > 0 {
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+            if i + 1 < parts.len() {
+                *ancestor_counts.entry(prefix.clone()).or_default() += 1;
+            }
+        }
+    }
+    *examined += paths.len();
+    formatting.set(*examined, None);
+
+    // Without a prefix that has ≥2 members there is nothing to fold.
+    if ancestor_counts.values().all(|&count| count < 2) {
+        return paths.to_vec();
+    }
+
+    // Decide foldability bottom-up over the candidate-dir tree, mirroring the
+    // old deepest-first greedy exactly: a dir's member count is its directly
+    // attached leaves plus one for each directly-folding child (a folded child
+    // subtree collapses to a single member) plus the member count of every
+    // non-folding child. A dir folds only when that count stays ≥ 2 — so a
+    // chain `a/b/c` empty except for folding `c` leaves both `a/b` and `a`
+    // with one member each, and only `a/b/c` collapses.
+    let candidates: BTreeSet<&String> = ancestor_counts.keys().collect();
+
+    let mut children: BTreeMap<&String, Vec<&String>> = BTreeMap::new();
+    for candidate in &candidates {
+        if let Some(parent) = deepest_candidate_ancestor(candidate, &ancestor_counts) {
+            children.entry(parent).or_default().push(candidate);
+        }
+    }
+
+    // Attach each original path to its deepest candidate ancestor (the path's
+    // own parent dir for ordinary entries; the nearest candidate above a `*`
+    // component for exotic ones).
+    let mut attached_leaves: BTreeMap<&String, usize> = BTreeMap::new();
+    for (_, path, _, _) in paths {
+        if let Some(attachment) = deepest_candidate_ancestor(path, &ancestor_counts) {
+            *attached_leaves.entry(attachment).or_default() += 1;
+        }
+    }
+
+    let mut order: Vec<&String> = candidates.into_iter().collect();
+    order.sort_by_key(|prefix| std::cmp::Reverse(prefix.matches('/').count()));
+
+    let mut member_count: BTreeMap<&String, usize> = BTreeMap::new();
+    let mut folds: BTreeSet<String> = BTreeSet::new();
+    for dir in order {
+        let mut members = attached_leaves.get(dir).copied().unwrap_or(0);
+        if let Some(child_dirs) = children.get(dir) {
+            for child in child_dirs {
+                members += if folds.contains(child.as_str()) {
+                    1
+                } else {
+                    member_count[child]
+                };
+            }
+        }
+        member_count.insert(dir, members);
+        if members >= 2 && !blocked_prefixes.contains(dir.as_str()) {
+            folds.insert(dir.clone());
+        }
+    }
+
+    // Every member of a folded dir shares the group's code; the folded entry is
+    // encrypted only when all of its members are. Record per-fold the position
+    // of the first member, so each `dir/*` is emitted exactly once, where its
+    // group first appeared in the original order.
+    let mut first_member: BTreeMap<&String, usize> = BTreeMap::new();
+    let mut member_code: BTreeMap<&String, StatusCode> = BTreeMap::new();
+    let mut member_encrypted: BTreeMap<&String, bool> = BTreeMap::new();
+    for (index, (code, path, _, encrypted)) in paths.iter().enumerate() {
+        if let Some(fold) = outer_fold(path, &folds) {
+            first_member.entry(fold).or_insert(index);
+            member_code.entry(fold).or_insert(*code);
+            *member_encrypted.entry(fold).or_insert(true) &= *encrypted;
+        }
+    }
+
+    let mut result = Vec::with_capacity(paths.len());
+    for (index, (code, path, pattern, encrypted)) in paths.iter().enumerate() {
+        if let Some(fold) = outer_fold(path, &folds) {
+            if first_member[fold] == index {
+                result.push((
+                    member_code[fold],
+                    format!("{}/*", fold),
+                    None,
+                    member_encrypted[fold],
+                ));
+            }
+        } else {
+            result.push((*code, path.clone(), pattern.clone(), *encrypted));
+        }
+        *examined += 1;
+        formatting.set(*examined, None);
+    }
+    result
 }
 
-/// A directory `dir` is blocked (not foldable) when some non-group path is
-/// exactly `dir` or starts with `dir/`. Only the deepest still-open ancestor
-/// is relevant, but testing each prefix against the whole blocked set is simpler
-/// and correct because a blocked path always severs every ancestor above it.
-fn is_blocked(dir: &str, blocked: &BTreeSet<String>) -> bool {
-    let dir_prefix = format!("{}/", dir);
-    // The empty string is never a real collapsed dir; the root must not be
-    // sewn together with anything else.
-    if dir.is_empty() {
-        return false;
+/// The deepest prefix that strictly contains `prefix` and has at least one
+/// group path beneath it. The direct parent qualifies automatically, because
+/// every path under `prefix` lies under the parent too.
+fn deepest_candidate_ancestor<'a>(
+    prefix: &str,
+    candidates: &'a BTreeMap<String, usize>,
+) -> Option<&'a String> {
+    let parts: Vec<&str> = prefix.split('/').collect();
+    let mut best: Option<&'a String> = None;
+    let mut path = String::new();
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "*" {
+            break;
+        }
+        if i > 0 {
+            path.push('/');
+        }
+        path.push_str(part);
+        if i + 1 < parts.len()
+            && let Some((candidate, _)) = candidates.get_key_value(&path)
+        {
+            best = Some(candidate);
+        }
     }
-    blocked
-        .iter()
-        .any(|b| b == dir || b.starts_with(&dir_prefix))
+    best
+}
+
+/// The outermost (shallowest) folded directory that strictly contains `path`,
+/// if any. Wildcard components never belong to a fold and stop the ascent.
+fn outer_fold<'a>(path: &str, folds: &'a BTreeSet<String>) -> Option<&'a String> {
+    let parts: Vec<&str> = path.split('/').collect();
+    let mut prefix = String::new();
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "*" {
+            break;
+        }
+        if i > 0 {
+            prefix.push('/');
+        }
+        prefix.push_str(part);
+        if i + 1 < parts.len()
+            && let Some(fold) = folds.get(&prefix)
+        {
+            return Some(fold);
+        }
+    }
+    None
 }
 
 /// Color a path by its status code. Only used in the human-readable default
@@ -939,6 +1065,7 @@ fn format_default(
     source_dir_abs: &Path,
     has_managed: bool,
     show_unpulled: bool,
+    formatting: &mut ActionBar,
 ) -> String {
     // The Unpulled block belongs only to `--unpulled`; the default report must
     // exclude it. Other commands' `--short`/`--porcelain` keep `!?` through the
@@ -1000,8 +1127,13 @@ fn format_default(
         }
     }
 
+    // The formatting bar spans the whole report: the step unit is one path
+    // examined during collapse and display rendering. The total is unknown up
+    // front, so the bar counts work units monotonically, like the walk phase.
+    let mut formatting_done = 0usize;
+
     // Helper to write a group
-    let write_group =
+    let mut write_group =
         |out: &mut String, header: &str, items: &[&StatusEntry], is_last_group: bool| {
             if items.is_empty() {
                 return;
@@ -1022,7 +1154,8 @@ fn format_default(
                 .collect();
 
             // Build display paths, then collapse shared directories (e.g.
-            // multiple files under dir/ to a single dir/* entry).
+            // multiple files under dir/ to a single dir/* entry). The single
+            // bottom-up pass advances the formatting bar per examined path.
             let paths = collapse_shared_dirs(
                 &items
                     .iter()
@@ -1036,6 +1169,8 @@ fn format_default(
                     })
                     .collect::<Vec<_>>(),
                 &blocked,
+                formatting,
+                &mut formatting_done,
             );
 
             // Build the final display list.
@@ -1089,6 +1224,11 @@ fn format_default(
             if !is_last_group {
                 out.push('\n');
             }
+            // The collapse pass advanced the counter per examined path; the
+            // rendered lines are work too, so keep the counter moving through
+            // the display pass.
+            formatting_done += display.len();
+            formatting.set(formatting_done, None);
         };
 
     let group_order = [
@@ -1198,4 +1338,145 @@ fn tilde_path(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod collapse_tests {
+    use super::*;
+
+    fn entry(path: &str) -> (StatusCode, String, Option<String>, bool) {
+        (StatusCode::Unmanaged, path.to_string(), None, false)
+    }
+
+    fn collapse(
+        paths: &[(StatusCode, String, Option<String>, bool)],
+        blocked: &BTreeSet<String>,
+    ) -> Vec<(StatusCode, String, Option<String>, bool)> {
+        let mut bar = ActionBar::suppressed("formatting output");
+        let mut examined = 0usize;
+        collapse_shared_dirs(paths, blocked, &mut bar, &mut examined)
+    }
+
+    fn paths_of(result: &[(StatusCode, String, Option<String>, bool)]) -> Vec<&str> {
+        result.iter().map(|(_, path, _, _)| path.as_str()).collect()
+    }
+
+    #[test]
+    fn single_deep_group_collapses_to_outermost() {
+        let paths = vec![entry("a/b/1.txt"), entry("a/b/2.txt"), entry("a/c/3.txt")];
+        let result = collapse(&paths, &BTreeSet::new());
+        assert_eq!(paths_of(&result), ["a/*"]);
+    }
+
+    #[test]
+    fn chain_empty_except_collapsing_leaf_folds_only_at_leaf() {
+        // a/b/c has two files and nothing else shares a/b or a: folding c leaves
+        // both a/b and a with a single member each, so only a/b/c collapses
+        // (a regression of the greedy deepest-first behaviour).
+        let paths = vec![
+            entry("a/b/c/f1.txt"),
+            entry("a/b/c/f2.txt"),
+            entry("d/e/g1.txt"),
+            entry("d/e/g2.txt"),
+        ];
+        let result = collapse(&paths, &BTreeSet::new());
+        assert_eq!(paths_of(&result), ["a/b/c/*", "d/e/*"]);
+    }
+
+    #[test]
+    fn parent_with_single_foldable_child_stays_at_child() {
+        // p has only a foldable child p/x; folding p/x leaves p with one member,
+        // so p must not fold further (matches the previous deepest-first result).
+        let paths = vec![entry("p/x/1.txt"), entry("p/x/2.txt")];
+        let result = collapse(&paths, &BTreeSet::new());
+        assert_eq!(paths_of(&result), ["p/x/*"]);
+    }
+
+    #[test]
+    fn blocked_prefix_severs_every_ancestor() {
+        // mixed/two is a different status: neither `mixed` nor anything above
+        // may fold, but a sibling dir not containing the blocker still folds.
+        let paths = vec![
+            entry("mixed/one.txt"),
+            entry("mixed/three.txt"),
+            entry("plain/x.txt"),
+            entry("plain/y.txt"),
+        ];
+        let mut blocked = BTreeSet::new();
+        blocked.insert("mixed/two.txt".to_string());
+        let result = collapse(&paths, &blocked);
+        assert_eq!(
+            paths_of(&result),
+            ["mixed/one.txt", "mixed/three.txt", "plain/*"]
+        );
+    }
+
+    #[test]
+    fn sibling_folds_remain_independent() {
+        let paths = vec![
+            entry("dir1/a.txt"),
+            entry("dir1/b.txt"),
+            entry("dir2/c.txt"),
+            entry("dir2/d.txt"),
+        ];
+        let result = collapse(&paths, &BTreeSet::new());
+        assert_eq!(paths_of(&result), ["dir1/*", "dir2/*"]);
+    }
+
+    #[test]
+    fn folded_entry_is_encrypted_only_when_all_members_are() {
+        let a = entry("e/f/1.txt");
+        let mut b = entry("e/f/2.txt");
+        b.3 = true;
+        let result = collapse(&[a, b], &BTreeSet::new());
+        assert!(!result[0].3);
+        let mut c = entry("e/f/3.txt");
+        c.3 = true;
+        let mut d = entry("e/f/4.txt");
+        d.3 = true;
+        let result = collapse(&[c, d], &BTreeSet::new());
+        assert!(result[0].3);
+    }
+
+    #[test]
+    fn root_level_files_and_unshared_dirs_are_kept() {
+        let paths = vec![
+            entry("root_file.txt"),
+            entry("lone/single.txt"),
+            entry("a/b/1.txt"),
+            entry("a/b/2.txt"),
+        ];
+        let result = collapse(&paths, &BTreeSet::new());
+        assert_eq!(
+            paths_of(&result),
+            ["root_file.txt", "lone/single.txt", "a/b/*"]
+        );
+    }
+
+    #[test]
+    fn star_component_stops_the_ascent_but_ancestors_above_still_count() {
+        // The `*` component breaks the ancestor ascent (never fold across it),
+        // yet the ancestor `w` above the star is still tallied just like the
+        // previous implementation did, so both files fold to `w/*`.
+        let paths = vec![entry("w/*/x"), entry("w/*/y")];
+        let result = collapse(&paths, &BTreeSet::new());
+        assert_eq!(paths_of(&result), ["w/*"]);
+    }
+
+    #[test]
+    fn large_bushy_report_completes_quickly() {
+        // 50k files across 10k shared dirs: the old per-fold rescan was O(n²)
+        // here; the single-pass fold must stay linear.
+        let mut paths = Vec::with_capacity(50_000);
+        for d in 0..10_000 {
+            for f in 0..5 {
+                paths.push(entry(&format!("dir{d}/file{f}.txt")));
+            }
+        }
+        let start = std::time::Instant::now();
+        let result = collapse(&paths, &BTreeSet::new());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(result.len(), 10_000);
+        assert!(result.iter().all(|(_, path, _, _)| path.ends_with("/*")));
+    }
 }

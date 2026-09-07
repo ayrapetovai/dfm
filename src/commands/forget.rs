@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use log::{debug, error, info, warn};
 
 use super::{
-    SourceVariant, cli_path_in_scope, cli_path_to_abs, get_sync_time, list_directory_or_error,
-    msg_dry_run, msg_nothing_to_do, read_symlink_pointer, report_progress, require_force,
-    resolve_source_variant, source_rel_to_target_rel, state_key_for,
+    SourceVariant, cli_path_in_scope, cli_path_to_abs, get_sync_time,
+    list_directory_or_error_with_progress, msg_dry_run, msg_nothing_to_do, read_symlink_pointer,
+    require_force, resolve_source_variant, source_rel_to_target_rel, state_key_for,
 };
 use crate::DfmError;
 use dfm::*;
@@ -344,11 +344,13 @@ pub fn forget_command(
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
-    let traversed_paths = list_directory_or_error(
+    let mut progress = ActionBar::new("reading");
+    let traversed_paths = list_directory_or_error_with_progress(
         &paths,
         &target_dir_abs_path,
         Some(TraversalFilter::PruneIgnoredDirs(&target_ignore_regex)),
         "in targets",
+        &mut |visited| progress.set(visited, None),
     )?;
     debug!("traversing result is {:?}", traversed_paths);
 
@@ -358,9 +360,8 @@ pub fn forget_command(
 
     debug!("::check state procedure begins");
 
-    let mut progress = ProgressLine::new();
     for (i, target_path) in traversed_paths.iter().enumerate() {
-        report_progress(&mut progress, i + 1, traversed_paths.len());
+        progress.set(i + 1, Some(traversed_paths.len()));
         debug!("checking {:?}", target_path);
 
         // Symlink scenario — fully handled when a pointer file exists; a
@@ -507,7 +508,7 @@ pub fn forget_command(
     };
     let orphan_total = orphan_keys.len();
     for (i, key) in orphan_keys.into_iter().enumerate() {
-        report_progress(&mut progress, i + 1, orphan_total);
+        progress.set(i + 1, Some(orphan_total));
         let source_abs = source_dir_abs_path.join(&key);
         let source_abs = remove_dots_from_path(&source_abs);
 
