@@ -1046,6 +1046,20 @@ pub fn decrypt_file_standalone(
     })
 }
 
+/// Decrypt an encrypted standalone file `input_path` and stream the plaintext
+/// to stdout. The first chunk is verified before anything is written, so a
+/// wrong password never emits partial bytes. No directory/file permissions are
+/// restored (there is no output file).
+pub fn decrypt_to_stdout(settings: &Settings, input_path: &Path) -> Result<(), DfmError> {
+    let (session, _meta) = open_with_retry(settings, input_path, || {
+        fs::File::open(input_path).map_err(|e| io_err(input_path, e))
+    })?;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    session.stream_rest(&mut out)?;
+    out.flush().map_err(|e| io_err(Path::new("<stdout>"), e))
+}
+
 fn default_read_password() -> Result<String, DfmError> {
     let config = rpassword::ConfigBuilder::new()
         .password_feedback_mask('*')

@@ -242,9 +242,18 @@ fn main_logic() -> Result<(), dfm::DfmError> {
         Command::Encrypt { path, output } => {
             encrypt_command(&settings, EncryptArgs { path, output })
         }
-        Command::Decrypt { path, output } => {
-            decrypt_command(&settings, DecryptArgs { path, output })
-        }
+        Command::Decrypt {
+            path,
+            output,
+            stdout_output,
+        } => decrypt_command(
+            &settings,
+            DecryptArgs {
+                path,
+                output,
+                stdout_output,
+            },
+        ),
         Command::Merge { paths, dry_run } => with_state(
             state_opt,
             state_read_error.as_ref(),

@@ -187,7 +187,7 @@ Unknown property names are rejected (before syntax checks) with exit 1; array sy
 
 ### 2.11 `encrypt` / `decrypt`
 
-`dfm encrypt [PATH] [-o OUTPUT]` / `dfm decrypt [PATH] [-o OUTPUT]` encrypt or decrypt a single file outside the target/source workflow (see [Encryption](#4-encryption)). `encrypt` defaults to `<input>.encrypted`; `decrypt` strips the `.encrypted` suffix (an explicit `-o` is required when the input has none).
+`dfm encrypt [PATH] [-o OUTPUT]` / `dfm decrypt [PATH] [-o OUTPUT]` encrypt or decrypt a single file outside the target/source workflow (see [Encryption](#4-encryption)). `encrypt` defaults to `<input>.encrypted`; `decrypt` strips the `.encrypted` suffix (an explicit `-o` is required when the input has none). `dfm decrypt FILE.encrypted -` prints the plaintext to stdout instead of writing a file (no success message; the stream carries only the decrypted bytes); the `-` marker is mutually exclusive with `-o`.
 
 ### 2.12 `status`
 `dfm status [OPTIONS] [PATH...]` shows the state of managed, unmanaged, ignored, and encrypted files. By default: a grouped, paged report of **modified + unmanaged** entries. `PATH` arguments restrict the report to those paths (ignored entries inside that scope are then shown even without a flag).
@@ -281,7 +281,7 @@ Format version 3; v1/v2 archives are rejected and must be re-created. Encryption
 
 ### Standalone `encrypt` / `decrypt`
 
-`dfm encrypt path/to/file [-o output.encrypted]` writes `<input>.encrypted` next to the input by default. `dfm decrypt file.encrypted [-o output]` strips the `.encrypted` suffix (an explicit `-o` is required when the input has none) and restores the recorded permissions. Same password rules as above; no external tool required.
+`dfm encrypt path/to/file [-o output.encrypted]` writes `<input>.encrypted` next to the input by default. `dfm decrypt file.encrypted [-o output]` strips the `.encrypted` suffix (an explicit `-o` is required when the input has none) and restores the recorded permissions. `dfm decrypt file.encrypted -` streams the plaintext to stdout (wrong-password and corruption are detected before any byte is written, so a failed decryption never emits partial data). Same password rules as above; no external tool required.
 
 ## 5 Conflict detection
 

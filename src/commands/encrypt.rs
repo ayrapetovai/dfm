@@ -13,6 +13,7 @@ pub struct EncryptArgs {
 pub struct DecryptArgs {
     pub path: PathBuf,
     pub output: Option<PathBuf>,
+    pub stdout_output: Option<String>,
 }
 
 /// Encrypt a single file with a password into a self-contained dfm blob.
@@ -34,7 +35,23 @@ pub fn encrypt_command(settings: &Settings, args: EncryptArgs) -> Result<(), Dfm
 /// Decrypt a dfm-encrypted file. Without `--output`, strips the encrypted
 /// postfix from the input name (`.encrypted` → plain) in the current
 /// directory; if the name has no postfix, an explicit `--output` is required.
+/// A literal `-` as the second positional prints the plaintext to stdout.
 pub fn decrypt_command(settings: &Settings, args: DecryptArgs) -> Result<(), DfmError> {
+    if let Some(marker) = &args.stdout_output {
+        if marker != "-" {
+            return Err(DfmError::InvalidInput(format!(
+                "unexpected argument {:?}: the only second positional accepted by decrypt is '-' (write the output to stdout)",
+                marker
+            )));
+        }
+        if args.output.is_some() {
+            return Err(DfmError::InvalidInput(
+                "--output and '-' (stdout) are mutually exclusive".into(),
+            ));
+        }
+        dfm::crypt::decrypt_to_stdout(settings, &args.path)?;
+        return Ok(());
+    }
     let output = match &args.output {
         Some(o) => o.clone(),
         None => {

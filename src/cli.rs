@@ -298,5 +298,10 @@ pub enum Command {
         /// postfix; required when the input has no postfix).
         #[arg(long, short = 'o', value_name = "OUT")]
         output: Option<PathBuf>,
+
+        /// A literal `-` writes the decrypted plaintext to stdout instead of a
+        /// file (mutually exclusive with --output).
+        #[arg(value_name = "OUTPUT")]
+        stdout_output: Option<String>,
     },
 }

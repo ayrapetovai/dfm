@@ -13,6 +13,7 @@ After each feature implementation or fix update the context.txt, keep it concise
 - The project's binary dfm could be installed on the hosting system.
 - Do not use line numbers to point code.
 - Use clippy, rustfmt after coding, fix all warnings.
+- When encountered ambiguities, contradictions or multiple way for solution ask the user.
 Make sure that all XDG_* envs point to testing directory when performing manual testing.
 Otherwise dfm could damage user's files in home directory.
 
