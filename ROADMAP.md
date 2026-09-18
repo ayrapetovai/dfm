@@ -2,23 +2,7 @@
 
 ## Implement features
 
-1. At `dfm init`, if the target-local ignore_file
-   (`$XDG_STATE_HOME/dfm/ignore_file`) does not exist, create it
-   and seed it with default records.
-   Existing ignore_file (even an empty one) is never modified.
-   For each candidate, expand `~`, canonicalize (resolve symlinks,
-   component-wise) both the candidate path and the target directory,
-   and if the candidate path is a prefix of the target directory path,
-   add one record — the top-level component of the candidate path
-   as unanchored `regex::escape` (e.g. `\.cache`, `\.local`).
-   Candidates: `\.cache` ← `$XDG_CACHE_HOME`,
-   `\.cargo` ← `$HOME/.cargo`, `\.npm` ← `$HOME/.npm`,
-   `\.state` ← `$XDG_STATE_HOME`, `\.local` ← `$XDG_DATA_HOME`
-   (covers `.local/share` too, since unanchored patterns match at any depth).
-
 2. Bug: 'dfm ignore ~/abc' also makes '~/abcd' ignored, no only in home directory.
-
-3. Rename `.dfm_ignore_file` living in source to `.dfmignore`.
 
 4. Auto-encryption by private directories:
    when adding a file, if any directory component of its path —
