@@ -6,8 +6,8 @@ use std::process::{Command, Stdio};
 use log::{debug, info};
 
 use super::{
-    DirGuard, SourceVariant, cli_path_to_abs, create_private_temp_dir, get_sync_time,
-    matches_source_ignore_regex, msg_dry_run, print_paged, read_symlink_pointer,
+    DirGuard, SourceVariant, cli_path_in_scope, cli_path_to_abs, create_private_temp_dir,
+    get_sync_time, matches_source_ignore_regex, msg_dry_run, print_paged, read_symlink_pointer,
     resolve_source_variant, resolve_tool_command, run_tool, source_rel_to_target_abs,
     split_command, state_key_for, update_sync_state, write_stdout,
 };
@@ -30,11 +30,13 @@ pub fn diff_command(
     args: DiffArgs,
     state: &StateObject,
 ) -> Result<(), DfmError> {
-    let DiffArgs { paths, all: _all } = args;
+    let DiffArgs { paths, all } = args;
     // With no explicit paths, batch-diff every modified file (`--all`, the
-    // default). Explicit paths keep the per-path interactive behavior below.
+    // default). Explicit paths keep the per-path interactive behavior below,
+    // except directory paths (and every path under `--all`), which batch-diff
+    // the modified files inside them.
     if paths.is_none() {
-        return diff_all(settings, xdg, state);
+        return diff_all(settings, xdg, state, &[]);
     }
     let Some(paths) = paths else {
         return Ok(());
@@ -46,7 +48,25 @@ pub fn diff_command(
     let target_ignore_file_path = calc_local_ignore_file(xdg)?;
     let target_ignore_regex = load_ignore_regex(&target_ignore_file_path)?;
 
+    // Partition the given paths into batch scopes (directories always cover
+    // their whole subtree; `--all` also turns plain files into scopes) and the
+    // remaining plain files that keep the interactive per-path tool.
+    let mut scopes: Vec<PathBuf> = Vec::new();
+    let mut per_path: Vec<PathBuf> = Vec::new();
     for path in &paths {
+        if all || cli_path_to_abs(path)?.is_dir() {
+            scopes.push(resolve_batch_scope(
+                path,
+                &target_dir_abs_path,
+                &source_dir_abs_path,
+                settings,
+            )?);
+        } else {
+            per_path.push(path.clone());
+        }
+    }
+
+    for path in &per_path {
         match diff_one_path(
             settings,
             state,
@@ -62,7 +82,39 @@ pub fn diff_command(
             Err(e) => return Err(e),
         }
     }
+
+    if !scopes.is_empty() {
+        diff_all(settings, xdg, state, &scopes)?;
+    }
     Ok(())
+}
+
+/// Resolve a batch scope (a `--all` scope or a directory) to an absolute
+/// target-side root. The path must exist and lie inside the target or the
+/// source directory; a source-side path maps back to the target file or
+/// directory it manages, so `dotfiles/sub` scopes the same entries as
+/// `<target>/.sub` would.
+fn resolve_batch_scope(
+    path: &Path,
+    target_dir_abs: &Path,
+    source_dir_abs: &Path,
+    settings: &Settings,
+) -> Result<PathBuf, DfmError> {
+    let abs = cli_path_in_scope(path, target_dir_abs, source_dir_abs)?;
+    if !abs.exists() {
+        return Err(DfmError::other(format!(
+            "path does not exist: {}",
+            abs.display()
+        )));
+    }
+    if abs.starts_with(source_dir_abs) {
+        let source_rel = file_path_relative_to(&abs, source_dir_abs);
+        let (_, target_abs) =
+            source_rel_to_target_abs(&source_rel.to_string_lossy(), target_dir_abs, settings);
+        Ok(target_abs)
+    } else {
+        Ok(abs)
+    }
 }
 
 /// What a user-provided path resolves to: a diffable pair of regular files, a
@@ -390,11 +442,20 @@ fn run_diff(
     Ok(())
 }
 
-/// Batch-diff every modified managed file (`diff --all`, the default when no
-/// paths are given). For each modified entry the matching non-interactive diff
-/// template runs with its stdout captured, all files' diffs are concatenated,
-/// and the whole report goes through the same pager `status` uses.
-fn diff_all(settings: &Settings, xdg: &Xdg, state: &StateObject) -> Result<(), DfmError> {
+/// Batch-diff every modified managed file, or only the files inside the given
+/// scopes. With an empty `scopes` slice the whole managed tree is diffed;
+/// otherwise only entries whose target path lies at or under a scope root are
+/// considered (a directory scope covers its whole subtree, and a plain file
+/// scope covers just that file). For each considered entry the matching
+/// non-interactive diff template runs with its stdout captured, all files'
+/// diffs are concatenated, and the whole report goes through the same pager
+/// `status` uses.
+fn diff_all(
+    settings: &Settings,
+    xdg: &Xdg,
+    state: &StateObject,
+    scopes: &[PathBuf],
+) -> Result<(), DfmError> {
     let (target_dir_abs, source_dir_abs) = calc_working_dir_paths(settings)?;
 
     let target_ignore_regex = load_ignore_regex(&calc_local_ignore_file(xdg)?)?;
@@ -444,6 +505,11 @@ fn diff_all(settings: &Settings, xdg: &Xdg, state: &StateObject) -> Result<(), D
 
         let source_abs = remove_dots_from_path(&source_dir_abs.join(source_rel));
         let target_abs = remove_dots_from_path(&target_dir_abs.join(&target_rel));
+
+        // Restrict to the requested scopes (empty slice = whole managed tree).
+        if !scopes.is_empty() && !scopes.iter().any(|root| target_abs.starts_with(root)) {
+            continue;
+        }
 
         // Both sides must be present and readable for a diff. A side that
         // blocks reading (e.g. a permission error) is reported like the

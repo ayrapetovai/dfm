@@ -120,7 +120,7 @@ Runs the merge tool on conflicting files. Without args: only `BothModified` file
 dfm diff [PATH...] [-a|--all] [-e|--editable]
 ```
 
-Shows changes between a target file and its source; **read-only** except `--editable`. Without arguments (or with `-a`), batch mode diffs every *modified* managed file using the non-interactive `diff_all_tool_command_target`/`..._source` templates, concatenates the output, and pages it like `status`; up-to-date and never-synced files produce nothing. Explicit `PATH`s always use the per-path mode (`diff_tool_command`). Per path it reports:
+Shows changes between a target file and its source; **read-only** except `--editable`. Without arguments (or with `-a`), batch mode diffs every *modified* managed file using the non-interactive `diff_all_tool_command_target`/`..._source` templates, concatenates the output, and pages it like `status`; up-to-date and never-synced files produce nothing. An explicit `PATH` that is a **directory** also runs that batch mode, restricted to the modified files inside it (the whole subtree); `-a` alongside `PATH`s makes every given path — plain files included — a batch scope. With `-a`, a missing or out-of-scope `PATH` is an error like `status <path>`. Plain file `PATH`s without `-a` use the per-path mode (`diff_tool_command`). Per path it reports:
 
 | Situation | Output |
 |---|---|
