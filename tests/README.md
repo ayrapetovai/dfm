@@ -3,7 +3,7 @@
 These are **shell integration tests** for the `dfm` binary. Each file in this
 directory named `test*.sh` is one test case; the harness discovers them
 automatically, so adding a new `test_*.sh` file is enough to run it. There are
-currently **232** test files (the launcher prints the exact count it found).
+currently **234** test files (the launcher prints the exact count it found).
 
 ## Requirements
 
@@ -141,6 +141,12 @@ Follow these rules when writing or reviewing tests:
 ```shell
 # full run (quiet)
 bash tests/launcher.sh -q
-# single test with trace
+# a single test with trace
 bash tests/launcher.sh test_diff_all.sh
+# several tests at once (quiet); paths are resolved against the tests dir
+bash tests/launcher.sh -q test_diff_all.sh test_diff_no_args.sh tests/test_diff_all_directory.sh
 ```
+
+`test*.sh` files can be passed with or without the `tests/` path prefix; an
+argument naming no known test file aborts the run before any test starts.
+Test files are executed in the order given.

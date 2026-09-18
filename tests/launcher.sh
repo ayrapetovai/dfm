@@ -17,7 +17,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-TEST_FILE_TO_RUN="${1:-}"
+# Remaining positional arguments are the test files to run; empty = all tests.
+TEST_FILES=( "$@" )
 
 PROGRAMM_NAME_IN_SHELL="dfm"
 EXECUTABLE_NAME="dfm"
@@ -154,15 +155,31 @@ export -f assert_encrypted
 readonly TMP_ROOT=$(mktemp -d)
 trap 'rm -rf -- "$TMP_ROOT"' EXIT
 
-TEST_FILE_TO_RUN_ABS=
-if [ -n "$TEST_FILE_TO_RUN" ]; then
-  TEST_FILE_TO_RUN_ABS=$(readlink -f "$TEST_FILE_TO_RUN")
-fi
-
 TEST_CASES=$(find "$TESTS_DIR" -type f -name 'test*.sh')
 TEST_COUNT=$(echo "$TEST_CASES" | wc -l)
-if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
-  echo "running 1 test (of $TEST_COUNT)"
+
+# Resolve each requested test file to an absolute path inside the tests dir:
+# a path as given, or a bare file name against the tests dir. A request that
+# names no known test file aborts before anything runs.
+REQUESTED=()
+for test_file in "${TEST_FILES[@]}"; do
+  if [ -f "$test_file" ]; then
+    abs_test_file=$(readlink -f -- "$test_file")
+  elif [ -f "$TESTS_DIR/$test_file" ]; then
+    abs_test_file=$(readlink -f -- "$TESTS_DIR/$test_file")
+  else
+    echo "test file not found: $test_file" >&2
+    echo "available tests:" >&2
+    echo "$TEST_CASES" >&2
+    exit 1
+  fi
+  REQUESTED+=("$abs_test_file")
+done
+
+if [ ${#REQUESTED[@]} -gt 0 ]; then
+  noun="tests"
+  [ ${#REQUESTED[@]} -eq 1 ] && noun="test"
+  echo "running ${#REQUESTED[@]} $noun (of $TEST_COUNT)"
 else
   echo "running $TEST_COUNT tests"
 fi
@@ -223,11 +240,16 @@ run_test() {
   return $rc
 }
 
-if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
-  test_name="$(basename $TEST_FILE_TO_RUN_ABS)"
+# Run one test file (absolute path inside the tests dir) and report its result.
+# `run_test` must be called with errexit off: a failing test is a reported
+# failure, not an abort of the whole run.
+report_run() {
+  local test_file="$1"
+  local test_name
+  test_name="$(basename "$test_file")"
   set +e
-  run_test "$TEST_FILE_TO_RUN_ABS"
-  rc=$?
+  run_test "$test_file"
+  local rc=$?
   set -e
   if [ $rc -eq 0 ]; then
     echo "---- $test_name ✅"
@@ -236,22 +258,15 @@ if [ -n "$TEST_FILE_TO_RUN_ABS" ]; then
     echo "---- $test_name ❌"
     FAILED_COUNTER=$((FAILED_COUNTER + 1))
   fi
+}
+
+if [ ${#REQUESTED[@]} -gt 0 ]; then
+  for test_case in "${REQUESTED[@]}"; do
+    report_run "$test_case"
+  done
 else
   for test_case in $TEST_CASES; do
-    test_name="$(basename $test_case)"
-
-    # launch test
-    set +e
-    run_test "$test_case"
-    rc=$?
-    set -e
-    if [ $rc -eq 0 ]; then
-      echo "---- $test_name ✅"
-      SUCCEEDED_COUNTER=$((SUCCEEDED_COUNTER + 1))
-    else
-      echo "---- $test_name ❌"
-      FAILED_COUNTER=$((FAILED_COUNTER + 1))
-    fi
+    report_run "$test_case"
   done
 fi
 

@@ -13,7 +13,7 @@ Syncs dotfiles between a **target** dir (usually `$HOME`) and a **source** dir (
 ```bash
 export PATH="$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"   # /usr/bin/cargo proxy broken
 cargo build && cargo test && cargo clippy && cargo fmt --check   # 46 unit (37 lib + 9 status-collapse); debug bin target/debug/dfm; build.rs renders dfm.1
-bash tests/launcher.sh [-q] [test_x.sh]   # 234 shell integration tests; keep clippy + fmt clean
+bash tests/launcher.sh [-q] [test_x.sh ...]   # 234 shell integration tests; several files allowed; keep clippy + fmt clean
 just release [<major|minor|patch>]        # scripts/release.sh; no arg = re-release current version; gh release draft
 just install-bin                          # install -D -m 0755 target/release/dfm /usr/bin/dfm (needs root)
 ```
@@ -75,7 +75,7 @@ Self-contained **DFMENC** blob (`FORMAT_VERSION = 3`). Header: Argon2id `(m_cost
 - **Root guard** (lib.rs, first in `main_logic`): hand-rolled externs `getuid`/`geteuid` via `#[link(name="c")] unsafe extern` (edition 2024, no new dep). Refuse iff `euid==0 && (ruid!=0 || SUDO_USER non-empty)` — genuine root allowed. Error `InvalidInput`, exit 1; `--help`/`--version` still work. Unit `test_refuse_root_access_matrix`; no shell test. Suite counts: 234 shell, 46 unit (37 lib + 9 status-collapse).
 - Installed `/usr/bin/dfm` predates the root guard; test euid-0 with `unshare -r`, never sudo.
 ## Testing conventions (launcher.sh)
-Every test: subshell `set -eEu -x`, fresh temp `$HOME`, sandbox HOME + all four XDG vars (`mkdir -p`), prefers debug binary, never reads stdin. Helpers: `dfm()`, `write <content> <path>`, `assert`/`assert_succ`/`assert_fail`, `run_fail` (captures combined output into `$FAIL_OUTPUT`), `assert_source`/`assert_no_source`, `assert_content_eq`, `add_file`, `assert_encrypted` (`$PASSWORD`), `uuid`.
+Every test: subshell `set -eEu -x`, fresh temp `$HOME`, sandbox HOME + all four XDG vars (`mkdir -p`), prefers debug binary, never reads stdin. Selection: no args = all; one or more `test*.sh` args = only those (bare names resolved against `tests/`, unknown name aborts before running; run order = given order). Helpers: `dfm()`, `write <content> <path>`, `assert`/`assert_succ`/`assert_fail`, `run_fail` (captures combined output into `$FAIL_OUTPUT`), `assert_source`/`assert_no_source`, `assert_content_eq`, `add_file`, `assert_encrypted` (`$PASSWORD`), `uuid`.
 **Grep rule**: positive → plain pipeline. Negative → **never** `! cmd | grep -qF` (POSIX `-e` skips `!`-inverted → false-pass); capture first, then grep only: `RES=$(...); assert_fail grep -qF "pat" <<<"$RES"`. Expected failures → `run_fail dfm ...` then `assert_succ grep -qF "msg" <<<"$FAIL_OUTPUT"`. Under `set -e`, rescue `$(… dfm …)` non-zero rc with `|| true`. Files starting with `-`/`+` need `grep -qF -- "-$VAR"`. Redirect stderr to a file to check it.
 
 ## Manual testing (without launcher.sh) — caveats
