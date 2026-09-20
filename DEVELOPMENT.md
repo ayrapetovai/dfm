@@ -53,7 +53,7 @@ recipes above, by the scripts they invoke, or by `build.rs`:
 
 Install https://rust-lang.org/tools/install/
 
-```shell
+```sh
 cargo install cargo-aur
 ```
 
@@ -76,7 +76,7 @@ installs to `/usr/share/man/man1/dfm.1`.
 
 ### Create a package from sources
 
-```shell
+```sh
 # from project root
 cargo aur
 cd ./target/cargo-aur
@@ -87,7 +87,7 @@ The package will appear in ./target/cargo-aur
 
 ### Install or remove the package
 
-```shell
+```sh
 # install
 sudo pacman -U dfm-bin-0.0.0-1-x86_64.pkg.tar.zst
 
@@ -97,14 +97,14 @@ sudo pacman -R dfm-bin
 
 ### Install the binary to /usr/bin/dfm with `install`
 
-```shell
+```sh
 just install-bin    # needs root: sudo just install-bin
 ```
 
 Builds a release binary and installs it to `/usr/bin/dfm` with the `install`
 utility (mode 0755), without building a package:
 
-```shell
+```sh
 cargo build --release
 install -D -m 0755 target/release/dfm /usr/bin/dfm
 ```
@@ -116,7 +116,7 @@ The man page is not installed by this task — use the pacman package
 
 Rise version in Cargo.toml, than create tag and draft release.
 
-```shell
+```sh
 export NEW_TAG=0.0.0
 export NEW_TAGV=v"$NEW_TAG"
 cargo aur                          # builds release + target/release/dfm.1, then tarball
@@ -133,4 +133,8 @@ release for `makepkg` to download it.
 
 At the release page edit the release notes: add feature/fix list.
 Than publish the release.
+
+# After completing a task
+- check if README.md needs to be updated.
+
 
