@@ -147,6 +147,12 @@ pub fn init_command(settings: &Settings, xdg: &Xdg, args: InitArgs) -> Result<()
     };
 
     debug!("using target directory {:?}", target_abs_path);
+
+    // The source and target must be distinct directories: with equal paths,
+    // every later "remove the source" (`purge`, `forget --force`) would wipe
+    // the whole target directory.
+    reject_equal_dirs(&source_dir_path, &target_abs_path)?;
+
     let state_file_path = calc_state_file_path(xdg)?;
     if state_file_path.exists() {
         debug!("state file already exists, no need to create");

@@ -29,6 +29,14 @@ pub fn purge_command(
         ref force,
     } = args;
 
+    // Refuse to run when the source and target directories are the same:
+    // removing the "source" would wipe the whole target directory. This must
+    // be a hard error, not the graceful "could not be resolved" skip below,
+    // because both paths ARE resolvable — they are just equal.
+    if let Ok((target_abs, source_abs)) = calc_working_dir_paths_unchecked(settings) {
+        reject_equal_dirs(&source_abs, &target_abs)?;
+    }
+
     let state_directory_path = match calc_state_directory_path(xdg) {
         Ok(path) => Some(path),
         Err(e) => {

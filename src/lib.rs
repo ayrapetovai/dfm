@@ -990,6 +990,8 @@ pub fn calc_working_dir_paths(settings: &Settings) -> Result<(PathBuf, PathBuf),
         )));
     }
 
+    reject_equal_dirs(&source_dir_abs_path, &target_dir_abs_path)?;
+
     Ok((target_dir_abs_path, source_dir_abs_path))
 }
 
@@ -1036,6 +1038,20 @@ pub fn calc_working_dir_paths_unchecked(
     };
 
     Ok((target_dir_abs_path, source_dir_abs_path))
+}
+
+/// Refuse equal absolute source and target directories. With equal
+/// directories, "remove the source" (`purge`, `forget --force`) would delete
+/// the whole target directory instead of the source one, and every copy would
+/// target itself, so no command may proceed on such a configuration.
+pub fn reject_equal_dirs(source_dir_abs: &Path, target_dir_abs: &Path) -> Result<(), DfmError> {
+    if remove_dots_from_path(source_dir_abs) == remove_dots_from_path(target_dir_abs) {
+        return Err(DfmError::InvalidInput(format!(
+            "source directory {:?} and target directory {:?} are the same directory; refusing to proceed",
+            source_dir_abs, target_dir_abs
+        )));
+    }
+    Ok(())
 }
 
 // Single-line action progress indicator
@@ -2051,6 +2067,45 @@ fn test_refuse_root_access_matrix() {
     // Only the effective uid grants privileges; a process owned by root but
     // running without root privileges is not refused.
     assert!(!should_refuse_root_access(0, 1000, None));
+}
+
+#[test]
+fn test_reject_equal_dirs() {
+    let dotfiles = PathBuf::from("/home/user/dotfiles");
+    let home = PathBuf::from("/home/user");
+
+    // Identical paths are refused.
+    let err = reject_equal_dirs(&dotfiles, &dotfiles).unwrap_err();
+    assert!(err.to_string().contains("same directory"));
+
+    // Lexically different spellings of the same directory are refused too.
+    let err = reject_equal_dirs(&dotfiles, &PathBuf::from("/home/user/dotfiles/.")).unwrap_err();
+    assert!(err.to_string().contains("same directory"));
+    let err =
+        reject_equal_dirs(&dotfiles, &PathBuf::from("/home/user/dotfiles/sub/..")).unwrap_err();
+    assert!(err.to_string().contains("same directory"));
+
+    // Distinct directories are allowed.
+    assert!(reject_equal_dirs(&dotfiles, &home).is_ok());
+    assert!(reject_equal_dirs(&dotfiles, &PathBuf::from("/home/user/dotfiles2")).is_ok());
+}
+
+#[test]
+fn test_calc_working_dir_paths_rejects_equal_dirs() {
+    let dir = std::env::temp_dir().join(format!("dfm_equal_dirs_test_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let default = create_default_settings();
+    let state = StateObject::new(dir.clone(), dir.clone());
+    let settings = merge_settings(&default, &None, Some(&state));
+
+    let err = calc_working_dir_paths(&settings).unwrap_err();
+    assert!(
+        err.to_string().contains("same directory"),
+        "unexpected error: {err}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[cfg(test)]
