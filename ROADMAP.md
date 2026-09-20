@@ -18,6 +18,13 @@
 
 ## Fix Bugs
 
+### M0 - Impossible to ignore file with mutating name
+The file have name with some base64 encoded thing: `copyq_tab_JmNsaXBib2FyZA==.dat`.
+It is impossible to add it to ignore list with commands:
+`dfm ignore copyq_tab_.+\.dat` and as a regexp `dfm ignore -p copyq_tab_.+\.dat`.
+But it is possible manually with adding a line `\.config/copyq/copyq_tab.+dat` to the ignore_file.
+It must be possible to do via CLI.
+
 ### M1 — Encrypted-file diff buffers the entire plaintext in RAM
 The crypt layer is deliberately streaming (peak memory `O(chunk)`), but every
 diff path breaks that promise:
