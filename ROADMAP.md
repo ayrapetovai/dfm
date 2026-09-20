@@ -2,9 +2,7 @@
 
 ## Implement features
 
-2. Bug: 'dfm ignore ~/abc' also makes '~/abcd' ignored, no only in home directory.
-
-4. Auto-encryption by private directories:
+1. Auto-encryption by private directories:
    when adding a file, if any directory component of its path —
    from the target-root downward to the file itself — has mode 700 or stricter
    (`mode & 0077 == 0`, group and others have no permissions),
@@ -17,9 +15,6 @@
    The rule is symmetric — `pull` re-evaluates it against the source-side path,
    and an already-encrypted managed file whose source-side path
    no longer satisfies the rule is decrypted in place during `pull`.
-
-5. Command 'dfm diff -a path', if path is directory, must show difference of all modified files,
-   in that path.
 
 ## Considerations
 - what if source file belongs to the user other than puller?
