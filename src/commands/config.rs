@@ -22,6 +22,10 @@ pub fn config_command(args: ConfigArgs, path_to_config_file: &PathBuf) -> Result
         default,
         dry_run,
     } = args;
+    debug!(
+        "config: get {:?}, set {:?}, list {}, default {}, dry run {}",
+        get, set, list, default, dry_run
+    );
 
     if default {
         // `--default` is exclusive with `--get`/`--set`/`--list` (clap), so it

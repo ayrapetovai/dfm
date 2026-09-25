@@ -50,7 +50,7 @@ use std::fs;
 use std::io::{IsTerminal, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use dfm::*;
@@ -646,26 +646,42 @@ pub(crate) fn run_merge(
     Ok(())
 }
 
-/// Spawn a tool with args and wait for it, mapping a missing executable to a
-/// distinct `NotFound` error (the configure-the-settings hint) and any other
-/// spawn failure to `Io`. Shared by `run_merge` and every diff mode so tool
+/// Spawn a tool with args, mapping a missing executable to a distinct
+/// `NotFound` error (the configure-the-settings hint) and any other spawn
+/// failure to `Io`. Shared by `run_merge` and every diff mode so tool
 /// spawning stays in one place; the `tool_label` keeps the error message
-/// precise ("merge tool", "diff tool", ...).
+/// precise ("merge tool", "diff tool", ...). The caller chooses whether the
+/// tool's stdout is inherited or captured.
+pub(crate) fn spawn_tool(
+    prog: &str,
+    args: &[String],
+    tool_label: &str,
+    stdout: Stdio,
+) -> Result<std::process::Child, DfmError> {
+    match Command::new(prog)
+        .args(args)
+        .stdout(stdout)
+        .stderr(Stdio::inherit())
+        .spawn()
+    {
+        Ok(child) => Ok(child),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(DfmError::NotFound(format!(
+            "{} tool {} not found",
+            tool_label, prog
+        ))),
+        Err(e) => Err(DfmError::Io(e)),
+    }
+}
+
+/// Spawn a tool with args and wait for it, letting it inherit the process's
+/// streams. A thin wrapper over [`spawn_tool`] for the tools whose output goes
+/// straight to the terminal.
 pub(crate) fn run_tool(
     prog: &str,
     args: &[String],
     tool_label: &str,
 ) -> Result<std::process::ExitStatus, DfmError> {
-    let mut child = match std::process::Command::new(prog).args(args).spawn() {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(DfmError::NotFound(format!(
-                "{} tool {} not found",
-                tool_label, prog
-            )));
-        }
-        Err(e) => return Err(DfmError::Io(e)),
-    };
+    let mut child = spawn_tool(prog, args, tool_label, Stdio::inherit())?;
     child.wait().map_err(DfmError::Io)
 }
 

@@ -1,3 +1,5 @@
+use log::debug;
+
 use std::path::PathBuf;
 
 use crate::DfmError;
@@ -15,6 +17,7 @@ pub fn paths_command(
     path_to_state_file: &Option<PathBuf>,
 ) -> Result<(), DfmError> {
     let PathsArgs {} = args;
+    debug!("printing resolved paths");
     let (target_dir_abs_path, ref source_dir_abs_path) =
         calc_working_dir_paths_unchecked(settings)?;
     println!("Source: {}", source_dir_abs_path.display());

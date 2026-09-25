@@ -1,35 +1,34 @@
 use crate::DfmError;
-use log::debug;
+use log::{debug, warn};
 use std::fs;
 use std::io::{BufWriter, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use chacha20poly1305::XChaCha20Poly1305;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{Settings, calc_working_dir_paths_unchecked, file_path_relative_to, io_err};
 
 // Password cache — ask only once per `dfm` process
 //
-// SECURITY NOTE: the passphrase lives in a plain `String` for the entire
-// `dfm` process and is never zeroized on drop (Rust `String` does no explicit
-// zeroization). This is an accepted trade-off for a short-lived CLI: the
-// password is already resident in process memory while it is read from the
-// subprocess stdout / tty and passed to the cipher provider, so the cache adds
-// no new exposure beyond that. If this ever became a long-lived daemon or a
-// library, migrate to `zeroize`/`secrecy` wrapping instead of `String`.
+// The cache holds the passphrase for the whole `dfm` process, so it is wrapped
+// in `Zeroizing`: every copy (cache, prompt result, subprocess stdout) is wiped
+// on drop instead of being left in freed heap memory.
 
-static PASSWORD_CACHE: Mutex<Option<String>> = Mutex::new(None);
+type CachedPassword = Zeroizing<String>;
 
-fn get_cached_password() -> Option<String> {
+static PASSWORD_CACHE: Mutex<Option<CachedPassword>> = Mutex::new(None);
+
+fn get_cached_password() -> Option<CachedPassword> {
     PASSWORD_CACHE.lock().ok().and_then(|c| c.clone())
 }
 
-fn set_cached_password(pw: String) {
+fn set_cached_password(password: CachedPassword) {
     if let Ok(mut cache) = PASSWORD_CACHE.lock() {
-        *cache = Some(pw);
+        *cache = Some(password);
     }
 }
 
@@ -41,11 +40,14 @@ fn clear_password_cache() {
 
 /// Obtain the encryption/decryption password.  Uses the in-process cache
 /// on subsequent calls so that the user is prompted only once per launch.
-pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
+///
+/// An empty password is refused: it would derive a perfectly valid key and
+/// produce an archive that looks protected but is not.
+pub fn obtain_password(settings: &Settings) -> Result<CachedPassword, DfmError> {
     // Check cache first
-    if let Some(pw) = get_cached_password() {
+    if let Some(password) = get_cached_password() {
         debug!("using cached password");
-        return Ok(pw);
+        return Ok(password);
     }
 
     debug!(
@@ -84,17 +86,30 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
         // Most password providers (e.g. `security find-generic-password`,
         // `pass`) emit a trailing newline on stdout. Trim a single trailing
         // line terminator so the stored password matches what the user typed.
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        // The raw provider output is wiped before it is dropped.
+        let mut raw_stdout = Zeroizing::new(output.stdout);
+        let stdout = String::from_utf8_lossy(&raw_stdout);
         let trimmed = stdout.trim_end_matches(['\r', '\n']);
-        trimmed.to_string()
+        let password = Zeroizing::new(trimmed.to_string());
+        raw_stdout.zeroize();
+        password
     } else {
         debug!("using default procedure to get password");
         eprint!(": ");
         let _ = std::io::stderr().flush();
-        let pwd = default_read_password()?;
+        let password = Zeroizing::new(default_read_password()?);
         eprintln!();
-        pwd
+        password
     };
+
+    // Checked without modifying the password: leading/trailing spaces are
+    // legitimate password characters, but a provider that yields only
+    // whitespace has failed rather than supplied one.
+    if password.trim().is_empty() {
+        return Err(DfmError::InvalidInput(
+            "the password must not be empty or whitespace".into(),
+        ));
+    }
 
     // Cache for subsequent calls
     set_cached_password(password.clone());
@@ -151,27 +166,25 @@ pub fn obtain_password(settings: &Settings) -> Result<String, DfmError> {
 // authentication, and a wrong password produces a tag mismatch on the first
 // chunk that dfm uses to detect/retry. The KDF parameters travel in the
 // header, so archives keep decrypting even when the code defaults change.
+//
+// KNOWN METADATA LEAK: `plaintext_len` and `chunk_size` are stored in
+// cleartext, so anyone holding an archive learns its exact plaintext size and
+// chunk count. This is structural, not incidental: the final-chunk flag feeds
+// both the per-chunk nonce and the AAD, so the total length must be known
+// before the last chunk can be authenticated, which is what makes single-pass
+// streaming decryption possible. Length is therefore the one property that
+// cannot be hidden without giving up streaming.
 
 const MAGIC: &[u8; 7] = b"DFMENC\x00";
 const FORMAT_VERSION: u8 = 3;
 
-// Argon2id cost parameters. Release builds use 64 MiB / 3 iterations / 4
-// lanes so each password guess costs ~64 MiB of memory and measurable CPU.
-// Debug builds (cargo build / cargo test) use weak params so the encryption
-// tests run fast. The header records whichever params were used, so archives
-// stay self-describing and decryptable across build profiles.
-#[cfg(debug_assertions)]
-const KDF_M_COST_KIB: u32 = 8192;
-#[cfg(debug_assertions)]
-const KDF_T_COST: u32 = 1;
-#[cfg(debug_assertions)]
-const KDF_P_COST: u32 = 1;
-
-#[cfg(not(debug_assertions))]
+// Argon2id cost parameters. They are the same for every build profile: the
+// parameters are written into the header, so an archive made by a debug build
+// would stay weak forever and nothing in the container marks it as such. Tests
+// pay the real cost (~0.1 s per operation) rather than silently producing
+// archives that a release build would never create.
 const KDF_M_COST_KIB: u32 = 65536;
-#[cfg(not(debug_assertions))]
 const KDF_T_COST: u32 = 3;
-#[cfg(not(debug_assertions))]
 const KDF_P_COST: u32 = 4;
 
 const SALT_LEN: usize = 16;
@@ -200,6 +213,30 @@ const MAX_STREAM_CHUNKS: u64 = 1 << 56;
 const MAX_KDF_M_COST_KIB: u32 = 16 * 1024 * 1024; // 16 GiB
 const MAX_KDF_T_COST: u32 = 10;
 const MAX_KDF_P_COST: u32 = 1024;
+
+// Lower bounds, the mirror image of the caps above. A blob below them was
+// written with a cost too low to resist guessing (older `dfm` builds keyed the
+// parameters to the build profile, so every archive they produced carries
+// 8 MiB / t1 / p1 and falls out of a small wordlist in minutes). Such a blob is
+// still readable — refusing would lock the owner out of their own files — but
+// the weakness is reported.
+//
+// Calibration: the floors are set *just below* what this build writes, so the
+// in-force parameters always pass and the legacy weak profile always trips the
+// warning. `p_cost` is floored at 1 because a single lane is a legitimate
+// low-memory choice, not a weakness; `t_cost` is floored at 2 because one
+// iteration removes the time-memory cost the KDF exists to impose.
+const MIN_KDF_M_COST_KIB: u32 = 32 * 1024; // 32 MiB
+const MIN_KDF_T_COST: u32 = 2;
+const MIN_KDF_P_COST: u32 = 1;
+
+/// The reduced cost older builds keyed to their debug profile, kept as a named
+/// value so the warning floor and the legacy-blob test agree on it.
+const LEGACY_DEBUG_KDF: KdfCost = KdfCost {
+    m_cost_kib: 8192,
+    t_cost: 1,
+    p_cost: 1,
+};
 
 // header: m(4) t(4) p(4) salt(16) base_nonce(24) chunk_size(4) plaintext_len(8)
 const HEADER_FIXED: usize = 12 + SALT_LEN + NONCE_LEN + 4 + 8;
@@ -288,19 +325,22 @@ fn take_string(data: &[u8], pos: &mut usize) -> Result<String, DfmError> {
 }
 
 /// Derive the symmetric key from the password exactly as the archive declares.
+/// Derive the 32-byte content key. The result is `Zeroizing` because the key
+/// is the value an attacker actually wants: wiping the password while leaving
+/// the key it produced in freed stack memory would defeat the point.
 fn derive_key(
     password: &str,
     salt: &[u8],
     m_cost: u32,
     t_cost: u32,
     p_cost: u32,
-) -> Result<[u8; KEY_LEN], DfmError> {
+) -> Result<Zeroizing<[u8; KEY_LEN]>, DfmError> {
     use argon2::{Algorithm, Argon2, Params, Version};
     let params = Params::new(m_cost, t_cost, p_cost, Some(KEY_LEN)).map_err(DfmError::other)?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut key = [0u8; KEY_LEN];
+    let mut key = Zeroizing::new([0u8; KEY_LEN]);
     argon
-        .hash_password_into(password.as_bytes(), salt, &mut key)
+        .hash_password_into(password.as_bytes(), salt, key.as_mut())
         .map_err(DfmError::other)?;
     Ok(key)
 }
@@ -355,10 +395,56 @@ fn encrypt_stream(
     metadata_prefix: &[u8],
     out: &mut impl Write,
 ) -> Result<(), DfmError> {
+    let mut salt = [0u8; SALT_LEN];
+    let mut base_nonce = [0u8; NONCE_LEN];
+    {
+        use rand::RngCore;
+        rand::rng().fill_bytes(&mut salt);
+        rand::rng().fill_bytes(&mut base_nonce);
+    }
+    encrypt_stream_seeded(
+        password,
+        input,
+        content_len,
+        metadata_prefix,
+        out,
+        KdfCost {
+            m_cost_kib: KDF_M_COST_KIB,
+            t_cost: KDF_T_COST,
+            p_cost: KDF_P_COST,
+        },
+        &salt,
+        &base_nonce,
+    )
+}
+
+/// Argon2id cost parameters, carried together so the encrypt path and its
+/// tests agree on one value set.
+#[derive(Clone, Copy)]
+struct KdfCost {
+    m_cost_kib: u32,
+    t_cost: u32,
+    p_cost: u32,
+}
+
+/// The body of [`encrypt_stream`], with the cost parameters and the random
+/// material supplied by the caller. Production callers always pass
+/// [`KDF_M_COST_KIB`] and friends plus fresh randomness; only tests pass a
+/// reduced cost, to build a legacy blob that still authenticates.
+#[allow(clippy::too_many_arguments)]
+fn encrypt_stream_seeded(
+    password: &str,
+    input: &mut impl Read,
+    content_len: u64,
+    metadata_prefix: &[u8],
+    out: &mut impl Write,
+    cost: KdfCost,
+    salt: &[u8; SALT_LEN],
+    base_nonce: &[u8; NONCE_LEN],
+) -> Result<(), DfmError> {
     use chacha20poly1305::aead::AeadInPlace;
     use chacha20poly1305::aead::KeyInit;
     use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-    use rand::RngCore;
 
     if metadata_prefix.len() > CHUNK_SIZE as usize {
         return Err(DfmError::InvalidData(format!(
@@ -369,19 +455,14 @@ fn encrypt_stream(
     }
     let plaintext_len = metadata_prefix.len() as u64 + content_len;
 
-    let mut salt = [0u8; SALT_LEN];
-    let mut base_nonce = [0u8; NONCE_LEN];
-    rand::rng().fill_bytes(&mut salt);
-    rand::rng().fill_bytes(&mut base_nonce);
-
-    let key = derive_key(password, &salt, KDF_M_COST_KIB, KDF_T_COST, KDF_P_COST)?;
+    let key = derive_key(password, salt, cost.m_cost_kib, cost.t_cost, cost.p_cost)?;
 
     let mut header: Vec<u8> = Vec::with_capacity(HEADER_FIXED);
-    put_u32(&mut header, KDF_M_COST_KIB);
-    put_u32(&mut header, KDF_T_COST);
-    put_u32(&mut header, KDF_P_COST);
-    header.extend_from_slice(&salt);
-    header.extend_from_slice(&base_nonce);
+    put_u32(&mut header, cost.m_cost_kib);
+    put_u32(&mut header, cost.t_cost);
+    put_u32(&mut header, cost.p_cost);
+    header.extend_from_slice(salt);
+    header.extend_from_slice(base_nonce);
     put_u32(&mut header, CHUNK_SIZE);
     header.extend_from_slice(&plaintext_len.to_le_bytes());
 
@@ -390,7 +471,7 @@ fn encrypt_stream(
     out.write_all(&(header.len() as u32).to_le_bytes())?;
     out.write_all(&header)?;
 
-    let cipher = XChaCha20Poly1305::new_from_slice(&key).map_err(DfmError::other)?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref()).map_err(DfmError::other)?;
 
     let mut buf = vec![0u8; CHUNK_SIZE as usize];
     let mut consumed = 0u64;
@@ -418,7 +499,7 @@ fn encrypt_stream(
         consumed += want as u64;
         let last = consumed == plaintext_len;
 
-        let nonce = stream_nonce(&base_nonce, index, last);
+        let nonce = stream_nonce(base_nonce, index, last);
         let aad = chunk_aad(&header, index, last);
         let tag = cipher
             .encrypt_in_place_detached(XNonce::from_slice(&nonce), &aad, &mut buf[..want])
@@ -512,6 +593,24 @@ fn read_container_header<R: Read>(reader: &mut R) -> Result<ContainerHeader, Dec
             m_cost, t_cost, p_cost
         ))));
     }
+    if m_cost < MIN_KDF_M_COST_KIB || t_cost < MIN_KDF_T_COST || p_cost < MIN_KDF_P_COST {
+        warn!(
+            "encrypted file uses weak KDF parameters (m_cost={} KiB, t_cost={}, p_cost={}, \
+             below the {} KiB / t{} / p{} floor); an older dfm build keyed the cost to its \
+             build profile and wrote {} KiB / t{} / p{} archives, which a wordlist cracks in \
+             minutes. This file is still readable, but re-adding it with a current dfm will \
+             rewrite it at full cost",
+            m_cost,
+            t_cost,
+            p_cost,
+            MIN_KDF_M_COST_KIB,
+            MIN_KDF_T_COST,
+            MIN_KDF_P_COST,
+            LEGACY_DEBUG_KDF.m_cost_kib,
+            LEGACY_DEBUG_KDF.t_cost,
+            LEGACY_DEBUG_KDF.p_cost,
+        );
+    }
     let chunk_size = read_u32_le(&raw, 52)?;
     if !(MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&chunk_size) {
         return Err(DecryptError::Invalid(DfmError::InvalidData(format!(
@@ -596,7 +695,7 @@ impl<R: Read> DecryptSession<R> {
             header.t_cost,
             header.p_cost,
         )?;
-        let cipher = XChaCha20Poly1305::new_from_slice(&key)
+        let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
             .map_err(|e| DecryptError::Invalid(DfmError::other(e.to_string())))?;
 
         let first_pt = std::cmp::min(header.chunk_size as u64, header.plaintext_len) as usize;
@@ -633,8 +732,12 @@ impl<R: Read> DecryptSession<R> {
     }
 
     /// Write all remaining plaintext (starting with the first chunk's
-    /// non-metadata tail) to `out`, verifying every chunk. Authentication
-    /// failures after the first chunk mean corruption, not a wrong password.
+    /// non-metadata tail) to `out`, verifying every chunk. A failure past the
+    /// first chunk is reported as one authentication failure covering both a
+    /// wrong password and a corrupted file: the first chunk has already been
+    /// verified by `open`, so either cause is equally likely here, and
+    /// distinguishing them is not possible without branching on an error value
+    /// that depends on the (secret) key.
     fn stream_rest(mut self, out: &mut dyn Write) -> Result<(), DfmError> {
         use chacha20poly1305::aead::AeadInPlace;
         use chacha20poly1305::{Tag, XNonce};
@@ -663,7 +766,8 @@ impl<R: Read> DecryptSession<R> {
                 )
                 .map_err(|_| {
                     DfmError::InvalidData(
-                        "encrypted file is corrupted (authentication failed)".into(),
+                        "wrong password or the encrypted file is corrupted (authentication failed)"
+                            .into(),
                     )
                 })?;
             out.write_all(&buf[..want])
@@ -809,7 +913,10 @@ pub fn write_encrypted_source(
 }
 
 /// Stream-encrypt into `dest`, writing through a `.part` sibling and renaming
-/// on success so a failure never leaves a truncated output file behind.
+/// on success so a failure never leaves a truncated output file behind. The
+/// temp file is created 0600 with `O_EXCL`: it holds ciphertext whose
+/// destination may later be 0600, and a predictable name must not be
+/// pre-creatable by another user.
 fn encrypt_to_new_file(
     password: &str,
     open_input: impl Fn() -> Result<std::fs::File, DfmError>,
@@ -818,9 +925,17 @@ fn encrypt_to_new_file(
     dest: &Path,
 ) -> Result<(), DfmError> {
     let part = PathBuf::from(format!("{}.part", dest.display()));
+    // Clear a stale temp file from an interrupted run so `create_new` succeeds.
+    let _ = fs::remove_file(&part);
     let result = (|| -> Result<(), DfmError> {
         let mut input = open_input()?;
-        let mut out = BufWriter::new(fs::File::create(&part).map_err(|e| io_err(&part, e))?);
+        let temp = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&part)
+            .map_err(|e| io_err(&part, e))?;
+        let mut out = BufWriter::new(temp);
         encrypt_stream(password, &mut input, content_len, metadata_prefix, &mut out)
     })();
     match result {
@@ -848,13 +963,43 @@ pub fn read_encrypted_file(
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
 
-    let target_root = calc_working_dir_paths_unchecked(settings)?.0;
+    // Recorded directory paths are target-relative, so they resolve against
+    // the target directory itself.
+    let restore_root = calc_working_dir_paths_unchecked(settings)?.0;
     let (session, meta) = open_with_retry(settings, source_file_path, || {
         fs::File::open(source_file_path).map_err(|e| io_err(source_file_path, e))
     })?;
-    restore_streamed(&target_root, target_file_path, &meta, |out| {
+    restore_streamed(&restore_root, target_file_path, &meta, |out| {
         session.stream_rest(out)
     })
+}
+
+/// Decrypt an encrypted source file into `dest`, streaming one chunk at a
+/// time. Unlike [`read_encrypted_file`] this restores no recorded directory or
+/// file permissions: `dest` is a caller-owned path (a diff scratch copy), not
+/// the managed target. The destination is created 0600 because it holds
+/// plaintext.
+pub fn read_encrypted_to_path(
+    settings: &Settings,
+    source_file_path: &Path,
+    dest: &Path,
+) -> Result<(), DfmError> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
+    }
+    let (session, _meta) = open_with_retry(settings, source_file_path, || {
+        fs::File::open(source_file_path).map_err(|e| io_err(source_file_path, e))
+    })?;
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(dest)
+        .map_err(|e| io_err(dest, e))?;
+    let mut out = BufWriter::new(file);
+    session.stream_rest(&mut out)?;
+    out.flush().map_err(|e| io_err(dest, e))
 }
 
 /// Prompt for the password (retrying once on a wrong password) and open the
@@ -900,36 +1045,59 @@ where
 /// restoring directory and file permissions that were recorded at encrypt
 /// time. A streaming failure removes the partially written target file.
 ///
-/// Directory permissions are restored relative to the caller-supplied target
-/// root. For the internal add/pull/merge/purge path this is the expanded target
-/// directory (where the directories actually live); the standalone `dfm decrypt`
-/// passes the output file's parent so dirs resolve relative to it.
+/// Nothing outside the target file itself is created or chmod'ed until `sink`
+/// has returned `Ok`, i.e. until every chunk has been authenticated: a blob
+/// that fails verification must not leave directories behind.
+///
+/// Directory permissions are restored relative to the caller-supplied restore
+/// root, because the recorded directory paths are target-relative (a file
+/// recorded as `private/sub/f.conf` records `private` and `private/sub`). For
+/// the internal add/pull/merge/purge path this is the expanded target
+/// directory; standalone `dfm decrypt` passes the output file's parent, whose
+/// blobs record no directories at all.
 fn restore_streamed(
-    target_root: &Path,
+    restore_root: &Path,
     target_file_path: &Path,
     meta: &PlainMeta,
     sink: impl FnOnce(&mut dyn Write) -> Result<(), DfmError>,
 ) -> Result<(), DfmError> {
-    apply_dir_modes(target_root, target_file_path, &meta.dirs)?;
-
     if let Some(parent) = target_file_path.parent() {
         fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
     }
-    let mut out = BufWriter::new(
-        fs::File::create(target_file_path).map_err(|e| io_err(target_file_path, e))?,
-    );
-    match sink(&mut out) {
-        Ok(()) => {}
-        Err(e) => {
+    // Created 0600, not the umask default: the recorded mode is only applied
+    // once the content has streamed out and verified, so a file recorded as
+    // 0644 would otherwise be world-readable plaintext for the whole decrypt.
+    // The later `set_permissions` still sets the recorded mode exactly, so the
+    // end state is unchanged.
+    let target = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(target_file_path)
+        .map_err(|e| io_err(target_file_path, e))?;
+    let mut out = BufWriter::new(target);
+    let restore_permissions = |mut out: BufWriter<std::fs::File>| -> Result<(), DfmError> {
+        out.flush().map_err(|e| io_err(target_file_path, e))?;
+        drop(out);
+        let restored = apply_dir_modes(restore_root, target_file_path, &meta.dirs).and_then(|()| {
+            fs::set_permissions(target_file_path, fs::Permissions::from_mode(meta.file_mode))
+                .map_err(|e| io_err(target_file_path, e))
+        });
+        if let Err(e) = restored {
             let _ = fs::remove_file(target_file_path);
             return Err(e);
         }
+        Ok(())
+    };
+
+    match sink(&mut out) {
+        Ok(()) => restore_permissions(out),
+        Err(e) => {
+            let _ = fs::remove_file(target_file_path);
+            Err(e)
+        }
     }
-    out.flush().map_err(|e| io_err(target_file_path, e))?;
-    drop(out);
-    fs::set_permissions(target_file_path, fs::Permissions::from_mode(meta.file_mode))
-        .map_err(|e| io_err(target_file_path, e))?;
-    Ok(())
 }
 
 /// Recreate enclosing directories with their recorded permissions (e.g. a
@@ -952,21 +1120,6 @@ fn apply_dir_modes(
             .map_err(|e| io_err(&dir_abs, e))?;
     }
     Ok(())
-}
-
-/// Decrypt an encrypted source file (dfm format) into memory, returning the
-/// plaintext bytes and the recorded file mode. Used by `diff` to compare and
-/// pipe the decrypted content to the diff tool without touching any file.
-pub fn read_encrypted_bytes(
-    settings: &Settings,
-    source_file_path: &Path,
-) -> Result<(Vec<u8>, u32), DfmError> {
-    let (session, meta) = open_with_retry(settings, source_file_path, || {
-        fs::File::open(source_file_path).map_err(|e| io_err(source_file_path, e))
-    })?;
-    let mut content = Vec::new();
-    session.stream_rest(&mut content)?;
-    Ok((content, meta.file_mode))
 }
 
 /// Reject a directory entry recorded in an encrypted blob whose path could
@@ -1276,6 +1429,221 @@ mod tests {
             decrypt_bytes(&tiny, "pw"),
             Err(DecryptError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn kdf_params_are_the_same_for_every_build_profile() {
+        // The parameters are written into the header, so a value selected by
+        // the build profile would make an archive permanently guessable and
+        // would mark it as weak. Both profiles must derive the release cost,
+        // and it must satisfy the lower bound enforced when reading.
+        const {
+            assert!(KDF_M_COST_KIB == 65536);
+            assert!(KDF_T_COST == 3);
+            assert!(KDF_P_COST == 4);
+            assert!(KDF_M_COST_KIB >= MIN_KDF_M_COST_KIB);
+            assert!(KDF_T_COST >= MIN_KDF_T_COST);
+            assert!(KDF_P_COST >= MIN_KDF_P_COST);
+        }
+    }
+
+    #[test]
+    fn the_legacy_debug_cost_trips_the_warning_floor() {
+        // The floor exists to surface archives written by the old
+        // profile-dependent builds. If the floor sat at or below that cost, the
+        // warning would never fire for the very blobs it was added for.
+        const {
+            assert!(LEGACY_DEBUG_KDF.m_cost_kib < MIN_KDF_M_COST_KIB);
+            assert!(LEGACY_DEBUG_KDF.t_cost < MIN_KDF_T_COST);
+            assert!(LEGACY_DEBUG_KDF.p_cost >= MIN_KDF_P_COST);
+        }
+    }
+
+    /// A container written with the reduced cost an older build would have
+    /// used. Built through the real encrypt path so the header is
+    /// authenticated and the blob genuinely decrypts.
+    fn legacy_weak_blob(password: &str, content: &[u8]) -> Vec<u8> {
+        let mut salt = [0u8; SALT_LEN];
+        let mut base_nonce = [0u8; NONCE_LEN];
+        for (i, b) in salt.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        for (i, b) in base_nonce.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(7);
+        }
+        let mut blob = Vec::new();
+        encrypt_stream_seeded(
+            password,
+            &mut std::io::Cursor::new(content),
+            content.len() as u64,
+            &serialize_metadata("a", 0o644, &[]),
+            &mut blob,
+            LEGACY_DEBUG_KDF,
+            &salt,
+            &base_nonce,
+        )
+        .unwrap();
+        blob
+    }
+
+    #[test]
+    fn weak_kdf_params_stay_readable() {
+        // A blob written with reduced cost must still decrypt for its owner;
+        // refusing would lock them out of their own files. The weakness is
+        // reported, not enforced.
+        let blob = legacy_weak_blob("pw", b"data");
+        let dec = decrypt_bytes(&blob, "pw").expect("weak blob stays readable");
+        assert_eq!(dec.content, b"data");
+    }
+
+    #[test]
+    fn weak_kdf_params_do_not_weaken_authentication() {
+        // The cost travels in the header, which is the AAD of every chunk, so
+        // the reduced cost is bound to the ciphertext: editing it to claim a
+        // stronger cost must fail rather than silently "upgrade" the blob.
+        let blob = legacy_weak_blob("pw", b"data");
+        let mut edited = blob.clone();
+        let strong = KDF_M_COST_KIB.to_le_bytes();
+        edited[12..16].copy_from_slice(&strong);
+        assert!(matches!(
+            decrypt_bytes(&edited, "pw"),
+            Err(DecryptError::WrongPassword)
+        ));
+    }
+
+    #[test]
+    fn empty_password_is_refused() {
+        // An empty password derives a valid key, so it would produce an
+        // archive that looks protected but is not. A provider that prints
+        // nothing, or only whitespace, has failed rather than supplied one.
+        for command in ["true", "printf '   '", "printf '\\n'"] {
+            let mut settings = crate::create_default_settings();
+            settings.obtain_password_shell_command = Some(command.into());
+            assert!(
+                matches!(obtain_password(&settings), Err(DfmError::InvalidInput(_))),
+                "command {command:?} must not yield a usable password"
+            );
+        }
+    }
+
+    #[test]
+    fn surrounding_spaces_are_part_of_the_password() {
+        // The whitespace check must not silently trim the stored password:
+        // " pw " is a different password from "pw".
+        let mut settings = crate::create_default_settings();
+        settings.obtain_password_shell_command = Some("printf ' pw '".into());
+        assert_eq!(&*obtain_password(&settings).unwrap(), " pw ");
+        clear_password_cache();
+    }
+
+    #[test]
+    fn restored_plaintext_is_private_until_its_recorded_mode_is_applied() {
+        // The target is created 0600 and only widened to the recorded mode
+        // after the content has streamed out and verified, so a file recorded
+        // 0644 is never world-readable plaintext mid-decrypt.
+        let root = std::env::temp_dir().join(format!("dfm-mode-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let meta = PlainMeta {
+            inner_name: "f.conf".to_owned(),
+            file_mode: 0o644,
+            dirs: vec![],
+        };
+        let target = root.join("f.conf");
+        let mut mode_during = None;
+
+        restore_streamed(&root, &target, &meta, |_out| {
+            mode_during = Some(fs::metadata(&target).unwrap().permissions().mode() & 0o777);
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            mode_during,
+            Some(0o600),
+            "plaintext must not be exposed while streaming"
+        );
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o644,
+            "the recorded mode must still be the end state"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn part_file_is_not_world_readable() {
+        // The temp file holds ciphertext whose destination may later be 0600,
+        // so it must not be created with the default 0666 & !umask.
+        let dir = std::env::temp_dir().join(format!("dfm-part-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let plain = dir.join("plain");
+        fs::write(&plain, b"content").unwrap();
+        // `dest` is a directory, so the closing rename fails and the temp file
+        // survives for inspection. It is only cleared on the next run, by
+        // design: the ciphertext it holds is not otherwise recoverable.
+        let dest = dir.join("out.encrypted");
+        fs::create_dir(&dest).unwrap();
+
+        let result = encrypt_to_new_file(
+            "pw",
+            || Ok(fs::File::open(&plain).unwrap()),
+            7,
+            &serialize_metadata("a", 0o644, &[]),
+            &dest,
+        );
+        assert!(result.is_err(), "renaming onto a directory must fail");
+
+        let part = dir.join("out.encrypted.part");
+        let mode = fs::metadata(&part).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "part file must be 0600, got {mode:o}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recorded_directory_modes_are_applied_only_after_the_stream_succeeds() {
+        // The recorded directory paths and modes arrive in the first chunk, so
+        // they are authenticated before `restore_streamed` runs — but the
+        // content they guard is not. Applying their modes before the content
+        // verifies would let a blob whose later chunks fail authentication
+        // still reshape directories in the target tree.
+        let root = std::env::temp_dir().join(format!("dfm-restore-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let meta = PlainMeta {
+            inner_name: "private/sub/f.conf".to_owned(),
+            file_mode: 0o600,
+            dirs: vec![
+                (PathBuf::from("private"), 0o700),
+                (PathBuf::from("private/sub"), 0o710),
+            ],
+        };
+        let target = root.join("private/sub/f.conf");
+        let mode_of = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+        let failed = restore_streamed(&root, &target, &meta, |_out| {
+            Err(DfmError::InvalidData("authentication failed".into()))
+        });
+        assert!(failed.is_err());
+        assert!(!target.exists(), "the partial target must be removed");
+        if root.join("private").exists() {
+            assert_ne!(
+                mode_of(&root.join("private")),
+                0o700,
+                "a recorded directory mode must not be applied to unverified metadata"
+            );
+        }
+
+        // The same blob, restored successfully, does get its recorded modes.
+        restore_streamed(&root, &target, &meta, |out| {
+            out.write_all(b"content").map_err(DfmError::Io)
+        })
+        .unwrap();
+        assert_eq!(mode_of(&root.join("private")), 0o700);
+        assert_eq!(mode_of(&root.join("private/sub")), 0o710);
+        assert_eq!(mode_of(&target), 0o600);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

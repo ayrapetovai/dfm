@@ -6,7 +6,11 @@ PASSWORD="$(uuid)"
 CONTENT="$(uuid)"
 
 dfm init dotfiles
-dfm config --set obtain_password_shell_command "bash -c 'cat \$0; echo' \"$PASSWORD\""
+# The password is handed to the provider as an argument rather than embedded in
+# the command text, so it does not show up in the process listing. `printf %s
+# "$0"` prints it verbatim; a bare `echo` would append a newline, which the
+# password reader strips anyway.
+dfm config --set obtain_password_shell_command "bash -c 'printf %s \"\$0\"' \"$PASSWORD\""
 
 write "$CONTENT" secret.txt
 dfm encrypt secret.txt -o secret.txt.encrypted

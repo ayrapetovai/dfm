@@ -46,6 +46,7 @@ pub fn merge_command(
 ) -> Result<(), DfmError> {
     let MergeArgs { ref paths, dry_run } = args;
     let paths_provided = paths.is_some();
+    debug!("merge with paths {:?}, dry run {}", paths, dry_run);
 
     let (target_dir_abs_path, source_dir_abs_path) = calc_working_dir_paths(settings)?;
 

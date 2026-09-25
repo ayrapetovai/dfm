@@ -1,3 +1,5 @@
+use log::debug;
+
 use std::path::PathBuf;
 
 use crate::DfmError;
@@ -19,6 +21,10 @@ pub struct DecryptArgs {
 /// Encrypt a single file with a password into a self-contained dfm blob.
 /// Without `--output`, writes `<path>.encrypted` next to the input.
 pub fn encrypt_command(settings: &Settings, args: EncryptArgs) -> Result<(), DfmError> {
+    debug!(
+        "encrypting {:?} with derived output {:?}",
+        args.path, args.output
+    );
     let output = match &args.output {
         Some(o) => o.clone(),
         None => {
@@ -37,6 +43,7 @@ pub fn encrypt_command(settings: &Settings, args: EncryptArgs) -> Result<(), Dfm
 /// directory; if the name has no postfix, an explicit `--output` is required.
 /// A literal `-` as the second positional prints the plaintext to stdout.
 pub fn decrypt_command(settings: &Settings, args: DecryptArgs) -> Result<(), DfmError> {
+    debug!("decrypting {:?} with output {:?}", args.path, args.output);
     if let Some(marker) = &args.stdout_output {
         if marker != "-" {
             return Err(DfmError::InvalidInput(format!(

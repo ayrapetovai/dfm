@@ -1,14 +1,14 @@
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use log::{debug, info};
 
 use super::{
     DirGuard, SourceVariant, cli_path_in_scope, cli_path_to_abs, create_private_temp_dir,
     get_sync_time, matches_source_ignore_regex, msg_dry_run, print_paged, read_symlink_pointer,
-    resolve_source_variant, resolve_tool_command, run_tool, source_rel_to_target_abs,
+    resolve_source_variant, resolve_tool_command, run_tool, source_rel_to_target_abs, spawn_tool,
     split_command, state_key_for, update_sync_state, write_stdout,
 };
 use crate::DfmError;
@@ -378,24 +378,18 @@ fn diff_regular(
         .to_string_lossy()
         .ends_with(&settings.encrypted_postfix);
     if source_is_encrypted {
-        let target_dir_abs_path = calc_working_dir_paths_unchecked(settings)?.0;
-        let inner_name = file_path_relative_to(target_abs, &target_dir_abs_path);
-        dfm::crypt::announce_encryption_password(&inner_name.to_string_lossy());
-        let (decrypted, _mode) = dfm::crypt::read_encrypted_bytes(settings, source_abs)?;
-        let target_bytes = fs::read(target_abs).map_err(|e| io_err(target_abs, e))?;
-        if decrypted == target_bytes {
+        // Compare by hash of the scratch copy rather than by loading both
+        // files into memory; the scratch dir is only created for encrypted
+        // sources, so a plain diff still leaves no scratch behind.
+        let mut scratch = Scratch::new(source_dir_abs_path);
+        let decrypted_path = prepare_source(settings, &mut scratch, target_abs, source_abs, true)?;
+        if compute_sha256(&decrypted_path)? == compute_sha256(target_abs)? {
             println!("{} is synchronized", user_path_str);
             return Ok(());
         }
-        run_diff(
-            settings,
-            source_dir_abs_path,
-            target_abs,
-            source_abs,
-            Some(decrypted),
-        )
+        run_diff(settings, target_abs, source_abs, Some(decrypted_path))
     } else if compute_sha256(target_abs)? != compute_sha256(source_abs)? {
-        run_diff(settings, source_dir_abs_path, target_abs, source_abs, None)
+        run_diff(settings, target_abs, source_abs, None)
     } else {
         println!("{} is synchronized", user_path_str);
         Ok(())
@@ -412,17 +406,12 @@ fn diff_regular(
 /// block `:qa` (E37/E162).
 fn run_diff(
     settings: &Settings,
-    source_dir_abs_path: &Path,
     target_abs: &Path,
     source_abs: &Path,
-    decrypted_source: Option<Vec<u8>>,
+    decrypted_source: Option<PathBuf>,
 ) -> Result<(), DfmError> {
-    // The scratch dir is only needed when the source is encrypted (to hold the
-    // decrypted `{source}`); plain diffs must not write into the source dir.
-    let mut scratch = Scratch::new(source_dir_abs_path);
-
-    let source_arg = match &decrypted_source {
-        Some(bytes) => write_scratch_source(&mut scratch, target_abs, bytes)?,
+    let source_arg = match decrypted_source {
+        Some(path) => path,
         None => source_abs.to_path_buf(),
     };
 
@@ -623,34 +612,18 @@ impl Scratch {
     }
 }
 
-/// Write decrypted source bytes into the scratch directory and return the path
-/// the diff tool must read them from.
-fn write_scratch_source(
-    scratch: &mut Scratch,
-    target_abs: &Path,
-    plaintext: &[u8],
-) -> Result<PathBuf, DfmError> {
-    let decrypted_path = scratch.file_for("source", target_abs)?;
-    fs::write(&decrypted_path, plaintext).map_err(|e| io_err(&decrypted_path, e))?;
-    Ok(decrypted_path)
-}
-
-/// Decrypt an encrypted source into memory, announcing which file needs the
-/// password first.
-fn decrypt_source(
-    settings: &Settings,
-    target_abs: &Path,
-    source_abs: &Path,
-) -> Result<Vec<u8>, DfmError> {
+/// Report which file needs the encryption password, naming it by its
+/// target-relative path (the name recorded inside the blob).
+fn announce_encryption_password(settings: &Settings, target_abs: &Path) -> Result<(), DfmError> {
     let target_dir_abs_path = calc_working_dir_paths_unchecked(settings)?.0;
     let inner_name = file_path_relative_to(target_abs, &target_dir_abs_path);
     dfm::crypt::announce_encryption_password(&inner_name.to_string_lossy());
-    let (decrypted, _mode) = dfm::crypt::read_encrypted_bytes(settings, source_abs)?;
-    Ok(decrypted)
+    Ok(())
 }
 
-/// Resolve the `{source}` argument: the plain source path, or for an encrypted
-/// source a scratch copy of its decrypted plaintext (requires the password).
+/// Stream an encrypted source's plaintext into the scratch directory and
+/// return the path the diff tool must read it from. The decryption is
+/// chunk-at-a-time, so a large encrypted dotfile never has to fit in memory.
 fn prepare_source(
     settings: &Settings,
     scratch: &mut Scratch,
@@ -661,8 +634,10 @@ fn prepare_source(
     if !is_encrypted {
         return Ok(source_abs.to_path_buf());
     }
-    let decrypted = decrypt_source(settings, target_abs, source_abs)?;
-    write_scratch_source(scratch, target_abs, &decrypted)
+    announce_encryption_password(settings, target_abs)?;
+    let decrypted_path = scratch.file_for("source", target_abs)?;
+    dfm::crypt::read_encrypted_to_path(settings, source_abs, &decrypted_path)?;
+    Ok(decrypted_path)
 }
 
 /// Run one non-interactive diff for `--all`, forwarding its captured stdout to
@@ -678,19 +653,7 @@ fn run_diff_capture(
 
     info!("running diff: {} {:?}", prog, args);
 
-    let child = match Command::new(&prog)
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(DfmError::NotFound(format!("diff tool {} not found", prog)));
-        }
-        Err(e) => return Err(DfmError::Io(e)),
-    };
-
+    let child = spawn_tool(&prog, &args, "diff", Stdio::piped())?;
     let outcome = child.wait_with_output().map_err(DfmError::Io)?;
     debug!("diff tool exited with status {}", outcome.status);
     // Diff output is appended as text but may be non-UTF-8 (binary files,
@@ -829,8 +792,8 @@ fn edit_one_pair(
     let source_copy = scratch.file_for("source", target_abs)?;
     fs::copy(target_abs, &target_copy).map_err(|e| io_copy_err(target_abs, &target_copy, e))?;
     if source_is_encrypted {
-        let decrypted = decrypt_source(settings, target_abs, source_abs)?;
-        fs::write(&source_copy, decrypted).map_err(|e| io_err(&source_copy, e))?;
+        announce_encryption_password(settings, target_abs)?;
+        dfm::crypt::read_encrypted_to_path(settings, source_abs, &source_copy)?;
     } else {
         fs::copy(source_abs, &source_copy).map_err(|e| io_copy_err(source_abs, &source_copy, e))?;
     }
