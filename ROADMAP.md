@@ -18,6 +18,14 @@
 
 ## Fix Bugs
 
+### P1 - dfm creates directory for decryption
+Reproduce: run `dfm decrypt file.encrypted`, where the file.encrypted is located
+in a arbitrary directory which has nothing to do with `dotfiles`. Then we got
+not only decrypted `file` to appear but also a `dotfiles` directory with temporary
+directory for decryption. Fix: dfm must use $XDG_RUBTIME_DIR for decryption at first,
+if no $XDG_RUBTIME_DIR is set, then find the real location of `dotfiles` directory,
+and not to create one in the directory with decrypted file.
+
 ### M0 - Impossible to ignore file with mutating name
 The file have name with some base64 encoded thing: `copyq_tab_JmNsaXBib2FyZA==.dat`.
 It is impossible to add it to ignore list with commands:
